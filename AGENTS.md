@@ -15,17 +15,17 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 ## Start here
 
 - Read README.md for the current implemented boundary.
-- Read openspec/changes/autonomous-orchestration/{proposal,design,tasks}.md for pending work.
+- Read openspec/changes/autonomous-orchestration/{proposal,design,tasks}.md and docs/validation/autonomous.md for acceptance and remaining release work.
 - Use the installed OpenSpec CLI and the existing spec-driven schema for behavioral changes.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.
 
 ## Structure and tools
 
-- Rust owns detection and future orchestration; Node is the thin npm launcher.
+- Rust owns detection, native bridges and orchestration; Node is the thin npm launcher.
 - Bun 1.4.2 owns workspace dependencies and scripts; commit bun.lock and Cargo.lock.
 - Source ~/.cargo/env if cargo is not on PATH. Use the pinned rust-toolchain.toml.
-- Verify with bun run check, bun run test and OPENSPEC_TELEMETRY=0 bun run spec:validate.
+- Verify with bun run test:all (equivalent: node scripts/test-all.mjs). The suite includes lint, unit/contracts, real OpenSpec, npm assets, Git/process e2e and strict specs.
 - Check npm packaging with bun run pack:local. Only claim platforms actually tested.
 - .references contains locked upstream research copies. Do not modify them or ship them.
 - Never check secrets, runtime logs, native build outputs or node_modules into Git.

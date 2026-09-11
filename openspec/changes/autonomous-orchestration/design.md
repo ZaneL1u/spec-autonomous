@@ -1,6 +1,6 @@
 # Spec Autonomous：整里程碑自主开发技术方案
 
-状态：**规划完成，runtime 待实现**。日期：2026-09-10。本次交付为调研、工程初始化和此方案；适配基线见 [upstreams.lock.json](../../../docs/research/upstreams.lock.json)。
+状态：**本地 runtime 已实现，验收与发行状态见清单**。更新：2026-09-11。实际模块、配置与协议见 [architecture.md](../../../docs/architecture.md)，本轮证据见 [验收记录](../../../docs/validation/autonomous.md)。适配基线见 [upstreams.lock.json](../../../docs/research/upstreams.lock.json)。
 
 ## 1. Context 与产品承诺
 
@@ -20,13 +20,13 @@ OpenSpec 有工件 DAG 和 JSON 指令；新版 Spec Kit 已有 workflow、fan-o
 
 ## 3. 用户流程与 CLI
 
-除 detect 外，下列接口均待实现：
+以下接口已在本地 alpha 实现，执行需现有 SDD、已配置 runner 和干净 Git 基线：
 
 ```sh
 spec-autonomous detect --json
 spec-autonomous init
 spec-autonomous inspect --framework openspec --change add-team-auth --json
-spec-autonomous doctor --runner command --json
+spec-autonomous doctor --json
 
 # 从目标开始规划 roadmap，native 模式完成里程碑规划后给出原生下一步
 spec-autonomous milestone new "MVP：团队邀请与权限" --framework openspec --mode native
@@ -65,7 +65,7 @@ spec-autonomous report <run-id>
 | progress | 汇总所有 worktree 的进度、阻塞、下一步；native 模式返回原生动作 | progress --all-worktrees / roadmap / workflow next |
 | resume | 从原生或自主检查点继续，保留原选择与预算 | resume / 重新协调来源 |
 
-例如在支持 slash command 的宿主中（均待实现）：
+例如在支持 slash command 的宿主中（Claude commands；Codex 使用 $name）：
 
 ```text
 /milestone "MVP：团队邀请与权限" --mode native
@@ -80,7 +80,7 @@ spec-autonomous report <run-id>
 
 具体 `$name`、`/name`、command 文件或 skill 目录由宿主 profile 生成。仅支持 skills 的宿主使用其原生等价入口，如 `$autonomous` / `$auto`，不能声称 npm 可以改造宿主命令解析器。安装体验是 npm 安装 CLI 后，在仓库执行一次 `spec-autonomous init`：检测用户已有 SDD 和宿主，写本产品配置与 commands/skills 绑定，后续直接使用短命令。歧义时只要求选择，不替换既有框架。
 
-skill 源码计划位于 `packages/cli/skills/<name>/SKILL.md`，配套 references 按需加载，npm files 和 release assembler 同时包含它们。底层 `skills install --agent <id> --scope project` 仍可显式使用；npm 全局安装本身不猜 cwd、不自动改仓库。init 是绑定编排工具，不自动迁移或重置 SDD。
+skill 源码位于 `packages/cli/skills/<name>/SKILL.md`，配套 references 按需加载，npm files 和 release assembler 同时包含它们。底层 `skills install --agent <id> --scope project` 仍可显式使用；npm 全局安装本身不猜 cwd、不自动改仓库。init 是绑定编排工具，不自动迁移或重置 SDD。
 
 installer 保存自有文件/版本/hash manifest；升级只覆盖未被用户修改的自有文件，碰到 /auto 等同名第三方命令或手写 skill 报冲突，可显式配置命名空间，绝不覆盖。uninstall 不删除其他 skill。现有 openspec-* 是上游集成，不是本产品入口，不能据此宣称 /autonomous 或 /auto 已交付。
 
@@ -102,14 +102,14 @@ id = "P001"
 label = "1"
 title = "身份基础"
 depends_on = []
-source = { kind = "openspec-change", id = "identity-foundation" }
+source = { kind = "openspec-change", selector = "identity-foundation" }
 
 [[phases]]
 id = "P002"
 label = "2"
 title = "邀请加入团队"
 depends_on = ["P001"]
-source = { kind = "openspec-change", id = "team-invitations" }
+source = { kind = "openspec-change", selector = "team-invitations" }
 ```
 
 Spec Kit source 改为 `{ kind = "speckit-feature", path = "specs/002-team-invitations" }`。一个来源单元只归一个 roadmap phase，避免两个 phase 同时管理同一 tasks 文件。requirements/acceptance 用原生文件引用建立覆盖关系；goal 是授权边界，不是另一份竞争性产品规范。
@@ -196,7 +196,7 @@ status = "unknown"
 
 Git common dir 的 `spec-autonomous/registry.toml` 是已知账本位置和 managed worktree 关联的可读索引，由唯一 coordinator 原子更新；进程租约/成功证据仍以事务账本核验，registry 不是锁或完成证明。读方检查路径归属和注册身份，不能据被篡改 registry 任意读取宿主文件。Git inventory 与 registry 不一致时显示 orphaned/prunable/unregistered 诊断，自动清理属于独立显式操作。
 
-新增 JSON 命令使用 `schema_version`、`data` 或 `error{code,message,details}` envelope；`run --json` 为明确声明的 NDJSON 事件流，诊断走 stderr。bootstrap detect 已有独立 report 形状，后续保持兼容。退出码计划：0 成功（detect inventory 可以为空/歧义），2 参数/选择/协议，3 缺工具或能力，4 暂停/需要输入，5 失败，130 用户中断；详细理由在 JSON 中。
+新增 JSON 命令使用 `schema_version`、`data` 或 `error{code,message,details}` envelope；`run --json` 为明确声明的 NDJSON 事件流，诊断走 stderr。bootstrap detect 已有独立 report 形状，后续保持兼容。退出码：0 成功（detect inventory 可以为空/歧义），2 参数/选择/协议，3 缺工具或能力，4 暂停/需要输入，5 失败，130 用户中断；详细理由在 JSON 中。
 
 ## 4. Architecture 与模块接口
 
@@ -233,7 +233,7 @@ flowchart TD
 
 确定性 Rust 控制流拥有状态。语义分析交给短生命周期 planner/verifier/repair agent，它们返回结构化提议，host 校验后执行。无需一个永不结束、无限增长的主 LLM 会话；主线程由 milestone snapshot、decisions 和有界 summary 维护。
 
-core 内先按 discovery、adapters、workflow、milestone、plan、scheduler、runner、state、workspace、verification、progress/report 分模块。CLI 用 clap；计划 runtime 用 Tokio、rusqlite bundled、serde、TOML parser、内容 hash、Markdown parser。DAG 先做小型拓扑实现，必要时再引入图库。Git 使用 argv 调用；skill installer/package assets 不另持有调度状态。新增 runtime 依赖在实现阶段引入。
+core 实际分为 discovery、config/model、provider/markdown、plan、runner/process、git/state、progress/cleanup/skills 和 engine。engine 再按 lifecycle、planning、execution、recovery 拆分。CLI 使用 clap；本地有界并发使用标准线程和消息/取消状态，未引入 Tokio。rusqlite bundled 提供事务，serde/TOML 提供协议，SHA256 提供 provenance。DAG 使用纯函数校验和就绪队列；Git 通过 argv 调用。模块职责与测试注入点见 architecture.md。
 
 采用独立 Rust 二进制，不使用 N-API，避免 Node ABI 和 Bun runtime 绑定。Node 只选择平台、转发参数/stdio/退出码/信号。npm 发行细节见 [distribution.md](../../../docs/distribution.md)。
 
@@ -309,9 +309,9 @@ detect 不执行仓库脚本。optional native bridge 的 paths-only JSON 可帮
 
 host 验证 ID 唯一、引用存在、无环、所有待做来源 task 被覆盖、任务不越 scope、路径规范化、验收可运行。planner 的“已完成”字段不能跳过来源任务。source 重排、插入、重复或改写无法唯一映射时 replan。
 
-调度条件：依赖已集成并验证、容量与预算足够、无写-写/写-读冲突。glob 的祖先目录、共享 lockfile、公共接口、migration 视为冲突；未知写集取得全仓独占 token。先保证语义正确，再按关键路径和稳定原始顺序派发。允许持续补位，不强制每 wave 等最慢任务。
+调度条件：依赖已集成并验证、容量与预算足够、无写-写/写-读冲突。glob 的祖先目录、共享 lockfile、公共接口、migration 视为冲突；未知写集取得全仓独占 token。先保证语义正确，再按稳定原始顺序派发。允许持续补位，不强制每 wave 等最慢任务。
 
-默认 max_workers=3，planner/verifier 也占 agent 配额。每次从已验证的 accepted_head 创建普通 worker，以带上依赖结果；未验证 candidate_integration_head 不对普通 worker 可见。实际 diff 超出写集则拒绝集成、调整计划并串行重试；文本 merge 无冲突不能代替接口依赖检查。失败下游等待修复，独立任务可从 accepted_head 继续；全局权限/预算/规范漂移则停止新派发。
+默认 max_workers=3，planner/verifier 也占 agent 配额。每次从已验证的 accepted_head 创建普通 worker，以带上依赖结果；未验证 candidate_integration_head 不对普通 worker 可见。实际 diff 超出写集则拒绝集成，在原写集内有限 fresh 重试；文本 merge 无冲突不能代替接口依赖检查。失败下游等待修复，独立任务可从 accepted_head 继续；全局权限/预算/规范漂移则停止新派发。
 
 ## 7. 整里程碑自主循环
 
@@ -395,7 +395,7 @@ worker 验证通过后按确定顺序集成，并在组合后的 revision 重新
 
 默认 delivery=ff-original：最终验收通过后复核原分支仍在起点、checkout 干净、source hash 一致，fast-forward 原分支和工作区；全程由 run lock 保护。用户若已移动分支或修改文件，状态为 delivery_pending，保留已验证分支，不标 completed。启动时可选 delivery=branch，以交付已验证本地分支为完成定义，报告明确结果位置。
 
-push/PR/部署/publish/归档按一次性运行 policy 授权处理，已有授权不重复问；新动作需要具体授权才暂停。OpenSpec 归档默认关闭，不将实现完成等同应归档。
+首个本地执行 profile 将 push/PR/部署/publish/原生归档留在独立原生或发行流程，policy 的 archive/push/publish 必须为 false；设置 true 返回 policy_capability_unavailable，而不会静默忽略或擅自执行。最终交付包含已验证分支/fast-forward 和报告。远程生命周期 profile 尚不在本轮本地能力声明内；不得将本地实现完成等同 npm 已发布或原生变更应归档。
 
 worktree 不是 OS sandbox。runner 复用其权限/沙箱，autonomous 不自动设置 unrestricted/yolo。diff 检查能拒绝集成，不能追溯阻止无沙箱进程的系统越界写入；doctor 明确实际限制。
 
@@ -404,21 +404,24 @@ worktree 不是 OS sandbox。runner 复用其权限/沙箱，autonomous 不自�
 采用 SQLite + 文件产物，单 coordinator 写库，progress/status 只读查询可并发。attempt/task/lease/evidence 的事务需求比多文件协调更简单；bundled SQLite 无外部服务。运行报告是投影，原生规范 Markdown 和编排声明 TOML 保持各自权威，不变成数据库的附属视图。
 
 ```text
-.spec-autonomous/
+.spec-autonomous/                         # 可提交的声明
   config.toml
-  milestones/<milestone-id>/{milestone.toml,ROADMAP.md}
-  state.db
-  plans/<plan-id>.toml
-  runs/<run-id>/
-    source-manifest.json
-    decisions.md
-    attempts/<attempt-id>/{input.json,result.json,stdout.log,stderr.log}
-    report.md
+  skills-installed.toml
+  milestones/<id>/{milestone.toml,ROADMAP.md,roadmap.sha256}
+  plans/<milestone>-<phase>.toml
+<git-common-dir>/spec-autonomous/         # 本机运行记录
+  state.db / registry.toml / coordinator.lock
+  worktrees/<run-or-attempt-or-intent>/
+  runs/<run-id>/attempts/<attempt-id>/
+    input.json / prompt.md / result.schema.json / result.json
+    context-full.json                    # 仅超出内联预算时
+    process.json / stdout.log / stderr.log
+  runs/<run-id>/report.md
 ```
 
 Git common dir 下的仓库级 OS lock 覆盖 linked worktrees，记录 ledger canonical path，防止不同启动目录用不同账本双写。worker 不写库。首版不支持 NFS/共享盘多机账本，诊断后拒绝。
 
-TOML 是用户可读的配置/编排声明，MD 是原生规范；SQLite 仅承载运行时事务与可重建索引，CLI 同时暴露 JSON/TOML 结构化视图。表包括 runs（模式/范围/policy/状态/heads/预算）、phase_runs、artifact_attempts、source_revisions、plans、tasks、edges、worktrees、attempts、leases、evidence、integration_intents、hook_attempts、events。DB schema version 独立；migration 事务化，遇更新版本 DB 拒写。
+TOML 是用户可读的配置/编排声明，MD 是原生规范；SQLite 仅承载运行时事务与可重建索引，CLI 同时暴露 JSON/TOML 结构化视图。schema v1 实际只有 runs（完整类型化 Run JSON）、events（追加事件）和 controls（暂停/取消邮箱）三张表；attempt、plan、evidence、intent 等嵌入 run payload，在同一事务中与事件一起落盘，避免并行维护两套权威状态。DB schema version 独立；非空 v0 升级前先创建 SQLite 一致性备份，migration 事务化，更新版本 DB 拒写。
 
 Run：preparing → planning_roadmap → planning_phase / executing_phase → verifying_phase → advancing；完整范围进入 verifying_milestone → delivering → completed，有界范围进入 delivering → scope_completed；native 模式进入 handed_off。可到 paused/needs_input/failed/cancelled/delivery_pending。Milestone 状态与 Run 分开，handoff/scope_completed 不使 milestone completed。Task：pending → ready → running → candidate → verifying → integrating → integrated；retry 新 attempt，保留历史。
 
@@ -445,7 +448,7 @@ SQLite 无法与 Git 原子提交。副作用使用 durable intent + reconciliat
 
 ## 12. 配置、自主授权与预算
 
-优先级：CLI > 项目配置 > 用户配置 > defaults。secret 不进仓库，使用已认证 agent 或显式环境来源；日志脱敏，不把 credential 填进 prompt。
+优先级：CLI > 项目配置 > 用户配置 > defaults。secret 不进仓库，使用已认证 agent 或显式环境来源；公开 run/progress 隐去 runner 环境与命令参数，credential 不进入 prompt；原始本机子进程日志可能包含工具输出，受本机访问权限保护，不承诺任意外部工具日志都能自动识别秘密。
 
 ```toml
 schema_version = 1
@@ -521,3 +524,11 @@ M1 先证明“给目标，经 skill/CLI 自动形成 roadmap 并完成里程碑
 - 平台发行成本 → 本机只证明 macOS arm64，其他需原生 CI。
 
 可后置：公开品牌/npm scope、首个官方 vendor runner、最低 OS/glibc 版本、跨 framework 混合 milestone、跨不相关仓库 progress。单框架多 phase roadmap、skills、from/to 和同仓所有 worktree progress 已进入首版范围，不再作为未来可选项。
+
+## 15. 本地实现补充
+
+- 内联 WorkerInput/prompt 默认上限 128 KiB；来源文档总量默认上限 2 MiB。超内联预算时写不可变 context-full.json，以 SHA256 校验引用，要求 worker 按需读取完整原生规则。它限制传输包大小，不声称强制限制模型自行读取后的 token 数。
+- 大任务列表按 max_planner_tasks（默认 32）分批 fresh planning，并以保守批间依赖连接后做全图覆盖/循环校验；原生总数在 native_counts 保留。audit 按 32 个原生验收引用分批后校验完整并集。
+- Spec Kit specify 的 checklist、plan 的 research/data-model/quickstart/contracts 属于原生工件契约；feature.json 仅供 worker 本地原生脚本使用，集成前恢复用户原始字节。hook 由 coordinator 唯一执行。
+- cleanup 是显式命令：仅移除终态 run 中 clean、未锁定的已完成受管 worker/candidate worktree，保留 integration、dirty/external worktree、分支和证据。
+- npm 账号/名称所有权、六平台原生验证和 registry 发布仍需真实远程环境；保持任务未勾选，不归档本 change。

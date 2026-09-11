@@ -1,97 +1,144 @@
 # Spec Autonomous
 
-**给定里程碑目标，基于 OpenSpec / Spec Kit 规划 roadmap，并按完整里程碑或 from/to 范围自主开发。**
+**在用户现有的 OpenSpec / Spec Kit 上，从里程碑目标规划 roadmap，再自主实现、验证、修复和交付。**
 
-既能从目标开始，也能承接原生流程已有的规范、计划和任务。原生手动与自主模式操作同一批 Markdown；TOML 保存配置和编排声明，CLI 提供结构化读取，skills 提供自然语言入口。主协调器维护里程碑，fresh-context agents 在独立 worktrees 工作，progress 汇总所有 worktree 的实际状态。
+`0.1.0-alpha.1` 已实现本地编排 CLI、TOML roadmap、原生 Markdown 适配、阶段范围、独立 worktree workers、验证与恢复、全 worktree progress，以及 `autonomous` / `auto` 等 skill。npm registry 尚未发布；当前可从源码或本机 tarball 安装。
 
-当前是 **`0.1.0-alpha.0` 仓库初始化阶段**：已实现只读检测 CLI、Rust workspace、npm launcher 与打包脚本。产品 skills、TOML roadmap、from/to、全 worktree progress 和 autonomous runtime 已列入 OpenSpec 方案，**尚未实现**。现有 openspec-* skills 是上游集成。项目名/npm 包名暂定 spec-autonomous，尚未发布或预留。
+- [架构与实际协议](docs/architecture.md)
+- [测试、mock 仓库与故障注入](docs/testing.md)
+- [本轮验收记录](docs/validation/autonomous.md)
+- [OpenSpec 实施清单](openspec/changes/autonomous-orchestration/tasks.md)
+- [源码调研](docs/research/README.md) · [发行流程](docs/distribution.md)
 
-## 从这里开始
+## 本地安装
 
-- [完整技术方案](openspec/changes/autonomous-orchestration/design.md)：自主开发闭环、模块接口、状态机、任务图、上下文、恢复和版本路线。
-- [实施任务清单](openspec/changes/autonomous-orchestration/tasks.md)：分阶段验收与并行开发边界。
-- [调研结论与上游快照](docs/research/README.md)：OpenSpec、Spec Kit、GSD 的真实适配点。
-- [本次验证结果](docs/validation/bootstrap.md)：本机已通过的验证与尚未验证的范围。
-- [npm 发行说明](docs/distribution.md)：平台包、CI、发布顺序与安装验证。
-
-## 本地使用（现在可运行）
-
-需要 Git、Node.js 22+、Bun 1.4.2、Rust 1.98.1。Rust 由 `rust-toolchain.toml` 固定。
+开发环境：Git、Node.js 22+、Bun 1.4.2、Rust 1.98.1（由 rust-toolchain.toml 固定）。安装好的 native npm 包不需要 Rust/Bun。
 
 ```sh
-# 本次环境已安装 Rust；新终端若尚未加入 PATH，先执行
 . "$HOME/.cargo/env"
-
 bun install --frozen-lockfile
 bun run build
-node packages/cli/bin/spec-autonomous.mjs detect --json
-node packages/cli/bin/spec-autonomous.mjs detect --path /path/to/repo --framework speckit
-
-# 生成含本机 Rust 二进制的 npm 包，然后全局安装
 bun run pack:local
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.0.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.1.tgz
+spec-autonomous --help
+```
+
+本机 tarball 只适合生成它的平台。正式 registry 发布后，入口为 `npm install -g spec-autonomous@next`；这条 registry 命令目前不代表已经发布。
+
+进入已配置 OpenSpec 或 Spec Kit 的仓库，绑定宿主入口：
+
+```sh
 spec-autonomous detect --json
+spec-autonomous init --agent codex
+# Claude Code 的 slash command 绑定：
+spec-autonomous init --agent claude
 ```
 
-本地 tarball 仅适合生成它的平台。**正式发布后**的安装入口为：
+Codex 使用 `$autonomous` / `$auto`，支持 slash commands 的宿主使用 `/autonomous` / `/auto`。`auto` 是同义别名；另有 milestone、progress、resume。安装会保留用户手写或修改过的同名入口；冲突时可显式使用 `--prefix sa`。npm 全局安装不会猜测并修改当前仓库。
 
-```sh
-npm install -g spec-autonomous@next
-# 稳定版发布后使用 npm install -g spec-autonomous
+## 配置已有 agent 与验证命令
+
+编辑 `.spec-autonomous/config.toml`。配置优先级为 CLI 覆盖 > 项目 TOML > `$XDG_CONFIG_HOME/spec-autonomous/config.toml`（默认 `~/.config/spec-autonomous/config.toml`）> 默认值。未知配置键会报错，避免把拼错的预算字段静默忽略。
+
+```toml
+schema_version = 1
+# 按项目实际情况填写；每个阶段/任务也能声明自己的验证命令。
+verification = [{ argv = ["node", "--test", "tests/add.test.mjs"], cwd = "." }]
+
+[execution]
+mode = "autonomous"
+max_workers = 3
+max_attempts = 3
+attempt_timeout_seconds = 1800
+run_timeout_seconds = 28800
+max_repair_rounds = 2
+max_context_bytes = 131072
+max_source_bytes = 2097152
+max_planner_tasks = 32
+delivery = "ff-original"
+
+[runner]
+profile = "codex"
+command = ["codex"]
 ```
 
-发布包通过平台 optional dependency 提供二进制，用户无需 Rust 或 Bun。当前不能把这条 registry 命令当成已上线产品；没有执行 npm publish。
+Codex profile 使用本机已登录的 `codex exec --ephemeral`，按工作单元使用 read-only/workspace-write，并要求结构化结果。没有携带父会话或 resume ID。其他 agent 可通过 `profile = "command"` 和 argv 数组接入，但 launcher 必须履行 `fresh_session = true` 的契约，详见架构文档；这不是对所有 agent CLI 的自动兼容承诺。
 
-`detect` 从指定目录向上寻找最近规范根，遇 Git 根停止；只检查直接标记，不扫描 `.references/`、依赖目录或执行仓库脚本。多个框架共存时返回 `ambiguous: true`，不会选择“最新”项目。它确认安装线索，**不保证规范已规划好或可以执行**。路径错误和显式选择未检测到的框架返回 exit 2。
-
-## 目标使用体验（以下命令待实现）
+OpenSpec 执行需要其已安装 CLI。可用 `[provider].openspec_command` 配置明确 argv，例如 `['node', '/absolute/path/to/openspec/bin/openspec.js']`。Spec Kit 读取现有文档无需 Python；从头规划会使用目标仓库安装的原生 skill/template，相关脚本需要其原有运行依赖。
 
 ```sh
-spec-autonomous init
-spec-autonomous milestone new "团队邀请与权限 MVP" --framework openspec --mode native
-spec-autonomous milestone new "团队邀请与权限 MVP" --framework openspec --mode autonomous
+spec-autonomous doctor --json
+# 自主写入前需要有初始 commit，且起始 checkout 干净。
+git add .
+git commit -m "Configure autonomous orchestration"
+```
+
+## 规划与自主执行
+
+```sh
+# 生成完整 roadmap 后交给原生流程继续
+spec-autonomous milestone new "团队邀请与权限 MVP" --mode native
+
+# 从目标自动规划并继续开发
+spec-autonomous milestone new "团队邀请与权限 MVP" --mode autonomous
+spec-autonomous roadmap --milestone M001 --format toml
+
+# 执行完整里程碑或阶段范围
+spec-autonomous run --milestone M001 --mode autonomous
 spec-autonomous run --milestone M001 --from 2 --to 4 --mode autonomous
 spec-autonomous run --milestone M001 --only 3 --mode autonomous
+
+# 直接接续已存在的原生规划
+spec-autonomous run --framework openspec --change add-team-auth --mode autonomous
+spec-autonomous run --framework speckit --feature specs/001-auth --mode autonomous
+```
+
+实际 milestone ID 会在创建结果中返回，也可通过 `milestone new ... --id M001` 指定。from/to 指 roadmap 阶段闭区间，only 只跑一个阶段。范围外未完成依赖会阻止执行；`scope_completed` 不等于整个 milestone 完成，也不会自动归档。
+
+每个 roadmap phase 指向一个原生 change/feature。规范、设计和原生任务仍是 Markdown；TOML 保存编排拓扑和执行计划，SQLite 保存运行事务。缺工件时沿原生流程规划；每个 worker 使用新会话和独立 worktree；coordinator 验证实际代码、串行集成，再写回 checkbox。失败修复有次数、时间、退避与跨恢复的无进展上限。大任务列表分批规划并做完整 DAG 校验；超出内联预算的原生上下文以不可变文件和 hash 引用传递，保留完整规则。
+
+## 查看、暂停与恢复
+
+```sh
 spec-autonomous progress --all-worktrees
-spec-autonomous progress --all-worktrees --format toml
 spec-autonomous progress --all-worktrees --format json
+spec-autonomous progress --all-worktrees --format toml
+spec-autonomous inspect --milestone M001 --phase 1 --json
+spec-autonomous status <run-id> --json
+spec-autonomous report <run-id> --json
+spec-autonomous pause <run-id>
+spec-autonomous cancel <run-id>
+# 终态运行的安全清理，保留 dirty/external/integration worktree、分支和证据
+spec-autonomous cleanup <run-id>
+spec-autonomous resume <run-id>
+spec-autonomous resume <run-id> --mode native
+# 显式采用修改后的配置或增加预算
+spec-autonomous resume <run-id> --reload-config --extend-seconds 600
+```
 
-# 已有原生规划也可直接接入
-spec-autonomous inspect --framework openspec --change add-team-auth
-spec-autonomous run --framework openspec --change add-team-auth --autonomous --max-workers 3
+progress 从 Git common directory 汇总主 checkout、所有受管 worker/candidate/integration worktree 和外部 worktree。原生任务计数标明 recorded/observed_at，验证状态与之分开；不可确认的状态显示 unknown/stale/partial。它不会启动 agent、修复工作区或执行仓库脚本。
 
-spec-autonomous run --framework speckit --feature specs/001-auth --autonomous --max-workers 3
-spec-autonomous status
+默认最终 fast-forward 原 checkout；原分支或文件发生变化时保留已验证分支并报告 delivery_pending。运行中 source drift 可在用户提交原生修改后 resume，由隔离合并与重新验证接续；冲突不会被 force/reset 覆盖。未知 hook 副作用需要明确确认：
+
+```sh
+spec-autonomous resolve-hook <run-id> --key '<phase>/<event>/<command>' \
+  --outcome completed --evidence '已检查外部结果和本地日志'
 spec-autonomous resume <run-id>
 ```
 
-安装绑定后，支持 slash commands 的宿主可直接用 `/autonomous` 或同义别名 `/auto`，另有 `/milestone`、`/progress`、`/resume`。仅支持 skills 的宿主采用其原生等价语法（如 `$autonomous` / `$auto`）。这些入口调用同一 CLI 协议，不持有第二份调度状态。
-
-底层依赖用户当前仓库的 SDD 框架：OpenSpec 项目走其 schema/instructions/artifacts，Spec Kit 项目走其原生 templates/skills/artifacts。init 负责检测和绑定，不迁移或替换 SDD；未检测到框架时给出选择/安装指引，不静默使用本产品自造流程。
-
-完整路径：目标 → 研究与 roadmap → 每 phase 的原生规划 → 执行图 → 自动实现/验证/修复/集成 → 下一 phase → 整体验收。每个 roadmap phase 对应一个原生 change/feature，已有单一来源直接映射为一个 phase。原生模式交出原生命令继续，autonomous 自动推进同一流程。
-
-from/to 指 roadmap 阶段的闭区间，only 只跑一个 phase；不能绕过范围外未完成依赖，范围完成不会提前归档整个 milestone。TOML 编排数据与原生 MD 规范分开保存，MD 的 frontmatter/标题/checkbox/任务 ID 通过 CLI 解析为带来源的结构化视图。progress 从 Git common dir 汇总所有 managed/external worktree，规划百分比与验证进度分开显示。
-
-## 工程约定
-
-```text
-crates/core/                 检测；后续拆出 adapter/planner/scheduler/state 等模块
-crates/cli/                  Rust CLI 入口
-packages/cli/                Node launcher；后续加入本产品 skills 与 installer
-scripts/                    本地构建、npm 组包、锁定源码复现
-openspec/specs/              已交付能力的主规范
-openspec/changes/            当前实施提案与任务
-docs/research/              调研、源码 permalink、upstreams.lock.json
-.references/                上游 clone，gitignore，只读，不随 npm 发布
-.spec-autonomous/           未来 TOML 编排声明与 runtime；实现时分别设置 Git 跟踪规则
-```
+## 本地 mock 与完整测试
 
 ```sh
-bun run check
-bun run test
-OPENSPEC_TELEMETRY=0 bun run spec:validate
-bun run references:clone
+bun run mock:create --framework openspec --output .artifacts/demo-openspec --fail-once add
+node packages/cli/bin/spec-autonomous.mjs run --path .artifacts/demo-openspec --milestone M001 --json
+
+bun run test:all
+# 等价入口（无需 Bun shell）：
+node scripts/test-all.mjs
 ```
 
-本仓库采用官方 `spec-driven` schema，OpenSpec CLI 固定 `1.13.0`，Codex 集成已生成到 `.agents/skills/`。自主执行路线仍是开放变更，不因规划文件齐全而标记实现完成。
+mock 只替代 agent 决策：实际 CLI、OpenSpec、Git worktrees、SQLite、进程、Node 断言、集成和恢复都在真实临时仓库运行。测试套件默认不调用付费模型或 npm publish；真实 Codex runner 验收单独记录在验收文档中。
+
+支持边界：一个写 coordinator 管理同仓多个并行 workers；外部 worktree 只观察。当前支持 repo-local OpenSpec、单个可确定 tracking file、Spec Kit 文档与原生核心规划步骤，未知必需 hook/条件/外部 store 会明确阻塞。worktree 不是 OS 沙箱，command runner 的执行权限由该 launcher 提供。自动远程 push/publish/deploy 与原生归档不在本地执行 profile 中；使用独立发布流程或原生工具。
+
+本机已验证 macOS arm64。其他平台的构建和测试 workflow 已配置，未经实际运行的平台不记作通过。项目继续通过 OpenSpec 清单维护剩余真实发布与平台验收工作。

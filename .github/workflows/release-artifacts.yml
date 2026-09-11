@@ -30,6 +30,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked --target ${{ matrix.target }} -p spec-autonomous-cli
       - run: ./target/${{ matrix.target }}/release/${{ matrix.executable }} detect --json
@@ -49,7 +52,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: .artifacts/binaries
-      - run: node scripts/package-release.mjs
+      - run: node scripts/package-release.mjs --repository "https://github.com/$GITHUB_REPOSITORY"
       - run: node scripts/pack-release.mjs
       - uses: actions/upload-artifact@v4
         with:

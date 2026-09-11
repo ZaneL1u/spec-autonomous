@@ -1,0 +1,111 @@
+name: Prepare or publish npm release
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build release artifacts run from this repository's default branch
+        required: true
+        type: string
+      publish:
+        description: Publish validated tarballs (false performs offline checks only)
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    outputs:
+      head_sha: ${{ steps.source.outputs.head_sha }}
+      artifact_id: ${{ steps.source.outputs.artifact_id }}
+    steps:
+      - name: Validate source workflow, commit and artifact
+        id: source
+        uses: actions/github-script@v7
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        with:
+          script: |
+            const value = process.env.BUILD_RUN_ID;
+            if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('Invalid build run ID');
+            const repository = (await github.rest.repos.get(context.repo)).data;
+            if (context.ref !== `refs/heads/${repository.default_branch}`) throw new Error('Dispatch this workflow from the default branch');
+            const workflow = (await github.rest.actions.getWorkflow({...context.repo, workflow_id: 'release-artifacts.yml'})).data;
+            const run = (await github.rest.actions.getWorkflowRun({...context.repo, run_id: Number(value)})).data;
+            if (run.workflow_id !== workflow.id || run.event !== 'workflow_dispatch' || run.status !== 'completed' || run.conclusion !== 'success') throw new Error('Source is not a successful release-artifacts workflow run');
+            if (run.head_repository?.id !== repository.id || run.head_branch !== repository.default_branch || !/^[0-9a-f]{40}$/.test(run.head_sha)) throw new Error('Source must come from this repository default branch');
+            if (run.head_sha !== context.sha) throw new Error('Build and publish must use the same commit so npm provenance matches the artifact source; run release-artifacts at this commit first');
+            if (repository.private) throw new Error('This provenance workflow requires a public repository');
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: Number(value), per_page: 100});
+            const matches = artifacts.filter(item => item.name === 'npm-release-tarballs' && !item.expired);
+            if (matches.length !== 1) throw new Error('Expected exactly one nonexpired npm-release-tarballs artifact');
+            core.setOutput('head_sha', run.head_sha);
+            core.setOutput('artifact_id', String(matches[0].id));
+            await core.summary.addHeading('Verified release source').addTable([
+              [{data:'Field',header:true},{data:'Value',header:true}],
+              ['Build run',String(run.id)],['Commit',run.head_sha],['Artifact',String(matches[0].id)]
+            ]).write();
+  release:
+    needs: source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    # Repository administrators must configure required reviewers/branch rules
+    # on this environment; declaring its name alone does not create protection.
+    environment: npm-release
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Verify npm trusted publishing support
+        shell: bash
+        run: |
+          node --version
+          npm --version
+          node --input-type=module -e 'import {execFileSync} from "node:child_process"; const [major,minor,patch]=execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number); if(major<11||(major===11&&(minor<5||(minor===5&&patch<1)))) throw Error("OIDC publishing requires npm >=11.5.1");'
+      - name: Download exact source artifact
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact_id }}
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: .artifacts/npm
+          merge-multiple: true
+      - name: Offline tarball validation (always)
+        shell: bash
+        run: |
+          mkdir -p .artifacts/publish-logs
+          node scripts/publish-release.mjs --input .artifacts/npm 2>&1 | tee .artifacts/publish-logs/dry-run.log
+      - name: Publish exact platform packages before the wrapper
+        if: ${{ inputs.publish }}
+        shell: bash
+        env:
+          NPM_RELEASE_READY: ${{ vars.NPM_RELEASE_READY }}
+        run: |
+          if [ "$NPM_RELEASE_READY" != 'true' ]; then
+            echo 'Configure npm package ownership, seven trusted publishers, and npm-release protection; then set environment variable NPM_RELEASE_READY=true.' >&2
+            exit 1
+          fi
+          node scripts/publish-release.mjs --input .artifacts/npm --publish --tag next 2>&1 | tee .artifacts/publish-logs/publish.log
+      - name: Preserve release check logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-checks-${{ inputs.build_run_id }}-${{ github.run_id }}
+          path: .artifacts/publish-logs/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

@@ -10,10 +10,11 @@ context: |
   Init binds host skills/commands to the user's existing SDD provider; it never
   silently replaces their framework or substitutes a private SDD workflow.
   Stack: Rust workspace, Node.js 22+ npm launcher, Bun 1.4.2, Rust 1.98.1.
-  Bootstrap currently implements only read-only detection and npm packaging;
-  product skills, roadmap, bounded execution and all-worktree progress are planned.
-  Runtime is planned in autonomous-orchestration; it is not implemented yet.
-  Existing specs own requirements. A future SQLite ledger owns attempts/evidence.
+  The local alpha implements skills, roadmap, native planning, bounded concurrent
+  execution, source CAS, verification/repair/recovery and all-worktree progress.
+  Existing specs own requirements. The Git common-dir SQLite ledger owns attempts
+  and evidence. See docs/architecture.md and docs/validation/autonomous.md for
+  implemented protocol and evidence; remote npm publishing/platform CI remain open.
   Each worker uses a fresh session and isolated worktree; the coordinator alone
   integrates code and writes shared completion state. Unknown write sets serialize.
   Use docs/research/upstreams.lock.json for upstream compatibility baselines.

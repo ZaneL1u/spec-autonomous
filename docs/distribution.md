@@ -14,7 +14,7 @@ Node.js launcher 负责平台选择、argv/stdio/退出码与 SIGINT/SIGTERM 转
 
 | npm 包 | Rust target | runner |
 | --- | --- | --- |
-| autonomous（别名 auto） | 纯 Node launcher，精确版本 optionalDependencies | 组包 job |
+| spec-autonomous | 纯 Node launcher，精确版本 optionalDependencies | 组包 job |
 | spec-autonomous-darwin-arm64 | aarch64-apple-darwin | macos-14 |
 | spec-autonomous-darwin-x64 | x86_64-apple-darwin | macos-15-intel |
 | spec-autonomous-linux-arm64 | aarch64-unknown-linux-gnu | ubuntu-22.04-arm |
@@ -37,13 +37,23 @@ Linux 先支持 glibc，目标构建基线 Ubuntu 22.04；musl/Alpine 返回明�
 2. 全部测试、strict spec validation 通过；执行 `release-artifacts.yml` 六平台原生构建与 CLI smoke。当前 workflow 为手动触发，组包后先生成 tgz 再上传，以保留 Unix binary 权限，尚不自动 publish。
 3. 组包后逐包 `npm pack --dry-run` 检查内容，生成真实 tarball；排除源码 clone、runtime state、私钥、测试 fixture。保存 tarball integrity 和对应 Git commit。
 4. 在各原生 runner 的空目录安装匹配平台包和 wrapper tarball，`--ignore-scripts` 模式下运行 version/detect；另验证 Bun 全局安装、缺失 optional dependency 的错误、Node 22。
-5. 使用 npm trusted publishing / provenance 绑定受信任发布 workflow（尚未配置）；先发布六个平台包并确认 registry 可取，再发布 wrapper 到 `next`，验收后提升稳定 tag。
+5. 使用已准备的 publish-npm.yml，并在真实 npm/GitHub 账号中绑定 trusted publishing / provenance（账号侧尚未配置）；先发布六个平台包并确认 registry 可取，再发布 wrapper 到 `next`，验收后提升稳定 tag。
 6. 任一步失败，不发布指向缺失平台依赖的 wrapper；同版本不可变，修复用新版本。回退通过恢复 dist-tag 指向已验收版本。
 
-发布和远程 CI 属于后续工作，本次不会把本机打包成功描述成六平台和 registry 发布完成。
+发布脚本和工作流已经实现并通过离线测试；真实发布和远程 CI 仍需目标仓库/账号环境。本机打包成功不等于六平台或 registry 发布完成。
 
-## 增补：产品 skills 与结构化资源（待实现）
+## 产品 skills 与结构化资源
 
-wrapper 包还将承载 milestone/autonomous/progress/resume 的 SKILL.md、auto alias 入口与相对路径 references。需要同步修改 npm files 白名单和 release assembler 的复制清单，再从真实 tarball 验证主入口、别名及依赖完整。当前包只有 bootstrap launcher/binary，尚未包含这些产品 skills。
+wrapper 已包含 milestone/autonomous/auto/progress/resume 五个 SKILL.md。npm files 白名单与 release assembler 复制清单已同步，真实 npm tarball 测试验证入口/别名均随包交付；原生上游框架、研究 clone 和 mock fixtures 不进入产品包。
 
 用户安装 CLI 后在仓库执行 `spec-autonomous init`，检测其现有 SDD 和宿主，绑定 /autonomous、/auto 等入口；高级配置可用 `skills install --agent <id> --scope project`。不使用 npm postinstall 猜仓库路径。安装/升级/卸载按自有 hash manifest 操作，冲突不覆盖；仅 skills 宿主显示其等价语法。skills 调用同一 Rust CLI schema，TOML 模板如随包提供也进入组包校验。
+
+## 发布前校验与受信任发布
+
+`node scripts/publish-release.mjs --input .artifacts/npm` 默认为离线 dry-run：检查七个真实 tarball、SHA256SUMS、版本一致、精确 optionalDependencies、无 lifecycle scripts、二进制格式/架构和 SHA512。文本平台 fixture 会被拒绝；header 检查仍不能取代真实原生运行。
+
+只有显式 `--publish --tag next` 才接触 registry：先检查全部既存版本，只有 integrity 相同才复用；逐一发布六个平台并等待 registry 可见，重新核对六包后才发布 wrapper。任一错误阻止 wrapper，部分已发布平台版本保留并可在相同 bytes 下续接，不自动回滚已发布的不可变版本。
+
+`publish-npm.yml` 默认 dry-run，校验输入来自同仓库、默认分支、同一 head SHA 的成功 release-artifacts run，并下载唯一对应 artifact。发布 job 使用 npm-release environment 和 OIDC/provenance；维护者仍需配置保护规则、七个包的名称所有权/Trusted Publisher，然后设置 environment variable `NPM_RELEASE_READY=true`。声明 environment 名字不等于保护规则已经存在。本地没有触发工作流或发布。
+
+release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真实 repository.url 写入全部七包；本地也可显式传 `--repository https://github.com/<owner>/<repo>`。没有仓库来源时不虚构 URL。升级稳定 tag 或回退 tag 均由维护者基于已完成的 registry 安装 smoke 执行，尚未演练真实 tag 变更。

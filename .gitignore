@@ -9,3 +9,11 @@ packages/cli/native/
 .env
 .env.*
 !.env.example
+
+# Spec Autonomous declarations (runtime lives in the Git common directory)
+!.spec-autonomous/
+.spec-autonomous/*
+!.spec-autonomous/config.toml
+!.spec-autonomous/milestones/
+!.spec-autonomous/plans/
+!.spec-autonomous/skills-installed.toml

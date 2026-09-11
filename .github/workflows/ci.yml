@@ -6,13 +6,19 @@ permissions:
   contents: read
 env:
   OPENSPEC_TELEMETRY: '0'
+  DO_NOT_TRACK: '1'
+  RUST_BACKTRACE: '1'
 jobs:
   check:
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,11 +27,55 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - run: rustup show
-      - run: bun install --frozen-lockfile
-      - run: bun run check
-      - run: bun run test
-      - run: bun run spec:validate
-      - run: bun run build
-      - run: node packages/cli/bin/spec-autonomous.mjs detect --json
-      - run: bun run pack:local
+      - name: Prepare logs and record toolchain
+        run: |
+          mkdir -p .artifacts/ci-logs
+          rustup show 2>&1 | tee .artifacts/ci-logs/rustup.log
+          rustc -vV 2>&1 | tee .artifacts/ci-logs/rustc.log
+          node --version 2>&1 | tee .artifacts/ci-logs/node.log
+          npm --version 2>&1 | tee .artifacts/ci-logs/npm.log
+          bun --version 2>&1 | tee .artifacts/ci-logs/bun.log
+          git --version 2>&1 | tee .artifacts/ci-logs/git.log
+          git config --global user.name 'Spec Autonomous CI'
+          git config --global user.email 'spec-autonomous-ci@example.invalid'
+          git config --global commit.gpgsign false
+      - name: Install locked workspace dependencies
+        run: bun install --frozen-lockfile 2>&1 | tee .artifacts/ci-logs/install.log
+      - name: Check Rust formatting and lint
+        run: bun run check 2>&1 | tee .artifacts/ci-logs/check.log
+      - name: Rust unit and public API contracts
+        run: cargo test --workspace --locked -- --nocapture 2>&1 | tee .artifacts/ci-logs/rust-contracts.log
+      - name: Real pinned OpenSpec contract
+        run: >-
+          cargo test -p spec-autonomous-core --locked --test provider_contracts
+          real_openspec_plans_then_accepts_skipped_specs_and_custom_tracking_artifact
+          -- --ignored --exact --nocapture
+          2>&1 | tee .artifacts/ci-logs/openspec-contract.log
+      - name: Node launcher, skill assets and package contracts
+        run: >-
+          node --test --test-reporter=tap
+          packages/cli/test/*.test.mjs scripts/test/*.test.mjs
+          2>&1 | tee .artifacts/ci-logs/node-contracts.tap
+      - name: Build debug CLI for e2e and failure injection
+        run: cargo build -p spec-autonomous-cli --locked 2>&1 | tee .artifacts/ci-logs/debug-build.log
+      - name: Autonomous milestone, verification and recovery e2e
+        run: >-
+          node --test --test-concurrency=2 --test-reporter=tap tests/e2e/*.test.mjs
+          2>&1 | tee .artifacts/ci-logs/e2e.tap
+      - name: Validate OpenSpec requirements
+        run: bun run spec:validate 2>&1 | tee .artifacts/ci-logs/spec-validation.log
+      - name: Build native release and smoke the npm launcher
+        run: |
+          bun run build 2>&1 | tee .artifacts/ci-logs/release-build.log
+          node packages/cli/bin/spec-autonomous.mjs detect --json 2>&1 | tee .artifacts/ci-logs/launcher-smoke.log
+      - name: Pack local npm tarball without publishing
+        run: bun run pack:local 2>&1 | tee .artifacts/ci-logs/local-pack.log
+      - name: Upload test and failure logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-${{ matrix.os }}
+          path: .artifacts/ci-logs/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
