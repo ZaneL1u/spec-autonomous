@@ -124,7 +124,7 @@ export async function runCli(argv, { binary: explicitBinary, run = runProcess, f
   const preferences = outputPreferences(argv);
   let diagnostic = '', exitCode = 0;
   try {
-    const binary = explicitBinary || resolveBinary();
+    const binary = explicitBinary || await resolveBinary();
     const described = await run([binary, 'cli-metadata', 'describe'], { timeout: 15_000 });
     if (described.code !== 0) throw new Error(`cli_metadata_failed: ${described.stderr}`);
     const schema = JSON.parse(described.stdout).data;

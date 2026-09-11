@@ -69,3 +69,7 @@ release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真
 ## alpha.4 CLI 框架
 
 当前 alpha.4 使用 Commander.js 14.0.3 + Clap。npm wrapper 增加精确版本的 `commander` 依赖，由 npm / Bun 安装；全新安装需 registry 或已填充的包缓存。无需 lifecycle scripts，仍支持私有 tgz 分发。发行 gate 仅允许 wrapper 依赖该 Commander 版本，六个平台包继续拒绝所有 JS dependencies。详见 [CLI 接口](cli-interface.md)。
+
+## alpha.5 私有 Git 入口
+
+根 package.json 可直接通过 Git SSH 全局安装，第一次调用复用 gh 登录获取 Release 的本机二进制并校验固定 SHA256。原有独立 CLI tarball 继续携带 native binary。见 [私有 Git 安装](private-git-install.md)。源码与二进制发布在同一私有仓库；binary 只作为 Release asset，不进入 Git 历史。

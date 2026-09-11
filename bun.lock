@@ -3,19 +3,12 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "spec-autonomous-workspace",
-      "devDependencies": {
-        "@fission-ai/openspec": "1.13.0",
-      },
-    },
-    "packages/cli": {
       "name": "spec-autonomous",
-      "version": "0.1.0-alpha.4",
-      "bin": {
-        "spec-autonomous": "bin/spec-autonomous.mjs",
-      },
       "dependencies": {
         "commander": "14.0.3",
+      },
+      "devDependencies": {
+        "@fission-ai/openspec": "1.13.0",
       },
     },
   },
@@ -143,8 +136,6 @@
     "shebang-regex": ["shebang-regex@3.0.0", "", {}, "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="],
 
     "signal-exit": ["signal-exit@4.1.0", "", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
-
-    "spec-autonomous": ["spec-autonomous@workspace:packages/cli"],
 
     "stdin-discarder": ["stdin-discarder@0.3.2", "", {}, "sha512-eCPu1qRxPVkl5605OTWF8Wz40b4Mf45NY5LQmVPQ599knfs5QhASUm9GbJ5BDMDOXgrnh0wyEdvzmL//YMlw0A=="],
 

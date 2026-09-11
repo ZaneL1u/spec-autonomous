@@ -17,7 +17,8 @@ context: |
   immutable work packets and apply-result consumes host-owned receipts.
   CLI and MCP share one capability registry, including granular document,
   roadmap, worktree, state, verification, repair and archive operations.
-  Current change: cli-framework-standardization adds Commander + Clap in alpha.4;
+  Current change: private-git-install adds the private Git facade in alpha.5;
+  cli-framework-standardization defines Commander + Clap;
   provider-bootstrap defines JS installation in alpha.3;
   host-driven-capabilities defines the passive core. Alpha.1 launcher evidence is historical.
   See docs/architecture.md and docs/validation/host-driven.md for

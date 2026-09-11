@@ -1,16 +1,31 @@
 {
-  "name": "spec-autonomous-workspace",
+  "name": "spec-autonomous",
   "private": true,
-  "version": "0.1.0-alpha.4",
+  "description": "Git-installable facade for the Spec Autonomous CLI",
+  "type": "module",
+  "bin": {
+    "spec-autonomous": "packages/cli/bin/spec-autonomous.mjs"
+  },
+  "files": [
+    "packages/cli/bin",
+    "packages/cli/lib",
+    "packages/cli/skills",
+    "packages/cli/package.json",
+    "git-install.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/ZaneL1u/spec-autonomous.git"
+  },
+  "version": "0.1.0-alpha.5",
   "packageManager": "bun@1.4.2",
   "engines": {
     "node": ">=22"
   },
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "build": "node scripts/build-native.mjs",
+    "build:native": "node scripts/build-native.mjs",
     "test": "cargo test --workspace --locked && node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs",
     "check": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "spec:validate": "openspec validate --all --strict --no-interactive",
@@ -24,6 +39,9 @@
     "test:all": "node scripts/test-all.mjs",
     "mock:create": "node scripts/create-mock-repo.mjs",
     "mock:run": "node tests/mock-host.mjs"
+  },
+  "dependencies": {
+    "commander": "14.0.3"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.0"
