@@ -4,15 +4,17 @@
 
 ## 1. Context 与产品承诺
 
-**用户用 OpenSpec / Spec Kit 规划好一个里程碑，然后启动一次，系统自主把它开发到验收完成。** 正常任务交接、测试失败后的范围内修复、后续任务派发均无需用户再次输入“继续”。并行 agent 是加速手段，主逻辑线程负责里程碑进度、决策与恢复。
+**用户给定里程碑目标，系统基于 OpenSpec / Spec Kit 原生流程规划 roadmap，再自主开发到验收完成；已有规划也可从当前阶段接入。** 用户可通过 skill 或 CLI 选择原生手动推进，或指定 from/to 范围自主推进。正常任务交接、范围内修复与后续派发无需反复“继续”；主线程维护里程碑和决策。
 
 OpenSpec 有工件 DAG 和 JSON 指令；新版 Spec Kit 已有 workflow、fan-out、resume 和 converge。本项目交付跨这些来源的任务级自主闭环，包括隔离、验证、受控集成和可恢复推进。借鉴 GSD 的 auto loop、fresh session、小摘要、host 验证，不引入整套 GSD harness。源码证据见 [研究汇总](../../../docs/research/README.md)。
 
-首版一个 OpenSpec change 或一个 Spec Kit feature 对应一个完整 milestone，覆盖其中全部任务和需求验收。后续可用显式 manifest 聚合多个 change/feature。产品规划仍由上游工具完成；执行层可以自动拆任务和补技术修复，不得悄悄新增产品需求。
+首版层级为 Milestone → Roadmap phases → 原生工件流程 → 执行 tasks。每个 roadmap phase 绑定一个 OpenSpec change 或一个 Spec Kit feature；已有单一来源可自动建立单 phase 映射。一个 milestone 首版选择一种 framework，多个 phase 可对应多个该框架的原生单元；跨 framework 混合 milestone 后置。目标/约束先确定，然后通过原生工件规范细化需求，不另造一套产品 spec 语言。原生任务文档内部的 Phase 标题与这里的 roadmap phase 是不同层级。
+
+底层依赖的是**用户仓库本身的 SDD provider**：默认检测现有 OpenSpec/Spec Kit 配置、已安装 integration、schema/templates 和原生 artifacts，`--framework` 只用于明确选择。本工具提供 orchestration overlay，不内置一个在 provider 缺失时悄悄替代用户框架的 SDD 引擎。只有 TOML 执行计划而没有有效原生 provider/source 时不能启动；未检测到 SDD 时给出 setup/handoff 指引，由用户选择框架。
 
 ## 2. Goals / Non-Goals
 
-目标：自动推进整个已规划里程碑；每任务新上下文；安全地并行独立工作；复用现有规范；失败可恢复；npm 安装提供原生 CLI，用户无需 Rust/Bun/Python 或数据库服务。
+目标：skill 驱动目标→roadmap→原生规划→实现的整里程碑闭环；按 from/to/only 运行阶段范围；原生/自主两种方式可交接；每任务新上下文与独立 worktree；失败可恢复；npm 分发原生 CLI 和配套 skills。读取与执行已有 Spec Kit 文档无需 Python，若选用上游初始化/模板解析 CLI bridge，则单独声明其运行时依赖。
 
 首版不做 GUI/TUI、云协同、知识图谱、模型路由平台、浏览器 daemon、完整 IDE、无限自主需求生成或全 vendor 兼容。不 fork 上游规范框架。Git worktree 只隔离工作文件，不被宣传为 OS 沙箱。
 
@@ -22,16 +24,27 @@ OpenSpec 有工件 DAG 和 JSON 指令；新版 Spec Kit 已有 workflow、fan-o
 
 ```sh
 spec-autonomous detect --json
+spec-autonomous init
 spec-autonomous inspect --framework openspec --change add-team-auth --json
 spec-autonomous doctor --runner command --json
 
-# 无有效执行计划时自动导入已有规划并完成执行层拆分
+# 从目标开始规划 roadmap，native 模式完成里程碑规划后给出原生下一步
+spec-autonomous milestone new "MVP：团队邀请与权限" --framework openspec --mode native
+# 同一入口可在规划后继续自主开发整个里程碑
+spec-autonomous milestone new "MVP：团队邀请与权限" --framework openspec --mode autonomous
+spec-autonomous roadmap --milestone M001 --format toml
+spec-autonomous progress --all-worktrees
+spec-autonomous progress --all-worktrees --format json
+spec-autonomous run --milestone M001 --from 2 --to 4 --mode autonomous --max-workers 3
+spec-autonomous run --milestone M001 --only 3 --mode autonomous
+
+# 已有原生 change/feature 也能接入；自动补齐缺失规划工件
 spec-autonomous run --framework openspec --change add-team-auth --autonomous --max-workers 3
 spec-autonomous run --framework speckit --feature specs/001-auth --autonomous --max-workers 3
 
 # 可选：先查看可复用的执行图
 spec-autonomous plan --framework openspec --change add-team-auth --json
-spec-autonomous run --plan .spec-autonomous/plans/<plan-id>.json --autonomous
+spec-autonomous run --plan .spec-autonomous/plans/<plan-id>.toml --autonomous
 spec-autonomous status [run-id] --json
 spec-autonomous pause <run-id>
 spec-autonomous resume <run-id>
@@ -41,15 +54,162 @@ spec-autonomous report <run-id>
 
 默认前台运行，status 可从另一进程读取账本，无常驻 server。resume 使用原 run、选择与授权策略，不新建相同里程碑。多框架/多 feature/多 change 必须确定选择，非交互返回候选和 selection_required，不猜最新编号。`--feature` 相对项目根解析，ID 缩写仅唯一匹配时使用。
 
+`--mode native|autonomous` 是统一模式字段，原方案的 `--autonomous` 保留为别名；冲突参数报错。`milestone new` 默认 native：生成目标/roadmap 以及原生单元引用，交出下一步；显式 autonomous 才持续进入后续开发。`--from/--to/--only` 需要已存在的 roadmap，不能在尚未产生阶段时猜编号。
+
+### 3.1 随 npm 发布的 skill 入口
+
+| Skill（拟定名称） | 用户用途 | 对应引擎功能 |
+| --- | --- | --- |
+| milestone | 输入里程碑目标、研究并生成 roadmap，选择推进方式 | milestone new / 原生规划 bridge |
+| autonomous（别名 auto） | /autonomous 或 /auto，运行完整 milestone 或 from/to/only 范围 | run / provider detection / 阶段路由 |
+| progress | 汇总所有 worktree 的进度、阻塞、下一步；native 模式返回原生动作 | progress --all-worktrees / roadmap / workflow next |
+| resume | 从原生或自主检查点继续，保留原选择与预算 | resume / 重新协调来源 |
+
+例如在支持 slash command 的宿主中（均待实现）：
+
+```text
+/milestone "MVP：团队邀请与权限" --mode native
+/autonomous "完成本里程碑的团队邀请与权限 MVP"
+/autonomous --milestone M001 --from 2 --to 4
+/auto --milestone M001 --only 3
+/progress --all-worktrees
+/resume <run-id>
+```
+
+`/autonomous` 是主入口，`/auto` 为严格同义别名：参数、provider、scope、run ID 和 resume 均相同，不是另一条快捷执行逻辑。宿主 profile 支持命令 alias 时生成映射；只支持 skill 文件时生成最小 alias skill，引用同一 CLI handler 和资源，避免复制整套指令。
+
+具体 `$name`、`/name`、command 文件或 skill 目录由宿主 profile 生成。仅支持 skills 的宿主使用其原生等价入口，如 `$autonomous` / `$auto`，不能声称 npm 可以改造宿主命令解析器。安装体验是 npm 安装 CLI 后，在仓库执行一次 `spec-autonomous init`：检测用户已有 SDD 和宿主，写本产品配置与 commands/skills 绑定，后续直接使用短命令。歧义时只要求选择，不替换既有框架。
+
+skill 源码计划位于 `packages/cli/skills/<name>/SKILL.md`，配套 references 按需加载，npm files 和 release assembler 同时包含它们。底层 `skills install --agent <id> --scope project` 仍可显式使用；npm 全局安装本身不猜 cwd、不自动改仓库。init 是绑定编排工具，不自动迁移或重置 SDD。
+
+installer 保存自有文件/版本/hash manifest；升级只覆盖未被用户修改的自有文件，碰到 /auto 等同名第三方命令或手写 skill 报冲突，可显式配置命名空间，绝不覆盖。uninstall 不删除其他 skill。现有 openspec-* 是上游集成，不是本产品入口，不能据此宣称 /autonomous 或 /auto 已交付。
+
+skill 只负责识别用户意图、选择 milestone、展示必要决策和调用同一 Rust 协议；状态、预算和范围判定不能在 skill prompt 中再实现一份。每次只加载当前阶段所需 instructions，完整 worker 记录留磁盘。终端用户和 skill 用户得到同样的范围、检查点和完成语义。
+
+### 3.2 Roadmap 与原生流程的关系
+
+可版本化的声明保存在 `.spec-autonomous/milestones/M001/milestone.toml`，包含 goal/constraints、framework、稳定 phase IDs、显示标号、依赖和 source refs；ROADMAP.md 是可读视图。实现时调整 gitignore，仅排除 runtime DB/logs，不排除里程碑规划文件。manifest 是编排拓扑，产品需求、设计和任务正文仍在原生 Markdown，不能复制到私有 DB 后降为投影。配置与本产品新增编排数据优先 TOML；保留 OpenSpec 等上游规定的 YAML/frontmatter 格式。
+
+```toml
+schema_version = 1
+id = "M001"
+goal = "团队邀请与权限 MVP"
+framework = "openspec"
+revision = 1
+
+[[phases]]
+id = "P001"
+label = "1"
+title = "身份基础"
+depends_on = []
+source = { kind = "openspec-change", id = "identity-foundation" }
+
+[[phases]]
+id = "P002"
+label = "2"
+title = "邀请加入团队"
+depends_on = ["P001"]
+source = { kind = "openspec-change", id = "team-invitations" }
+```
+
+Spec Kit source 改为 `{ kind = "speckit-feature", path = "specs/002-team-invitations" }`。一个来源单元只归一个 roadmap phase，避免两个 phase 同时管理同一 tasks 文件。requirements/acceptance 用原生文件引用建立覆盖关系；goal 是授权边界，不是另一份竞争性产品规范。
+
+先形成完整 roadmap 的目标、阶段和依赖，再按阶段按需生成细节计划；不必把所有后续 tasks 一次装入主上下文。默认不提前编写依赖于未完成接口的后续详细设计，允许独立研究重叠。ROADMAP.md 的机器生成状态不能覆盖手工编辑：检测到视图变更时保留并要求 reconcile 到 manifest，重生成前不静默丢弃。
+
+### 3.3 from/to/only 的确定语义
+
+与 GSD 的用户语义一致：from/to 指 roadmap phase，闭区间；only 只跑一个 phase，且与 from/to 互斥。支持稳定 phase ID 或唯一显示标号，标号按 manifest 顺序解析，不用浮点比较（3.1 与 3.10 不合并）。缺省 from 为首个未通过的 phase，缺省 to 为当前 roadmap 末尾；不存在、反向或歧义范围直接报错。
+
+范围过滤不删依赖。选中 phase 若依赖范围外尚未完成的 phase，返回 prerequisite_outside_range 和需先完成的项；不越过依赖、不擅自扩大 from/to。已完成阶段仅在原生 source/revision 和验收仍有效时跳过，否则重验或 replan。
+
+每 phase 结束重读 roadmap 与原生状态，记录 roadmap revision。新增阶段只有在原授权目标、依赖和选定边界内时才能自动纳入并记录原因；越界或语义变化暂停澄清，既不忽略也不自动扩大 scope。已绑定的范围端点用稳定 ID 保存，不能因插入阶段把 --to 的含义悄悄变掉。
+
+到达 to/only 后，run 返回 scope_completed 与 next action，milestone 仍可 in_progress；不自动执行整个 milestone 的 audit/archive/cleanup，尤其不能把范围完成误标为全里程碑完成。完整运行才触发最终验收和已授权的 lifecycle。边界与 next action 在 resume 中保留。
+
+### 3.4 原生与自主模式的交接
+
+native 用户可以直接使用安装好的 OpenSpec/Spec Kit 命令或 skills 操作同一批原生 artifacts，完全不依赖本项目 runtime 持续在线。我们的 native 模式只读取进度、生成原生下一步指令/上下文并交出控制权，不隐式启动自动执行。卸载本产品后，用户仍能按其 SDD 框架继续工作；TOML overlay 的存在不是原生使用前置条件。
+
+autonomous 模式消费同一 NativeWorkflowBridge.next_action，自动启动 fresh planning/execution agent、检查产物与门、推进下一阶段。OpenSpec 的 schema/template/context/rules，Spec Kit 的 constitution/templates/checklists/hooks 都保留；两种模式差别在推进与调度，不另写一套规划方法。
+
+原生→自主：锁定当前原生文件与 Git revision，导入已完成工件、重验来源任务，再从缺失步骤开始；不要求重写既有 plans。自主→原生：停止派发并协调在途 worker，输出一个可直接操作的 planning/integration checkout 与明确原生命令；先安全交付 accepted checkpoint 或给出该分支路径，不能把用户送回仍过期的原 checkout。交接后释放运行锁，不允许两个 coordinator 同时写。
+
+再次 resume 时重新读取该交接位置的 source，保留用户修改并废弃受影响的旧图/证据；相同内容不重跑，合法手工推进登记为 externally_observed，再做必要验收。来源文件的变化与实际代码完成分别核对，不能只靠 native checkbox 全勾跳过验证。
+
+### 3.5 CLI 统一读取 TOML 与 Markdown 的结构化数据
+
+所有 skills 和外部 agent 优先通过 CLI 读取结构化状态，不各自拼 shell/regex 扫全仓 MD。`progress` 面向所有 worktree，`status <run-id>` 面向单 run，`roadmap --milestone` 读取阶段，`inspect --milestone M001 --phase P001` 读取原生工件和任务。新增命令支持默认 human、`--format json`、`--format toml`；`--json` 为 JSON 别名，与冲突 format 同时出现时报错。detect 的既有 JSON 保持兼容。流式事件仍用 NDJSON，TOML 只输出完整快照。
+
+| 数据 | 权威来源 | CLI 读取结果 |
+| --- | --- | --- |
+| 项目策略、runner/skill profile | config.toml 和相关 TOML | 有效配置、来源和能力 |
+| milestone/phase 拓扑和 source refs | milestone.toml | roadmap/phase 依赖、阶段编号 |
+| 规范、设计、原生 tasks | 上游 Markdown 与其规定的元数据 | requirements、scenarios、task IDs、checkbox、phase/story/frontmatter |
+| attempts、leases、验证/集成事件 | 本地事务账本 | worker/task 状态与证据摘要 |
+| 实际 worktree | Git worktree inventory | canonical path、branch/HEAD、locked/prunable/dirty 状态 |
+
+Markdown 的结构来自 adapter profile：OpenSpec 的 Requirement/Scenario 标题、任务清单及 schema；Spec Kit 的 T-ID、[P]/[US]、phase、constitution；已存在的 YAML/TOML frontmatter 按原格式解析。不得要求用户把 spec 转成 TOML，也不为便于解析删正文、重排任务或统一替换原生 frontmatter。需要新增调度字段但上游没有扩展点时，写到 TOML sidecar，以稳定 source key 引用原始 MD。
+
+规范文本和机器提取字段一起输出，附 `source_path`、`source_hash`、`source_span`、`parser_profile`、`diagnostics`。代码块/注释、重复 ID、未知 frontmatter 或解析差异有明确诊断，不能猜测为零任务。Structured view 是源文件的有 provenance 读取结果；写操作仍经过源版本检查。
+
+JSON/TOML 两种表示遵守同一 schema_version。TOML 无 null，缺省字段用 omitted + availability/diagnostic 表达，不把 missing 变零或 false；IDs 和阶段标号保持字符串，时间统一 RFC3339 字符串。format 转换不能改变任务身份、依赖、unknown 状态或计数。
+
+### 3.6 所有 worktree 的 progress
+
+`spec-autonomous progress --all-worktrees` 从调用位置解析同一个 Git common dir，再用 Git worktree inventory 枚举全部 linked worktrees，包括主 checkout、managed integration、每个 worker、用户手工创建的 worktree。不从 cwd 单棵目录猜全局状态。全仓范围指这个 Git repository，跨不相关仓库聚合另做显式 workspace registry。
+
+以 canonical worktree ID/path 关联本工具的 milestone/run/phase/task/attempt 元数据；同一 source/task 在原 checkout、integration 和多个 attempt 中可能出现多次，聚合任务按稳定逻辑 ID 去重。并发数按真实 live worker 计，重试次数单列；不同 milestone 不共享 task namespace。外部 worktree 显示 external/unmanaged，无法确认的运行状态显示 unknown，不推断它空闲或完成。
+
+```toml
+schema_version = 1
+snapshot_id = "snapshot-01"
+generated_at = "2026-09-11T05:00:00Z"
+repository_id = "repo-01"
+consistency = "consistent"
+active_workers = 2
+
+[[worktrees]]
+id = "wt-worker-01"
+kind = "managed-worker"
+path = "/workspace/task-auth"
+branch = "codex/sa/run-01/task-auth/attempt-01"
+milestone_id = "M001"
+phase_id = "P002"
+run_id = "run-01"
+task_id = "task-auth"
+attempt_id = "attempt-01"
+status = "running"
+stage = "implement"
+lease_state = "live"
+accepted_head = "<commit>"
+
+[[worktrees]]
+id = "wt-user-01"
+kind = "external"
+path = "/workspace/manual-fix"
+status = "unknown"
+```
+
+每行还可包含最近 heartbeat、验证结果、blocker、next action、source revision、candidate HEAD，避免把存在未通过候选的工作区显示为绿色完成。原生规划进度（文件/checkbox）与本工具验证进度分别列出，不将 MD 百分比当验收百分比。未初始化账本时仍列出 Git worktrees 和可读取的 native 状态，不因 absence 隐藏整个仓库。
+
+只读 progress 不获取运行写锁、不调用 agent、不初始化/修复 worktree、不更新 checkout 的 MD。采用账本只读事务和有界 Git inventory；两者不是同一事务，输出 snapshot/time/consistency，检测并发增删、不可读或过期心跳时标 stale/partial 并保留诊断。不存在“查不到就零进度”的静默降级。
+
+Git common dir 的 `spec-autonomous/registry.toml` 是已知账本位置和 managed worktree 关联的可读索引，由唯一 coordinator 原子更新；进程租约/成功证据仍以事务账本核验，registry 不是锁或完成证明。读方检查路径归属和注册身份，不能据被篡改 registry 任意读取宿主文件。Git inventory 与 registry 不一致时显示 orphaned/prunable/unregistered 诊断，自动清理属于独立显式操作。
+
 新增 JSON 命令使用 `schema_version`、`data` 或 `error{code,message,details}` envelope；`run --json` 为明确声明的 NDJSON 事件流，诊断走 stderr。bootstrap detect 已有独立 report 形状，后续保持兼容。退出码计划：0 成功（detect inventory 可以为空/歧义），2 参数/选择/协议，3 缺工具或能力，4 暂停/需要输入，5 失败，130 用户中断；详细理由在 JSON 中。
 
 ## 4. Architecture 与模块接口
 
 ```mermaid
 flowchart TD
+  SKILL[Milestone / Autonomous / Progress / Resume skills] --> CLI
   CLI[Node launcher → Rust CLI] --> HOST[Rust supervisor]
+  GOAL[Milestone goal] --> ROADMAP[TOML roadmap + native source refs]
+  ROADMAP --> FLOW[NativeWorkflowBridge: next planning or execution action]
   OS[OpenSpec CLI JSON] --> ADAPTER[SpecAdapter]
   SK[Spec Kit artifacts] --> ADAPTER
+  ADAPTER --> FLOW
+  FLOW --> ADAPTER
   ADAPTER --> SNAP[Source snapshot + milestone scope]
   SNAP --> PLAN[Planner → validated task DAG]
   PLAN --> HOST
@@ -67,25 +227,28 @@ flowchart TD
 | 接口 | 职责 | 不承担 |
 | --- | --- | --- |
 | SpecAdapter | detect/select/inspect/snapshot/context/prepare_writeback | 模型运行、并发调度 |
+| NativeWorkflowBridge | 解析原生阶段/skill/template、next_action、规划缺失工件、检查 stage gate | 另造产品规范语言、跳过上游必需约束 |
 | AgentRunner | probe/start_fresh/events/cancel/collect_result | 决定任务或里程碑完成 |
 | Supervisor | DAG、状态机、预算、leases、验证、集成、恢复 | 复制上游模板系统、累积全量对话 |
 
 确定性 Rust 控制流拥有状态。语义分析交给短生命周期 planner/verifier/repair agent，它们返回结构化提议，host 校验后执行。无需一个永不结束、无限增长的主 LLM 会话；主线程由 milestone snapshot、decisions 和有界 summary 维护。
 
-core 内先按 discovery、adapters、plan、scheduler、runner、state、workspace、verification、report 分模块，边界稳定后再拆 crate。CLI 用 clap；计划 runtime 用 Tokio、rusqlite bundled、serde、内容 hash、Markdown parser。DAG 可先做小型拓扑实现，只有复杂度需要时才引入图库。Git 用已安装 CLI argv 调用，避免引入完整 Git 库。新增 runtime 依赖在实现阶段引入。
+core 内先按 discovery、adapters、workflow、milestone、plan、scheduler、runner、state、workspace、verification、progress/report 分模块。CLI 用 clap；计划 runtime 用 Tokio、rusqlite bundled、serde、TOML parser、内容 hash、Markdown parser。DAG 先做小型拓扑实现，必要时再引入图库。Git 使用 argv 调用；skill installer/package assets 不另持有调度状态。新增 runtime 依赖在实现阶段引入。
 
 采用独立 Rust 二进制，不使用 N-API，避免 Node ABI 和 Bun runtime 绑定。Node 只选择平台、转发参数/stdio/退出码/信号。npm 发行细节见 [distribution.md](../../../docs/distribution.md)。
 
 ## 5. Adapter 契约与支持范围
 
-`detect(root)` 只读；`select(root, selector)` 固定来源；`inspect(selection)` 返回 readiness/capability；`snapshot(selection)` 返回 source artifacts/tasks；`context(task, snapshot)` 构造输入；`prepare_writeback(task, expected_revision)` 产生 patch intent，唯一 coordinator 应用。
+`detect(root)` 只读；`select(root, selector)` 固定来源；`inspect(selection)` 返回 readiness/capability/next_action；`snapshot(selection)` 返回带 source provenance 的 artifacts/tasks；`context(unit, snapshot)` 支持规划或代码工作单元；`prepare_writeback(task, expected_revision)` 由唯一 coordinator 应用。NativeWorkflowBridge 将 inspector 的缺失工件转为可调度规划动作，只有明确用户决策、缺工具/能力或违反 gate 才阻塞。
 
 Readiness 必须分开 framework_detected、planning_ready、execution_supported、policy_ready。目录存在不代表可以自主开发。协议允许未知字段，缺失必需字段就失败。记录 upstream CLI version 和仓库模板/脚本 fingerprint，不能用全局新版本推断旧项目行为。
 
 | 能力 | OpenSpec 首个执行版本 | Spec Kit 接入版本 |
 | --- | --- | --- |
 | marker 检测 | 已实现 | 已实现 |
-| 任务/上下文导入 | 本地 change、CLI JSON | 显式 feature、文档解析 |
+| milestone/phase 初始化 | 用户目标→roadmap→本地原生 changes | 用户目标→roadmap→原生 features |
+| 原生规划驱动 | schema artifact DAG + instructions/templates | 已安装 integration skills/templates 的 specify/plan/tasks 等流程 |
+| 任务/上下文导入 | 本地 change、CLI JSON 和 MD provenance | 显式 feature、结构化 MD 解析 |
 | 完成回写 | 单一具体 tracking file | tasks.md，保留原生 task ID |
 | 根定位 | repo-local；外部 store 报不支持 | 项目子目录+feature；跨根先拒绝 |
 | 自定义 workflow | capability probe 成功才运行 | mandatory hooks 未实现时阻塞 |
@@ -94,7 +257,7 @@ Readiness 必须分开 framework_detected、planning_ready、execution_supported
 
 ### OpenSpec
 
-固定本地可执行文件，探测 version 和 JSON shape，使用 `list --json`、`status --change ... --json`、`instructions apply --change ... --json`，必要时读取 `instructions <artifact> ...`，以 `validate <change> --strict --json --no-interactive` 检查规划。
+固定本地可执行文件，探测 version 和 JSON shape。只读使用 list/status/instructions 的 JSON；写入新 phase 时通过官方 new change 创建原生单元。读取 schema 的 artifact IDs/requires/outputPaths，从当前 ready 工件获取 instructions/template/context/rules，派发 fresh planning worker，在受控原生路径形成工件，检查后再查询下一步。不能硬编码所有自定义 schema 都是 proposal/specs/design/tasks；无法解释的必需能力明确报错。apply-ready 后才进入任务执行图，以 strict validate 检查合法规划。
 
 `isPlanningComplete`/兼容 `isComplete` 是工件就绪；apply 的 all_done 是 checkbox 全勾，均非代码完成。默认 apply 只 gate tasks 文件，额外检查工件依赖与 strict validate。零任务、progress.total 与任务列表不一致、缺 tracking 契约不被当成功。
 
@@ -108,7 +271,9 @@ CLI task ID 可能是临时序号，Markdown 1.1 只是描述的一部分。内�
 
 ### Spec Kit
 
-文档 adapter 不要求 Python。读取 feature 的 spec、plan、tasks、constitution、相关 contracts 和只读 checklists。当前 profile 的选择顺序：显式 --feature、SPECIFY_FEATURE_DIRECTORY、.specify/feature.json；SPECIFY_FEATURE 仅是标签，不能定位 feature。旧 branch profile 另做固定 fixtures，未验证前不承诺。
+文档 adapter 不要求 Python。从头创建/规划时使用经过探测的本地 Spec Kit integration skills 和解析后的项目 templates/preset/extension 契约，依次完成适用的 constitution/specify/clarify/plan/checklist/tasks/analyze；必需 gate 保留，可选步骤由原生配置及 run policy 决定。CLI bridge 的 Python/uv 依赖单独列入 doctor；缺 bridge 时仍可读取已有文档并交接原生下一步，不能声称从头规划已可用。
+
+读取 feature 的 spec、plan、tasks、constitution、相关 contracts 和只读 checklists。当前 profile 的选择顺序：显式 --feature、SPECIFY_FEATURE_DIRECTORY、.specify/feature.json；SPECIFY_FEATURE 仅是标签，不能定位 feature。旧 branch profile 另做固定 fixtures，未验证前不承诺。
 
 每 worker 重映射 project/feature 绝对路径，不能指回主 checkout；不竞争写 feature.json。Git ignored 的 .specify/.agents 规则按 allowlist 快照注入，避免新 worktree 丢失约束；不复制 secrets 或依赖目录。
 
@@ -120,14 +285,14 @@ detect 不执行仓库脚本。optional native bridge 的 paths-only JSON 可帮
 
 ## 6. 稳定任务图与合理拆分
 
-先从现有约束构造保守图，再启动 fresh planner 补写集、输入、验证与子任务。规划层不重写产品 spec。每内部任务有明确成果、写入范围与验收；超大 upstream task 可拆多个内部任务，所有子任务集成且原任务验收通过才勾父 task。
+区分三层图：milestone 的 roadmap phase 图、每个原生单元的规划工件图、phase 内的实现 task 图。先基于用户目标与约束生成有验收引用的完整 roadmap，再按原生工件流程细化各 phase；最后执行层 planner 补写集、输入、验证与子任务。实现层拆分不自行改产品 spec。每内部任务有明确成果、写集与验收，所有子任务集成且原任务验收通过才勾父 task。声明式计划保存 TOML，下面是 CLI JSON 读取视图。
 
 ```json
 {
   "schema_version": 1,
   "plan_id": "plan-01",
   "revision": 1,
-  "milestone": {"framework": "openspec", "selector": "add-team-auth"},
+  "milestone": {"id": "M001", "phase_id": "P002", "framework": "openspec", "selector": "add-team-auth"},
   "source_snapshot": "sha256:...",
   "tasks": [{
     "id": "task-auth-model",
@@ -151,30 +316,39 @@ host 验证 ID 唯一、引用存在、无环、所有待做来源 task 被覆�
 ## 7. 整里程碑自主循环
 
 ```text
-preflight planned scope + runner + policy
-import source snapshot; reuse or derive valid execution graph
-while milestone is not terminal:
+resolve goal or existing milestone + mode + runner + policy
+if roadmap is absent: derive roadmap and native phase references from goal
+resolve bounded phase selection and outside-range prerequisites
+while selected scope is not terminal:
+    reread roadmap, native artifacts and accepted revision
+    next = NativeWorkflowBridge.next_action(current_phase)
+    if mode is native: return handoff path and original action
+    if next requires a product decision: persist needs_input
+    if next is planning: dispatch fresh planning agent using native contracts
+    if next is implementation: import/reconcile phase task graph
     reconcile completed attempts and unfinished integration intents
     validate candidate result; run host verification
     integrate valid work serially; verify combined revision
     write back satisfied source tasks in integration checkout
     classify failures; enqueue bounded in-scope repairs
     dispatch ready tasks while worker capacity and budget permit
-    if all tasks satisfied:
+    if current phase tasks satisfied: verify phase, refresh roadmap, advance within range
+    if bounded selection satisfied: deliver checkpoint and return scope_completed
+    if full milestone satisfied:
         run milestone acceptance and spec/code scope audit
         if in-scope gaps: revise repair graph and continue
-        if all conditions pass: deliver and complete
+        if all conditions pass: deliver and mark milestone completed
     await active work when useful progress remains
     otherwise persist precise blocker and pause/fail
 ```
 
-首版要求规划达到 adapter readiness；缺规划返回可操作诊断，不暗中编造新需求。可选未来 prepare 可桥接上游规划流程，但不改变“规划后自主开发”的主流程。常规技术拆分、任务交接和可修复失败不询问用户。
+首版将原生规划作为自主循环的一部分。inspect 报缺工件和 next_action，autonomous 根据原生 workflow 补齐，implementation_ready 仍是代码派发门。目标不明确到需要产品取舍时集中询问必要决定；已授权边界内的常规规划、拆分、交接与修复自动进行，不把每个 artifact 都变成新的确认点。
 
 初始默认：每 task 最多 3 attempts、每 attempt 墙钟 30 分钟、run 墙钟 8 小时、milestone repair rounds 最多 2，可在启动时一次配置。token/cost 预算只有 runner 能可靠计量时启用；未知显示 unavailable，不能记零。
 
 编译/测试/契约差距 → fresh repair；集成冲突 → 范围受限 conflict task；短暂网络/限流 → 有限退避；鉴权/缺工具 → paused；新增需求/验收矛盾/新权限 → needs_input。同一 failure fingerprint 且无代码/证据进展达 2 次，或预算耗尽，停止重试并保存恢复点。
 
-如果原来的 checkbox 全勾但无账本证据，先审核当前代码与 milestone acceptance，成功才记录 observed-complete。零任务是 no_executable_tasks，不是自动成功。完成同时要求：原始范围全部覆盖、所有必须任务集成、回写一致、命令验证和需求审核通过、无 blocker、最终交付成功。
+如果原来的 checkbox 全勾但无账本证据，先审核当前代码与范围验收，成功才记录 observed-complete。尚未规划 tasks 时继续 native planning；原生流程确认规划结束却仍无可执行任务才报 no_executable_tasks。scope_completed 要求所选阶段与交付验收通过；milestone completed 还要求整个 roadmap 与原始范围全部覆盖、最终验收通过，不能用局部任务计数替代。
 
 ## 8. Fresh context 与 runner 协议
 
@@ -207,7 +381,9 @@ Unix 使用进程组，Windows 使用 Job Object 等价机制清理子孙进程�
 
 ## 9. Worktree、验证集成与交付
 
-run 要求 Git 有初始 commit 且选定 checkout 干净；列出 dirty 文件，不自动 stash/reset。记录 origin HEAD/branch、Git common dir 和 source snapshot。创建 codex/sa/<run-id> integration branch/worktree，worker 分支追加 task/attempt；worktree 放受管理 Git common dir 路径，避免递归落进源码树。
+自主代码执行要求 Git 有初始 commit 且起始 checkout 干净；列出 dirty 文件，不自动 stash/reset。只有目标的 milestone new --mode autonomous 在 preflight 后进入受管理规划 worktree，生成的原生 artifacts/TOML 在该分支记录，不让本工具刚生成的规划又触发 origin dirty。纯规划/native 模式可以先生成 roadmap；没有 Git baseline 时明确交出初始化步骤，不假称已启动代码执行。记录 origin HEAD/branch、Git common dir 和 source snapshot。
+
+创建 codex/sa/<run-id> integration branch/worktree，规划与实现 worker 分支追加 unit/attempt；worktree 放受管理 Git common dir 路径。一个 coordinator 可管理多个工作单元的并发，首版同仓库自主 run 排他不妨碍其多个 worker 或外部手工作业；progress 汇总所有 worktree，不只列当前 run。
 
 每写 worker 独立 worktree。允许规则快照只读提供，不共享可变 task 状态。host 从实际 diff 收集变更，控制集成提交；不信任 worker 给出的任意 commit hash。规范名称不能注入 Git 选项或穿越路径。
 
@@ -225,13 +401,14 @@ worktree 不是 OS sandbox。runner 复用其权限/沙箱，autonomous 不自�
 
 ## 10. SQLite 账本与崩溃恢复
 
-采用 SQLite + 文件产物，单 coordinator 写库，读 status 可并发。attempt/task/lease/evidence 的事务需求比多 JSON 文件的自制一致性更简单；bundled SQLite 无外部服务，JSON/Markdown 是投影。
+采用 SQLite + 文件产物，单 coordinator 写库，progress/status 只读查询可并发。attempt/task/lease/evidence 的事务需求比多文件协调更简单；bundled SQLite 无外部服务。运行报告是投影，原生规范 Markdown 和编排声明 TOML 保持各自权威，不变成数据库的附属视图。
 
 ```text
 .spec-autonomous/
   config.toml
+  milestones/<milestone-id>/{milestone.toml,ROADMAP.md}
   state.db
-  plans/<plan-id>.json
+  plans/<plan-id>.toml
   runs/<run-id>/
     source-manifest.json
     decisions.md
@@ -241,9 +418,11 @@ worktree 不是 OS sandbox。runner 复用其权限/沙箱，autonomous 不自�
 
 Git common dir 下的仓库级 OS lock 覆盖 linked worktrees，记录 ledger canonical path，防止不同启动目录用不同账本双写。worker 不写库。首版不支持 NFS/共享盘多机账本，诊断后拒绝。
 
-表：runs（选择/policy/状态/origin 与 accepted/candidate heads/预算）、source_revisions、plans、tasks、edges、attempts（session/PID/起止/结果）、leases、evidence、integration_intents、hook_attempts、events（单调 seq）。DB schema version 与应用版本独立；migration 前备份、事务迁移，遇更新版本 DB 拒写。
+TOML 是用户可读的配置/编排声明，MD 是原生规范；SQLite 仅承载运行时事务与可重建索引，CLI 同时暴露 JSON/TOML 结构化视图。表包括 runs（模式/范围/policy/状态/heads/预算）、phase_runs、artifact_attempts、source_revisions、plans、tasks、edges、worktrees、attempts、leases、evidence、integration_intents、hook_attempts、events。DB schema version 独立；migration 事务化，遇更新版本 DB 拒写。
 
-Run：preparing → running → verifying_milestone → delivering → completed；可进入 paused/needs_input/failed/cancelled/delivery_pending。Task：pending → ready → running → candidate → verifying → integrating → integrated；失败进入 retry_wait/blocked/failed。retry 新增 attempt，不覆盖历史。
+Run：preparing → planning_roadmap → planning_phase / executing_phase → verifying_phase → advancing；完整范围进入 verifying_milestone → delivering → completed，有界范围进入 delivering → scope_completed；native 模式进入 handed_off。可到 paused/needs_input/failed/cancelled/delivery_pending。Milestone 状态与 Run 分开，handoff/scope_completed 不使 milestone completed。Task：pending → ready → running → candidate → verifying → integrating → integrated；retry 新 attempt，保留历史。
+
+保存 phase 端点稳定 IDs、roadmap revision、原生阶段、planning artifact hash 和 handoff checkout，resume 重新查询 native next action。规划输出也使用 intent + 检查后的 source revision 记录：不能因中断再次新建同名 change/feature或重复生成已完成工件。progress 使用账本只读事务，不运行这些修复动作。
 
 SQLite 无法与 Git 原子提交。副作用使用 durable intent + reconciliation：
 
@@ -293,12 +472,12 @@ publish = false
 | 阶段 | 交付结果 | 验收出口 |
 | --- | --- | --- |
 | M0 bootstrap（本次） | 检测 CLI、Rust/Bun/npm、研究与方案 | 本机构建/测试/tarball 安装/spec validate |
-| M1 OpenSpec autonomous slice | 一个 change 完整自主开发，初期单 worker | fixture 端到端 + 至少一种真实 agent launcher |
+| M1 OpenSpec milestone skills + CLI | 目标→TOML roadmap→多 phase 原生规划与自主开发；skills、范围与全 worktree progress | 两 phase fixture + 真实 agent；from/to 与 native 交接验证 |
 | M2 reliable parallel autonomy | 独立 worktree 并行、repair、完整恢复 | 冲突/源漂移/kill 窗口/组合验证/无进展测试 |
-| M3 Spec Kit parity | 相同循环驱动完整 feature | phase/story/[P]/路径/writeback/hook 能力测试 |
+| M3 Spec Kit parity | 相同 CLI/skills/roadmap 循环驱动原生 feature 规划和开发 | 模板/phase/story/[P]/路径/hook/交接能力测试 |
 | M4 public npm alpha | 平台包、安装 smoke、可复现发布 | 六平台原生 CI 与真实 npm 安装/registry 完整性 |
 
-M1 先证明“启动一次，自动完成整个任务集”，M2 在同一完成语义上增加并行，M3 不另造循环。具体任务见 [tasks.md](tasks.md)。本仓库使用官方 spec-driven，bootstrap 完成后归档进主规范；本变更保持开放，直到实现与对应验收全部完成。无需自定义 schema。
+M1 先证明“给目标，经 skill/CLI 自动形成 roadmap 并完成里程碑”，同时提供有界范围和所有 worktree 的可读状态；M2 增加可靠并行与查询并发一致性，M3 复用同一循环。具体任务见 [tasks.md](tasks.md)。本仓库保留官方 spec-driven，bootstrap 已归档；本变更保持开放，直到所有要求真正实现并验收。
 
 ## 14. 测试与验收矩阵
 
@@ -306,6 +485,14 @@ M1 先证明“启动一次，自动完成整个任务集”，M2 在同一完�
 
 | 场景 | 必须观察到 |
 | --- | --- |
+| 只有目标，没有原生 tasks | 先 roadmap，再原生规划；实现 gate 满足后才写代码 |
+| skill 与 CLI 参数相同 | 同一范围、policy、run 状态，skill 不自建循环 |
+| --from 2 --to 4 / --only 3 | 包含上界，正确停界，scope_completed 不等于 milestone 完成 |
+| 选中 phase 依赖范围外未完成项 | 指明 prerequisite，不跳过、不暗中扩范围 |
+| roadmap 插入阶段或 native 更新工件 | 重新协调 revision/稳定端点和受影响证据 |
+| 原生/自主切换 | 同一原生文件、最新交接路径、无重复规划或双写 |
+| 任一 worktree 查询 progress | 同仓所有 worktrees 可见，unknown/stale 不伪装零状态 |
+| JSON/TOML 查询同一 snapshot | IDs/依赖/计数一致，MD 原文不被改写 |
 | 三任务里程碑，中间编译失败 | 自动修复并继续，不问用户“继续吗” |
 | 两独立任务、一个依赖任务 | 前两个可并行，后一个等集成 |
 | 同文件/未知写集/[P] 冲突 | 串行并解释原因 |
@@ -333,4 +520,4 @@ M1 先证明“启动一次，自动完成整个任务集”，M2 在同一完�
 - runner 权限和 session 语义不同 → doctor 明确 profile 能力，不假定普遍一致。
 - 平台发行成本 → 本机只证明 macOS arm64，其他需原生 CI。
 
-可后置：公开品牌/npm scope、首个官方 vendor runner、最低 OS/glibc 版本、multi-change manifest。当前以暂定包名、command profile、能力矩阵与单成员 milestone 隔离这些选择，不阻塞 bootstrap 或本方案。
+可后置：公开品牌/npm scope、首个官方 vendor runner、最低 OS/glibc 版本、跨 framework 混合 milestone、跨不相关仓库 progress。单框架多 phase roadmap、skills、from/to 和同仓所有 worktree progress 已进入首版范围，不再作为未来可选项。

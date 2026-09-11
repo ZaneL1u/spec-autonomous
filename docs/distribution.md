@@ -14,7 +14,7 @@ Node.js launcher 负责平台选择、argv/stdio/退出码与 SIGINT/SIGTERM 转
 
 | npm 包 | Rust target | runner |
 | --- | --- | --- |
-| spec-autonomous | 纯 Node launcher，精确版本 optionalDependencies | 组包 job |
+| autonomous（别名 auto） | 纯 Node launcher，精确版本 optionalDependencies | 组包 job |
 | spec-autonomous-darwin-arm64 | aarch64-apple-darwin | macos-14 |
 | spec-autonomous-darwin-x64 | x86_64-apple-darwin | macos-15-intel |
 | spec-autonomous-linux-arm64 | aarch64-unknown-linux-gnu | ubuntu-22.04-arm |
@@ -41,3 +41,9 @@ Linux 先支持 glibc，目标构建基线 Ubuntu 22.04；musl/Alpine 返回明�
 6. 任一步失败，不发布指向缺失平台依赖的 wrapper；同版本不可变，修复用新版本。回退通过恢复 dist-tag 指向已验收版本。
 
 发布和远程 CI 属于后续工作，本次不会把本机打包成功描述成六平台和 registry 发布完成。
+
+## 增补：产品 skills 与结构化资源（待实现）
+
+wrapper 包还将承载 milestone/autonomous/progress/resume 的 SKILL.md、auto alias 入口与相对路径 references。需要同步修改 npm files 白名单和 release assembler 的复制清单，再从真实 tarball 验证主入口、别名及依赖完整。当前包只有 bootstrap launcher/binary，尚未包含这些产品 skills。
+
+用户安装 CLI 后在仓库执行 `spec-autonomous init`，检测其现有 SDD 和宿主，绑定 /autonomous、/auto 等入口；高级配置可用 `skills install --agent <id> --scope project`。不使用 npm postinstall 猜仓库路径。安装/升级/卸载按自有 hash manifest 操作，冲突不覆盖；仅 skills 宿主显示其等价语法。skills 调用同一 Rust CLI schema，TOML 模板如随包提供也进入组包校验。

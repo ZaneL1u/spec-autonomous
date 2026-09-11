@@ -1,10 +1,17 @@
 schema: spec-driven
 context: |
-  Spec Autonomous reuses an existing OpenSpec change or Spec Kit feature to
-  autonomously implement a whole preplanned milestone, including verification,
-  bounded repair, integration and recovery. Parallel agents support that outcome.
+  Spec Autonomous accepts a milestone goal or existing OpenSpec/Spec Kit work,
+  plans a multi-phase roadmap using native workflows, then autonomously plans,
+  implements, verifies and repairs the whole milestone or a from/to phase range.
+  Native/manual and autonomous modes share original Markdown specifications.
+  Skills call a common CLI. TOML stores configuration and orchestration declarations;
+  structured CLI views parse native MD metadata and report all Git worktrees.
+  User entry is /autonomous with exact alias /auto where supported by the host.
+  Init binds host skills/commands to the user's existing SDD provider; it never
+  silently replaces their framework or substitutes a private SDD workflow.
   Stack: Rust workspace, Node.js 22+ npm launcher, Bun 1.4.2, Rust 1.98.1.
-  Bootstrap currently implements only read-only detection and npm packaging.
+  Bootstrap currently implements only read-only detection and npm packaging;
+  product skills, roadmap, bounded execution and all-worktree progress are planned.
   Runtime is planned in autonomous-orchestration; it is not implemented yet.
   Existing specs own requirements. A future SQLite ledger owns attempts/evidence.
   Each worker uses a fresh session and isolated worktree; the coordinator alone

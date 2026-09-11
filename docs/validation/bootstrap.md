@@ -45,4 +45,4 @@
 
 完整 roadmap 见 [autonomous tasks](../../openspec/changes/autonomous-orchestration/tasks.md)。
 
-工程初始化变更已由官方 CLI 归档到 `openspec/changes/archive/2026-09-10-bootstrap-workspace/`，8 条已交付行为要求进入主规范；autonomous-orchestration 保持开放，32 项实现任务未勾选。
+工程初始化变更已由官方 CLI 归档到 `openspec/changes/archive/2026-09-10-bootstrap-workspace/`，8 条已交付行为要求进入主规范。归档时 autonomous-orchestration 有 32 项未完成任务；后续追加的 skills、roadmap、范围执行与全 worktree progress 以当前 tasks.md 为准。本记录不代表这些新增能力已实现。

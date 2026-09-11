@@ -35,3 +35,10 @@ The system SHALL report source scope, completion state, output revision, verific
 #### Scenario: A platform was not tested
 - **WHEN** completion evidence includes only the supported local platform
 - **THEN** the report identifies unperformed platform checks instead of claiming cross-platform validation
+
+### Requirement: Distinguish range completion from milestone completion
+The system SHALL report selected-scope completion separately from whole-milestone completion, identify remaining phases and a usable next action, and never derive whole-milestone success solely from completed tasks in one worktree.
+
+#### Scenario: A single phase completes
+- **WHEN** an only-phase run finishes its validation and checkpoint delivery
+- **THEN** it reports scope_completed and does not automatically audit, archive or clean up the entire milestone

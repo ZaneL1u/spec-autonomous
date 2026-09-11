@@ -35,3 +35,32 @@ The system SHALL preserve the effective run policy on resume and SHALL report un
 #### Scenario: Resume an authorized run
 - **WHEN** the existing run is resumed without policy changes
 - **THEN** routine authorized work continues without repeated authorization and unavailable usage remains explicitly unknown
+
+### Requirement: Report every worktree in the repository
+The progress CLI SHALL enumerate all worktrees sharing the selected Git common directory and associate available milestone, phase, run, task and worker metadata, including externally created worktrees.
+
+#### Scenario: Query from a worker worktree
+- **WHEN** progress is invoked from one concurrent worker's directory
+- **THEN** the result still lists the main checkout, other managed worktrees and external worktrees from that repository
+
+#### Scenario: Missing runtime metadata
+- **WHEN** a worktree exists in Git but no readable runtime metadata is available
+- **THEN** it remains visible with external, unknown or unavailable diagnostics rather than being omitted or reported complete
+
+### Requirement: Provide consistent read-only structured progress
+The CLI SHALL offer human, JSON and TOML progress snapshots with a versioned schema, timestamp and consistency diagnostics, deduplicate logical task totals and distinguish native planning progress from verified execution progress.
+
+#### Scenario: Concurrent inventory changes
+- **WHEN** a worktree disappears or a worker heartbeat becomes stale during a query
+- **THEN** the response marks affected observations partial or stale without blocking execution, changing source files or silently reporting zero progress
+
+#### Scenario: Same task appears in several worktrees
+- **WHEN** a task has an original checkout entry and multiple attempts
+- **THEN** aggregate task completion counts that logical task once while worker and retry counts remain separate
+
+### Requirement: Resume phase and mode boundaries
+The system SHALL persist roadmap revision, stable range endpoints, native workflow stage and handoff checkout so resumption does not widen scope or recreate already valid artifacts.
+
+#### Scenario: Resume after native edits
+- **WHEN** the user continues work through native commands and then resumes autonomous execution
+- **THEN** the system reconciles the new source revision, preserves valid progress, invalidates affected evidence and retains the selected phase boundaries

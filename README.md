@@ -1,10 +1,10 @@
 # Spec Autonomous
 
-**用 OpenSpec / Spec Kit 规划好一个里程碑，然后让它自动开发到验收完成。**
+**给定里程碑目标，基于 OpenSpec / Spec Kit 规划 roadmap，并按完整里程碑或 from/to 范围自主开发。**
 
-复用你已经维护的规范、计划和任务。Rust 主协调器负责里程碑状态、任务调度、验证、修复、集成与恢复；每个子 agent 使用全新会话和独立 worktree。主线程只维护决策、依赖和简短摘要。
+既能从目标开始，也能承接原生流程已有的规范、计划和任务。原生手动与自主模式操作同一批 Markdown；TOML 保存配置和编排声明，CLI 提供结构化读取，skills 提供自然语言入口。主协调器维护里程碑，fresh-context agents 在独立 worktrees 工作，progress 汇总所有 worktree 的实际状态。
 
-当前是 **`0.1.0-alpha.0` 仓库初始化阶段**：已实现只读框架检测 CLI、Rust workspace、npm launcher、Bun 工具链与打包脚本；整里程碑 autonomous 执行已经形成 OpenSpec 方案，**尚未实现**。项目名和 npm 包名暂定 `spec-autonomous`，尚未发布或预留。
+当前是 **`0.1.0-alpha.0` 仓库初始化阶段**：已实现只读检测 CLI、Rust workspace、npm launcher 与打包脚本。产品 skills、TOML roadmap、from/to、全 worktree progress 和 autonomous runtime 已列入 OpenSpec 方案，**尚未实现**。现有 openspec-* skills 是上游集成。项目名/npm 包名暂定 spec-autonomous，尚未发布或预留。
 
 ## 从这里开始
 
@@ -47,6 +47,16 @@ npm install -g spec-autonomous@next
 ## 目标使用体验（以下命令待实现）
 
 ```sh
+spec-autonomous init
+spec-autonomous milestone new "团队邀请与权限 MVP" --framework openspec --mode native
+spec-autonomous milestone new "团队邀请与权限 MVP" --framework openspec --mode autonomous
+spec-autonomous run --milestone M001 --from 2 --to 4 --mode autonomous
+spec-autonomous run --milestone M001 --only 3 --mode autonomous
+spec-autonomous progress --all-worktrees
+spec-autonomous progress --all-worktrees --format toml
+spec-autonomous progress --all-worktrees --format json
+
+# 已有原生规划也可直接接入
 spec-autonomous inspect --framework openspec --change add-team-auth
 spec-autonomous run --framework openspec --change add-team-auth --autonomous --max-workers 3
 
@@ -55,20 +65,26 @@ spec-autonomous status
 spec-autonomous resume <run-id>
 ```
 
-一次运行覆盖选定里程碑的全部任务与验收：导入已有规划 → 拆成可执行任务图 → 自动派发 → 验证 → 有界修复 → 集成 → 推进下一批 → 整体验收。遇到可自动修复的失败继续推进；确需新增决策、授权、预算，或已无进展才暂停。不会要求你每完成一个任务再发一次“继续”。首版以一个 OpenSpec change 或一个 Spec Kit feature 作为一个完整里程碑；多 change 聚合留到后续版本。
+安装绑定后，支持 slash commands 的宿主可直接用 `/autonomous` 或同义别名 `/auto`，另有 `/milestone`、`/progress`、`/resume`。仅支持 skills 的宿主采用其原生等价语法（如 `$autonomous` / `$auto`）。这些入口调用同一 CLI 协议，不持有第二份调度状态。
+
+底层依赖用户当前仓库的 SDD 框架：OpenSpec 项目走其 schema/instructions/artifacts，Spec Kit 项目走其原生 templates/skills/artifacts。init 负责检测和绑定，不迁移或替换 SDD；未检测到框架时给出选择/安装指引，不静默使用本产品自造流程。
+
+完整路径：目标 → 研究与 roadmap → 每 phase 的原生规划 → 执行图 → 自动实现/验证/修复/集成 → 下一 phase → 整体验收。每个 roadmap phase 对应一个原生 change/feature，已有单一来源直接映射为一个 phase。原生模式交出原生命令继续，autonomous 自动推进同一流程。
+
+from/to 指 roadmap 阶段的闭区间，only 只跑一个 phase；不能绕过范围外未完成依赖，范围完成不会提前归档整个 milestone。TOML 编排数据与原生 MD 规范分开保存，MD 的 frontmatter/标题/checkbox/任务 ID 通过 CLI 解析为带来源的结构化视图。progress 从 Git common dir 汇总所有 managed/external worktree，规划百分比与验证进度分开显示。
 
 ## 工程约定
 
 ```text
 crates/core/                 检测；后续拆出 adapter/planner/scheduler/state 等模块
 crates/cli/                  Rust CLI 入口
-packages/cli/                Node launcher；Bun 用作工程工具
+packages/cli/                Node launcher；后续加入本产品 skills 与 installer
 scripts/                    本地构建、npm 组包、锁定源码复现
 openspec/specs/              已交付能力的主规范
 openspec/changes/            当前实施提案与任务
 docs/research/              调研、源码 permalink、upstreams.lock.json
 .references/                上游 clone，gitignore，只读，不随 npm 发布
-.spec-autonomous/           未来运行时状态，gitignore
+.spec-autonomous/           未来 TOML 编排声明与 runtime；实现时分别设置 Git 跟踪规则
 ```
 
 ```sh

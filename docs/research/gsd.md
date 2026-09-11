@@ -116,3 +116,52 @@ MVP 不纳入全套 model routing、OAuth、终端 UI framework、cloud sync、�
 - v0.1 首先证明一个 spec change 可以经过多 fresh workers 执行、合并和恢复；真实跨 runtime 的兼容性必须分别跑 conformance checks，不能只凭 CLI 名称或模拟 runner 声称通过。
 
 以上是源码研究后的工程建议，不是对上游运行质量的实测结论。
+
+## 8. 补充：skill、roadmap 与 autonomous 的 from/to
+
+本节针对用户补充要求，继续核对同一固定 commit，区分 GSD Core 的 skill 编排和 GSD Pi 的 host 状态机，没有把两个实现混为一谈。
+
+### 8.1 Core 的入口确实是 skill + workflow
+
+[`skills/gsd-autonomous/SKILL.md`](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/skills/gsd-autonomous/SKILL.md) 是轻入口：声明用途、参数、工具能力和 workflow 引用，不把整个运行逻辑塞入每次主上下文。主要流程在 [`gsd-core/workflows/autonomous.md`](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md)。同一功能还有 `commands/gsd/autonomous.md` 形式，适配不同 agent 的命令入口。
+
+从目标到 roadmap 是独立的 [`gsd-new-milestone` skill](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/skills/gsd-new-milestone/SKILL.md)：questioning → 可选 research → requirements → roadmap，更新 PROJECT/REQUIREMENTS/ROADMAP/STATE。Core autonomous 本身在缺 ROADMAP 或 STATE 时会提示先运行 new-milestone，而不是直接从一句目标生成全部规划。[preflight](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md#L100-L106)
+
+因此应该借鉴**完整产品入口链**，既支持 milestone 初始化/规划 skill，也支持 autonomous skill；只复制任务执行循环会缺少用户最先接触的部分。Core 的新里程碑流程也保留需求和 roadmap 决策门，不能把它描述成不需要任何产品决策的无人系统。[new-milestone workflow](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/new-milestone.md#L465-L625)
+
+### 8.2 from/to 是 roadmap 阶段范围
+
+| Core 参数 | 源码语义 |
+| --- | --- |
+| 无范围参数 | 选择 roadmap 中剩余未完成阶段 |
+| --from 3 | 从 phase 3 开始，允许小数阶段标号 |
+| --to 5 | 包含 phase 5，完成后停止继续推进 |
+| --from 3 --to 5 | 有界闭区间 |
+| --only 4 | 只跑 phase 4，跳过 milestone lifecycle |
+| --interactive | discuss 保留人机交互；后台分派受 runtime capability 约束 |
+| --converge | planning 改走已启用的 plan-review convergence，保留 reviewer 参数 |
+
+这里的 from/to 不是“从 plan 命令到 execute 命令”，也不是 task checkbox 序号。源码先过滤 roadmap，逐阶段执行，再检查范围停止条件。[解析与发现](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md#L17-L157)
+
+### 8.3 自动化是在原有 phase 流程之上增加路由
+
+核心流程：发现未完成 phase → 读取阶段状态 → discuss/context → plan 或 convergence → execute --no-transition → review/fix → 读取 verification → 更新并重读 roadmap → 下一 phase。`--no-transition` 将下一阶段的推进权留给上层 autonomous，避免子流程与主流程各推进一次。
+
+Core 通过 flat Skill 调用既有 discuss/plan/execute，没有复制另一套 phase 方法。已存在的上下文和规划会被状态检查识别；产物存在后的 discuss 不允许无休止循环。源码读取 verification 的 passed/human_needed/gaps_found/stale 等状态，只有满足相应门才能推进；gaps/human decision 不会被假装通过。[phase 流程](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md#L229-L568)
+
+每个 phase 后重读 roadmap/state，重新筛选未完成阶段，捕获插入阶段和延期验证；不能只在启动时生成一次队列。达到 --to 或 --only 的停止是**范围完成**，不等于整里程碑已完成。完整运行才进入 audit/complete/cleanup，并仍有质量门。[iterate/lifecycle](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md#L586-L750)
+
+### 8.4 主上下文与 Pi 对照
+
+Core 默认部分 Skill 调用仍 inline；--interactive 的 plan/execute 后台分派依赖 `dispatch-should-flatten` 的 runtime 能力，不能推论所有宿主都保证主上下文不增长。子 agent 自加载所需 skill，主层尽量仅保留状态与摘要。[分派逻辑](https://github.com/open-gsd/gsd-core/blob/523be34133bf92922f42b031954b53c6101827e4/gsd-core/workflows/autonomous.md#L338-L424)
+
+Pi 的 Rust/TS host 风格则由 dispatch rules 从 pre-planning 选择 research-milestone/plan-milestone，再到 planning 的 plan-slice、execution 和验证单元。它把缺少哪类规划也纳入 auto 状态机，而不只接收 tasks。[pre-planning rules](https://github.com/open-gsd/gsd-pi/blob/0fd02c1ea7a87d9d9a8bb8323322de597520e1b4/src/resources/extensions/gsd/auto-dispatch.ts#L1315-L1350)
+
+### 8.5 对本项目的修正
+
+- 提供可随 npm 分发的 milestone/autonomous/progress/resume skills；skill 是 UX 入口，Rust 是持久化推进与预算的 owner。
+- milestone 包含 roadmap phases；每 phase 引用一个原生 OpenSpec change 或 Spec Kit feature。已有单一 change/feature 可零迁移接入成单 phase。
+- autonomous 能从 goal 规划 roadmap，也能承接任意已完成的原生规划阶段；缺工件走原生 planning contract 补齐，而不是一律 blocking。
+- 原生手动路径与 autonomous 操作同一批原生文件。自主化增加 dispatch/检查/恢复/并行，不新增竞争性的 spec 语言。
+- from/to/only 选择 roadmap phase，范围完成和 milestone completed 分开；外部未完成依赖不能因过滤被跳过。
+- 本项目仍采用已定的单 coordinator SQLite 账本与 max_workers=3；本报告前面的文件账本/默认 2 worker 为先前研究候选，最终方案以 design 为准。

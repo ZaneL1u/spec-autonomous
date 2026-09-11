@@ -31,3 +31,14 @@ The system SHALL prepare a dependent task against an integration revision contai
 #### Scenario: Predecessor finishes
 - **WHEN** a predecessor is verified and integrated
 - **THEN** the next task receives its integrated code and bounded result summary rather than only its success claim
+
+### Requirement: Keep a structured roadmap linked to native specifications
+The system SHALL persist versioned milestone and phase declarations in TOML with stable identities, ordered labels, dependencies and native source references, and SHALL retain normative specification content in its original Markdown files.
+
+#### Scenario: Plan a multi-phase milestone
+- **WHEN** a goal is decomposed into several roadmap phases
+- **THEN** each phase has a unique native change or feature reference and explicit dependencies, while the readable roadmap reflects that topology
+
+#### Scenario: Insert a roadmap phase during execution
+- **WHEN** the roadmap changes after a bounded run has started
+- **THEN** the system reconciles its revision, preserves stable range endpoints and validates scope and dependencies before scheduling any inserted phase

@@ -2,9 +2,15 @@
 
 ## Product intent
 
-Spec Autonomous drives a whole preplanned milestone to verified implementation using
-existing OpenSpec or Spec Kit artifacts. The autonomous loop is the product; task DAGs,
-fresh workers, worktrees and context reduction support that outcome.
+Spec Autonomous starts from a milestone goal or existing OpenSpec/Spec Kit artifacts,
+creates a roadmap through native planning workflows, then drives a whole milestone or
+from/to phase range to verified delivery. Native and autonomous modes share the same
+Markdown specs. Skills call the CLI; TOML stores orchestration declarations. Progress
+must cover all worktrees in the Git repository, including external and unknown ones.
+The user-facing primary entry is /autonomous with /auto as an exact alias where the
+host supports slash commands. It depends on the user's existing SDD provider; init
+binds commands/skills and never silently replaces the framework or its workflows.
+Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 
 ## Start here
 

@@ -4,7 +4,7 @@
 
 ## 产品选择
 
-核心承诺是：**沿用 OpenSpec / Spec Kit 的规划，一次启动后自动完成整个里程碑的开发、修复与验收。** 不要求用户改用 GSD 的规划文件。主上下文只负责里程碑推进与决策，fresh-context agent 完成分配任务。
+核心承诺是：**给定里程碑目标，沿原生 OpenSpec / Spec Kit 流程生成 roadmap 并自主开发；已有规划可直接接入，原生手动与自主方式可交接。** skills 调用 CLI，from/to/only 选择 roadmap 阶段，progress 汇总同仓所有 worktree。TOML 管理编排声明，Markdown 保留规范及可解析的原生结构。
 
 | 上游 | 固定源码版本 | 借鉴或适配的内容 | 需要本项目补齐的执行闭环 |
 | --- | --- | --- | --- |
@@ -22,7 +22,8 @@
 3. Spec Kit 当前 feature 定位已改为目录上下文；旧式“根据 Git branch 猜 feature”会在 worktree 中出错。
 4. GSD Pi 的运行时账本已用 SQLite，Markdown 是投影；它的不同并行路径并不都具有每任务 worktree 隔离。
 5. GSD Core 的上下文分工值得保留：主线程读小摘要，worker 读任务所需文件；不能把全部子 agent 输出注回主会话。
+6. GSD Core 的 new-milestone skill 先生成 requirements/roadmap，再由 autonomous skill 以 from/to/only 调度既有 phase 流程并重读状态；本项目也需要这条完整入口链，详见 [GSD 报告补充](gsd.md#8-补充skillroadmap-与-autonomous-的-fromto)。
 
 ## 方案落点
 
-采用 Rust supervisor、独立 spec adapter / agent runner、SQLite 本地账本、有界任务图、每写 worker 独立 worktree、单协调器验证与集成。npm 包只负责分发可执行文件，不携带 Bun、GSD runtime、Python 或模型 SDK。首版先完成 OpenSpec 整里程碑自主闭环，再用同一闭环接入 Spec Kit，详细阶段见 [设计](../../openspec/changes/autonomous-orchestration/design.md)。
+采用 Rust supervisor、NativeWorkflowBridge、独立 spec adapter/runner、TOML 编排声明和 SQLite 运行账本。CLI 统一输出 human/JSON/TOML，结构化 MD 读取带来源信息；每写 worker 独立 worktree，progress 关联 Git inventory 与运行状态。npm 分发独立 binary 和配套 skills，不携带完整 GSD runtime。Spec Kit 原生创建/模板 bridge 如需 Python/uv，单独声明依赖；已有文档适配保持独立。先实现 OpenSpec 从目标到交付的完整路径，再复用到 Spec Kit，见 [设计](../../openspec/changes/autonomous-orchestration/design.md)。
