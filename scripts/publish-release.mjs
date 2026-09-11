@@ -98,7 +98,12 @@ export function inspectRelease(directory) {
     const { name, version } = manifest;
     if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(version)) reject(`invalid release version: ${filename}`);
     if (filename !== `${name}-${version}.tgz` || packages.has(name)) reject(`unexpected filename or duplicate package: ${filename}`);
-    if (manifest.private || nonempty(manifest.scripts) || nonempty(manifest.dependencies) || nonempty(manifest.peerDependencies) || nonempty(manifest.bundledDependencies) || nonempty(manifest.bundleDependencies)) reject(`scripts/private/dependency policy: ${name}`);
+    if (manifest.private || nonempty(manifest.scripts) || nonempty(manifest.peerDependencies) || nonempty(manifest.bundledDependencies) || nonempty(manifest.bundleDependencies)) reject(`scripts/private/dependency policy: ${name}`);
+    // Only the wrapper may depend on the reviewed CLI parser. Do not relax this
+    // to arbitrary package dependencies or ranges when assembling releases.
+    if (name === 'spec-autonomous') {
+      if (JSON.stringify(manifest.dependencies) !== JSON.stringify({ commander: '14.0.3' })) reject(`scripts/private/dependency policy: ${name}`);
+    } else if (nonempty(manifest.dependencies)) reject(`scripts/private/dependency policy: ${name}`);
     if (manifest.publishConfig?.access !== 'public' || (manifest.publishConfig.registry && manifest.publishConfig.registry !== REGISTRY)) reject(`unexpected publishConfig: ${name}`);
     for (const path of entries.keys()) if (/(^|\/)(node_modules|\.git|\.npmrc|binding\.gyp)(\/|$)/.test(path)) reject(`unexpected install/configuration payload: ${path}`);
     const platform = platforms.find(item => name === `spec-autonomous-${item.key}`);

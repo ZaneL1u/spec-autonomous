@@ -1,6 +1,6 @@
 {
   "name": "spec-autonomous",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Lightweight native orchestration for spec-driven repositories",
   "type": "module",
   "license": "MIT",
@@ -20,5 +20,8 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "commander": "14.0.3"
   }
 }

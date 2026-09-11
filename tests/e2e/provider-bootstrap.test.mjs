@@ -72,7 +72,7 @@ test('passive commands and malformed provider arguments cannot start an installa
     const r = cli(f, args); assert.equal(r.status, 0, r.stderr + r.stdout); JSON.parse(r.stdout);
   }
   const typo = cli(f, ['providers', 'ensure', 'openspec', '--typo', '--json']);
-  assert.equal(typo.status, 1); assert.match(typo.stdout, /invalid_arguments/);
+  assert.equal(typo.status, 2); assert.match(typo.stdout, /invalid_arguments/);
   const missing = cli(f, ['providers', 'ensure', 'openspec', '--json']);
   assert.equal(missing.status, 1); assert.match(missing.stdout, /provider_offline/);
   assert.equal(existsSync(f.home), false); assert.equal(existsSync(f.marker), false);

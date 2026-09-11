@@ -20,7 +20,7 @@ console.log(`Real provider sandbox: ${sandbox}`);
 for (const provider of ['openspec', 'speckit']) {
   const project = join(sandbox, provider); await mkdir(project);
   await runProcess(['git', 'init', '-q', project]);
-  const context = createProviderContext(binary, ['--path', project, 'init', '--provider', provider, '--agent', 'codex'], manager);
+  const context = createProviderContext(binary, { path: project, provider, agent: 'codex' }, manager);
   const ready = await initializeProvider(context);
   const detect = await context.detection();
   if (detect.selected !== provider) throw new Error(`${provider}: native scaffolding was not detected`);

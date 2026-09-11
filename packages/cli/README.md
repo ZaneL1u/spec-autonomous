@@ -2,7 +2,9 @@
 
 Native deterministic capabilities for LLM hosts and Skills using OpenSpec or Spec Kit. **The CLI never launches agents or calls models.** The host owns fresh-context sessions; the CLI prepares work, verifies receipts, manages isolated worktrees and safely updates native state.
 
-This is the local `0.1.0-alpha.3` development release. No npm registry publication has been performed.
+This is the local `0.1.0-alpha.4` development release. No npm registry publication has been performed.
+
+The command interface uses Commander.js 14.0.3 and Rust Clap. Native command definitions are exported from Clap, and the same native parser checks arguments before provider installation or project writes. Commander owns provider subcommands, nested help and structured syntax errors. npm installs the pinned Commander dependency automatically; installed runtime still requires neither Rust nor Bun.
 
 The JS wrapper selects the matching Rust executable and prepares missing native SDD tools. Installed users need Node.js 22+ and Git. Bun is supported but optional; missing uv / Python are prepared for Spec Kit in a user-owned directory. No npm lifecycle script downloads providers.
 
@@ -14,6 +16,7 @@ spec-autonomous init --provider speckit --agent codex --mcp
 spec-autonomous providers status --json
 spec-autonomous providers ensure speckit --json
 spec-autonomous providers exec openspec -- --version
+spec-autonomous help providers ensure
 spec-autonomous inspect --json
 spec-autonomous progress --all-worktrees --json
 spec-autonomous prepare --milestone M001 --from 1 --to 3 --json

@@ -10,9 +10,12 @@
     },
     "packages/cli": {
       "name": "spec-autonomous",
-      "version": "0.1.0-alpha.3",
+      "version": "0.1.0-alpha.4",
       "bin": {
         "spec-autonomous": "bin/spec-autonomous.mjs",
+      },
+      "dependencies": {
+        "commander": "14.0.3",
       },
     },
   },

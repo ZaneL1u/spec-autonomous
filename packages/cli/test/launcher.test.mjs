@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { platformFor } from '../lib/platform.mjs';
 const launcher = fileURLToPath(new URL('../bin/spec-autonomous.mjs', import.meta.url));
+const forwardModule = new URL('../lib/cli-process.mjs', import.meta.url).href;
+const forwardScript = `import {forwardProcess} from ${JSON.stringify(forwardModule)}; process.exitCode = await forwardProcess([process.execPath, ...process.argv.slice(1)]);`;
 
 test('rejects unsupported architecture and musl explicitly', () => {
   assert.throws(() => platformFor('linux', 's390x', '2.35'), /Unsupported/);
@@ -21,7 +23,7 @@ test('preserves argument boundaries and child exit code without shell interpreta
   const fixture = join(root, 'worker.mjs');
   writeFileSync(fixture, 'console.log(JSON.stringify(process.argv.slice(2))); process.exit(7);');
   const args = ['a b', '$(not-a-command)', '`not-a-command`', '--json'];
-  const result = spawnSync(process.execPath, [launcher, fixture, ...args], { encoding: 'utf8', env: { ...process.env, SPEC_AUTONOMOUS_BINARY: process.execPath } });
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', forwardScript, fixture, ...args], { encoding: 'utf8' });
   assert.equal(result.status, 7);
   assert.deepEqual(JSON.parse(result.stdout), args);
 });
@@ -37,7 +39,7 @@ test('forwards SIGTERM to the native child', { skip: process.platform === 'win32
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const fixture = join(root, 'worker.mjs');
   writeFileSync(fixture, "process.on('SIGTERM', () => process.exit(42)); console.log('ready'); setInterval(() => {}, 1000);");
-  const child = spawn(process.execPath, [launcher, fixture], { env: { ...process.env, SPEC_AUTONOMOUS_BINARY: process.execPath }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', forwardScript, fixture], { stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const exit = once(child, 'exit');
   await once(child.stdout, 'data');

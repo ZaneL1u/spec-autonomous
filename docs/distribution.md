@@ -65,3 +65,7 @@ release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真
 ## alpha.3 原生工具准备
 
 当前版本 0.1.0-alpha.3 增加 [JS 自动安装层](provider-bootstrap.md)。`bin` / `lib` 白名单携带安装器和固定版本清单；仍无 npm lifecycle 下载脚本，`npm install --ignore-scripts` 可用。用户第一次 init 或需要原生工具的 CLI/MCP 请求负责安装。Rust 平台分包和公开发布流程保持原契约，私有测试可分发本机完整 tgz。
+
+## alpha.4 CLI 框架
+
+当前 alpha.4 使用 Commander.js 14.0.3 + Clap。npm wrapper 增加精确版本的 `commander` 依赖，由 npm / Bun 安装；全新安装需 registry 或已填充的包缓存。无需 lifecycle scripts，仍支持私有 tgz 分发。发行 gate 仅允许 wrapper 依赖该 Commander 版本，六个平台包继续拒绝所有 JS dependencies。详见 [CLI 接口](cli-interface.md)。

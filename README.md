@@ -4,7 +4,7 @@
 
 用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-当前版本 `0.1.0-alpha.3`，npm registry 尚未发布。被动工作流通过 `host-driven-capabilities` 维护；自动安装通过 OpenSpec 的 `provider-bootstrap` 变更维护。
+当前版本 `0.1.0-alpha.4`，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js；原生命令定义由 Clap 导出，参数在安装或执行前统一预检。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -13,6 +13,7 @@
 - [从 alpha.1 迁移](docs/migration-alpha2.md)
 - [npm 分平台发行](docs/distribution.md)
 - [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
+- [CLI 框架与命令接口](docs/cli-interface.md)
 
 ## 安装和绑定
 
@@ -22,7 +23,7 @@
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 node scripts/pack-local.mjs
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.3.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.4.tgz
 
 # 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
 spec-autonomous init --agent codex
@@ -38,6 +39,11 @@ spec-autonomous init --agent claude --mcp
 spec-autonomous providers status --json
 spec-autonomous providers ensure speckit --json
 spec-autonomous providers exec openspec -- --version
+
+# 社区框架生成的统一帮助
+spec-autonomous --help
+spec-autonomous providers ensure --help
+spec-autonomous help providers ensure
 ```
 
 MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规则仍然适用。Codex 使用 `$autonomous` / `$auto`，Claude 使用 `/autonomous` / `/auto`。另外提供 milestone、progress、resume。冲突时可用 `--prefix sa`，不会覆盖用户修改的文件。

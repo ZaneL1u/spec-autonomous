@@ -60,6 +60,7 @@ function fixture(t, customize = () => {}) {
       ['package/skills/autonomous/SKILL.md', '# Autonomous\n'],
       ['package/skills/auto/SKILL.md', '# Alias\n'],
     ];
+    if (!platform) manifest.dependencies = { commander: '14.0.3' };
     entries.push(['package/LICENSE', 'MIT test input\n']);
     customize(manifest, entries, platform);
     entries.push(['package/package.json', JSON.stringify(manifest)]);
@@ -108,6 +109,15 @@ test('missing platform, extra tarball and altered inventory fail before any npm 
     const root = fixture(t); alter(root);
     await assert.rejects(publishRelease({ directory: root, publish: true }, { npm: () => assert.fail('preflight must finish first') }), /release_rejected/);
   }
+});
+
+test('only the exact reviewed Commander dependency is allowed on the wrapper', t => {
+  for (const customize of [
+    (m, _e, p) => { if (!p) m.dependencies.commander = '^14.0.3'; },
+    (m, _e, p) => { if (!p) m.dependencies.unreviewed = '1.0.0'; },
+    (m, _e, p) => { if (p) m.dependencies = { commander: '14.0.3' }; },
+    (m, _e, p) => { if (!p) delete m.dependencies; },
+  ]) assert.throws(() => inspectRelease(fixture(t, customize)), /dependency policy/);
 });
 
 test('version skew and nonexact wrapper optional dependencies are rejected', async t => {

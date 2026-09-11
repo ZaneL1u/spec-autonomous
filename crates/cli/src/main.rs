@@ -8,33 +8,43 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-#[derive(Parser)]
+mod cli_metadata;
+#[derive(Parser, serde::Serialize)]
 #[command(
     name = "spec-autonomous",
     version,
     about = "Deterministic SDD capabilities for LLM hosts and Skills; never starts agents"
 )]
 struct Cli {
+    /// Repository directory (also accepted after a subcommand).
     #[arg(long, global = true, default_value = ".")]
     path: PathBuf,
+    /// Select the repository's native SDD framework.
     #[arg(long, global = true, value_enum)]
     framework: Option<Framework>,
+    /// Emit structured JSON, including errors.
     #[arg(long, global = true)]
     json: bool,
+    /// Select the output format for native capabilities.
     #[arg(long, global = true, value_enum)]
     format: Option<Format>,
+    /// Choose compact agent output or the full result.
     #[arg(long, global = true, value_enum, default_value = "agent")]
     view: View,
+    /// Comma-separated fields to include in structured results.
     #[arg(long, global = true)]
     fields: Option<String>,
+    /// Maximum items per result page.
     #[arg(long, global = true)]
     limit: Option<u64>,
+    /// Number of items to skip when paging results.
     #[arg(long, global = true)]
     offset: Option<u64>,
     #[command(subcommand)]
     command: Command,
 }
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Framework {
     Auto,
     Openspec,
@@ -49,18 +59,21 @@ impl Framework {
         }
     }
 }
-#[derive(Clone, Copy, ValueEnum, PartialEq)]
+#[derive(Clone, Copy, ValueEnum, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Format {
     Human,
     Json,
     Toml,
 }
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum View {
     Agent,
     Full,
 }
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
     Native,
     Autonomous,
@@ -75,7 +88,7 @@ impl Mode {
         }
     }
 }
-#[derive(Args, Default)]
+#[derive(Args, Default, serde::Serialize)]
 struct Source {
     #[arg(long,conflicts_with_all=["change","feature"])]
     milestone: Option<String>,
@@ -99,8 +112,14 @@ impl Source {
         v
     }
 }
-#[derive(Subcommand)]
+#[derive(Subcommand, serde::Serialize)]
+#[serde(tag = "name", content = "arguments", rename_all = "kebab-case")]
 enum Command {
+    #[command(hide = true)]
+    CliMetadata {
+        #[command(subcommand)]
+        command: cli_metadata::MetadataCommand,
+    },
     /// Inspect native providers, artifacts and structured project state.
     Inspect {
         #[command(flatten)]
@@ -176,10 +195,13 @@ enum Command {
     },
     /// Bind Skills and optionally an owned MCP entry to the existing SDD host.
     Init {
+        /// Host profile receiving Skills and optional MCP configuration.
         #[arg(long)]
         agent: Option<String>,
+        /// Prefix owned Skill names to avoid an existing name conflict.
         #[arg(long, default_value = "")]
         prefix: String,
+        /// Add the project's owned MCP server entry.
         #[arg(long)]
         mcp: bool,
     },
@@ -252,7 +274,7 @@ enum Command {
         evidence: String,
     },
 }
-#[derive(Args)]
+#[derive(Args, serde::Serialize)]
 struct HostArgs {
     #[arg(long)]
     host_id: String,
@@ -270,7 +292,8 @@ impl HostArgs {
         })
     }
 }
-#[derive(Subcommand)]
+#[derive(Subcommand, serde::Serialize)]
+#[serde(tag = "name", content = "arguments", rename_all = "kebab-case")]
 enum ToolCommand {
     List {
         #[arg(long)]
@@ -282,7 +305,8 @@ enum ToolCommand {
         input: String,
     },
 }
-#[derive(Subcommand)]
+#[derive(Subcommand, serde::Serialize)]
+#[serde(tag = "name", content = "arguments", rename_all = "kebab-case")]
 enum SkillCommand {
     Install {
         #[arg(long)]
@@ -294,7 +318,8 @@ enum SkillCommand {
     },
     Uninstall,
 }
-#[derive(Subcommand)]
+#[derive(Subcommand, serde::Serialize)]
+#[serde(tag = "name", content = "arguments", rename_all = "kebab-case")]
 enum MilestoneCommand {
     New {
         goal: String,
@@ -550,7 +575,7 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
             });
             ("", json!({}))
         }
-        Command::Mcp { .. } => unreachable!(),
+        Command::Mcp { .. } | Command::CliMetadata { .. } => unreachable!(),
     };
     if let Some(data) = direct {
         if cap.is_empty() && data.get("detected").is_some() {
@@ -614,6 +639,10 @@ fn execute_cap(
 }
 fn main() {
     let cli = Cli::parse();
+    if let Command::CliMetadata { command } = &cli.command {
+        println!("{}", cli_metadata::invoke(command));
+        return;
+    }
     if let Err(error) = ctrlc::set_handler(spec_autonomous_core::process::interrupt) {
         eprintln!("signal_handler_failed: {error}");
         std::process::exit(1);

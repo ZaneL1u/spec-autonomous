@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createProviderManager, downloadVerified, withInstallLock } from '../lib/providers.mjs';
 import { versions, uvHashes } from '../lib/provider-versions.mjs';
-import { mergeScaffold, commandIndex, mcpNeedsProvider, needsProvider, option, createProviderContext, cliSource } from '../lib/provider-cli.mjs';
+import { mergeScaffold, mcpNeedsProvider, needsProvider, createProviderContext, cliSource } from '../lib/provider-cli.mjs';
 import { runProcess } from '../lib/provider-process.mjs';
 
 async function setup(t, options = {}) {
@@ -112,10 +112,7 @@ test('scaffolding preflights all files and never overwrites unrelated project co
   assert.equal((await mergeScaffold(source, target)).length, 1);
   assert.equal((await mergeScaffold(source, target)).length, 0);
 });
-test('argument routing preserves option values and keeps passive operations offline', () => {
-  const args = ['--path', 'progress', '--json', 'prepare', '--goal', 'doctor'];
-  assert.equal(commandIndex(args), 3); assert.equal(option(args, '--path'), 'progress');
-  assert.throws(() => option(['--path'], '--path'), /requires a value/);
+test('passive operations stay offline', () => {
   for (const name of ['progress', 'doctor', 'next', 'detect']) assert.equal(needsProvider(name), false);
   assert.equal(mcpNeedsProvider({ method: 'tools/call', params: { name: 'sa_progress' } }), false);
   assert.equal(mcpNeedsProvider({ method: 'tools/call', params: { name: 'sa_prepare' } }), true);
@@ -127,12 +124,12 @@ test('structured source and continuation retain their explicit or ledger provide
     run: async argv => ({ code: 0, stdout: JSON.stringify(argv.includes('status')
       ? { data: { milestone: { framework: 'speckit' } } }
       : { root: home, selected: null, detected: [{ framework: 'speckit' }, { framework: 'openspec' }] }) }) };
-  const context = createProviderContext('/mock/native', ['--path', home, 'prepare'], manager);
+  const context = createProviderContext('/mock/native', { path: home }, manager);
   await context.ensureSource({ run_id: 'run-1' });
-  await context.ensureSource(await cliSource(['tools', 'call', 'native.instructions', '--input', '{"framework":"openspec"}']));
+  await context.ensureSource(await cliSource({ command: { name: 'tools', arguments: { command: { name: 'call', arguments: { input: '{"framework":"openspec"}' } } } } }));
   assert.deepEqual(ensured, ['speckit', 'openspec']);
   await assert.rejects(context.ensureSource({ run_id: 'run-1', framework: 'openspec' }), /provider_selection_conflict/);
-  assert.throws(() => createProviderContext('/mock/native', ['init', '--provider', 'openspec', '--framework', 'speckit'], manager), /provider_selection_conflict/);
+  assert.throws(() => createProviderContext('/mock/native', { provider: 'openspec', framework: 'speckit' }, manager), /provider_selection_conflict/);
 });
 test('installer subprocesses have bounded deadlines and keep nonzero exit results', { timeout: 5000 }, async () => {
   const failed = await runProcess([process.execPath, '-e', 'process.exit(23)']);

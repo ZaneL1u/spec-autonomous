@@ -7,42 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { createProviderManager, providerName, providerNames } from './providers.mjs';
 import { nodeCommand } from './provider-process.mjs';
 
-const globalValues = new Set(['--path', '--framework', '--provider', '--format', '--view', '--fields', '--limit', '--offset']);
-export function commandIndex(args) {
-  for (let i = 0; i < args.length; i++) {
-    if (globalValues.has(args[i])) { i++; continue; }
-    if (!args[i].startsWith('-')) return i;
-  }
-  return -1;
-}
-export function option(args, flag) {
-  const values = [];
-  for (let i = 0; i < args.length && args[i] !== '--'; i++) {
-    if (args[i].startsWith(`${flag}=`)) values.push(args[i].slice(flag.length + 1));
-    else if (args[i] === flag) {
-      if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`invalid_arguments: ${flag} requires a value`);
-      values.push(args[++i]);
-    }
-  }
-  if (values.length > 1) throw new Error(`invalid_arguments: duplicate ${flag}`);
-  return values[0];
-}
-export function stripOption(args, flag) {
-  const result = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === flag) i++;
-    else if (!args[i].startsWith(`${flag}=`)) result.push(args[i]);
-  }
-  return result;
-}
 export function bridgeEnvironment(env = process.env) {
   return { ...env, SPEC_AUTONOMOUS_OPENSPEC_BRIDGE: JSON.stringify([
     nodeCommand(env), fileURLToPath(new URL('../bin/provider-bridge.mjs', import.meta.url)),
   ]) };
 }
-export function createProviderContext(binary, args, manager = createProviderManager()) {
-  const path = resolve(option(args, '--path') || process.cwd());
-  const provider = option(args, '--provider'), framework = option(args, '--framework');
+export function createProviderContext(binary, options = {}, manager = createProviderManager()) {
+  const path = resolve(options.path || process.cwd());
+  const { provider, framework } = options;
   if (provider && framework && framework !== 'auto' && provider !== framework) throw new Error('provider_selection_conflict: --provider and --framework disagree');
   const explicit = provider || framework;
   if (explicit && explicit !== 'auto') providerName(explicit);
@@ -77,16 +49,27 @@ export function createProviderContext(binary, args, manager = createProviderMana
     }
     return ensureSelected(requested);
   }
-  return { binary, args, manager, path, explicit, detection, select, ensureSelected, ensureSource };
+  return { binary, args: options.nativeArgs || [], options, manager, path, explicit, detection, select, ensureSelected, ensureSource };
 }
 
-export async function cliSource(args) {
-  const input = option(args, '--input');
-  if (input) return JSON.parse(input.startsWith('@') ? await readFile(input.slice(1), 'utf8') : input);
-  const result = option(args, '--result');
+export function nativeAction(parsed) {
+  let action = parsed.command;
+  while (action.arguments?.command) action = action.arguments.command;
+  return action;
+}
+export async function cliSource(parsed) {
+  const args = nativeAction(parsed).arguments || {};
+  const input = args.input;
+  if (input) {
+    const source = JSON.parse(input.startsWith('@') ? await readFile(input.slice(1), 'utf8') : input);
+    // Native CLI globals override source JSON. Receipt operations instead use
+    // the run's ledger provider and do not accept a source-framework override.
+    if (parsed.framework && !source.result) source.framework = parsed.framework;
+    return source;
+  }
+  const result = args.result;
   if (result) return { result: JSON.parse(await readFile(result, 'utf8')) };
-  const index = commandIndex(args);
-  return { run_id: option(args, '--run-id') || (args[index] === 'resume' ? args[index + 1] : undefined), framework: option(args, '--framework') };
+  return { run_id: args.run_id, framework: parsed.framework };
 }
 
 // Native initialization runs in an empty staging repository. Check every target
@@ -131,10 +114,10 @@ export async function mergeScaffold(source, target) {
 }
 
 export async function initializeProvider(context) {
-  const { manager, args } = context;
+  const { manager, options } = context;
   const selection = await context.select(undefined, true);
   const hasProvider = selection.report.detected.some(d => d.framework === selection.provider);
-  let agent = option(args, '--agent');
+  let agent = options.agent;
   if (!agent) {
     const codex = existsSync(join(selection.root, '.agents')), claude = existsSync(join(selection.root, '.claude'));
     if (codex !== claude) agent = codex ? 'codex' : 'claude';
@@ -182,9 +165,9 @@ export const providerTool = {
 // Unknown tools and passive state/progress operations are forwarded unchanged.
 const nativeCapabilities = new Set(['inspect', 'prepare', 'apply-result', 'archive', 'plan', 'resume', 'milestone.new',
   'task.complete', 'native.instructions', 'native.create', 'roadmap.import', 'verify.source', 'verify.plan', 'task.list', 'task.ready']);
-export function needsProvider(command, args = []) {
+export function needsProvider(command, capability) {
   if (nativeCapabilities.has(command)) return true;
-  return command === 'milestone' || command === 'tools' && args[0] === 'call' && nativeCapabilities.has(args[1]);
+  return command === 'milestone' || command === 'tools' && nativeCapabilities.has(capability);
 }
 export function mcpNeedsProvider(message) {
   if (message.method !== 'tools/call') return false;

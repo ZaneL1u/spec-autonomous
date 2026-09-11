@@ -18,6 +18,7 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 - Read README.md for the current implemented boundary.
 - Read openspec/changes/host-driven-capabilities/{proposal,design,tasks}.md for the current implementation contract. The earlier autonomous-orchestration change and validation/autonomous.md are historical alpha.1 evidence.
 - Read openspec/changes/provider-bootstrap/{proposal,design,tasks}.md and docs/provider-bootstrap.md for alpha.3 JS native-tool installation and CLI/MCP setup.
+- Read openspec/changes/cli-framework-standardization/{proposal,design,tasks}.md for alpha.4 Commander + Clap integration. Native CLI definitions stay in Clap; do not add another hand-written argv parser.
 - Use the installed OpenSpec CLI and the existing spec-driven schema for behavioral changes.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.
