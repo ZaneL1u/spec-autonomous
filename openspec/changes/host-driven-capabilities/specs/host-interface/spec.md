@@ -24,4 +24,3 @@ Historical runs SHALL remain readable and SHALL never reactivate an old agent la
 #### Scenario: Resume legacy run
 - **WHEN** a pre-host-protocol run is resumed
 - **THEN** the CLI gives a migration result instead of spawning its former runner
-

@@ -24,4 +24,3 @@ Doctor SHALL inspect without mutation; repair SHALL expose a bounded plan and pe
 #### Scenario: Unreadable state
 - **WHEN** the runtime cannot be parsed
 - **THEN** doctor reports partial diagnostics without silently rebuilding or deleting the ledger
-

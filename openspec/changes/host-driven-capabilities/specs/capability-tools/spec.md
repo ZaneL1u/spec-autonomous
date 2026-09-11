@@ -31,4 +31,3 @@ Granular roadmap, task, state and history operations SHALL use the same source a
 #### Scenario: Premature task completion
 - **WHEN** a host attempts to complete an unverified native task through a granular tool
 - **THEN** the operation refuses without changing its checkbox
-

@@ -38,4 +38,3 @@ Cancellation and stale leases SHALL report host actions and SHALL not assume an 
 #### Scenario: Stale host heartbeat
 - **WHEN** a host request has no recent heartbeat
 - **THEN** progress reports stale and no duplicate worker is automatically allocated
-
