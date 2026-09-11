@@ -504,19 +504,32 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
             ("", json!({}))
         }
         Command::Detect => {
-            direct = Some(serde_json::to_value(spec_autonomous_core::detect(
+            let report = spec_autonomous_core::detect(
                 &root,
                 match selected {
                     Some("openspec") => Some(spec_autonomous_core::Framework::Openspec),
                     Some("speckit") => Some(spec_autonomous_core::Framework::Speckit),
                     _ => None,
                 },
-            )?)?);
+            )?;
+            let mut data = serde_json::to_value(&report)?;
+            if let Ok(config) = spec_autonomous_core::config::Config::load(&report.root)
+                && !config.provider.openspec_command.is_empty()
+            {
+                data["provider_commands"] = json!({"openspec":config.provider.openspec_command});
+            }
+            direct = Some(data);
             ("", json!({}))
         }
         Command::Init { agent, prefix, mcp } => {
             let project = spec_autonomous_core::detect(&root, None)?.root;
-            let data = skills::init_with_mcp(&project, agent.as_deref(), &prefix, mcp)?;
+            let framework = match selected {
+                Some("openspec") => Some(spec_autonomous_core::Framework::Openspec),
+                Some("speckit") => Some(spec_autonomous_core::Framework::Speckit),
+                _ => None,
+            };
+            let data =
+                skills::init_with_provider(&project, agent.as_deref(), &prefix, mcp, framework)?;
             direct = Some(data);
             ("", json!({}))
         }

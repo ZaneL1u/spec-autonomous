@@ -17,13 +17,14 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 
 - Read README.md for the current implemented boundary.
 - Read openspec/changes/host-driven-capabilities/{proposal,design,tasks}.md for the current implementation contract. The earlier autonomous-orchestration change and validation/autonomous.md are historical alpha.1 evidence.
+- Read openspec/changes/provider-bootstrap/{proposal,design,tasks}.md and docs/provider-bootstrap.md for alpha.3 JS native-tool installation and CLI/MCP setup.
 - Use the installed OpenSpec CLI and the existing spec-driven schema for behavioral changes.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.
 
 ## Structure and tools
 
-- Rust owns passive workflow capabilities, work packets, native bridges and verified transitions; Node is the thin npm launcher. Only the independent tests/mock-host.mjs fixture dispatches semantic test workers.
+- Rust owns passive workflow capabilities, work packets, native argv bridges and verified transitions. Bun / Node compatible JS owns npm launching and provider installation; no Rust network installer. Only the independent tests/mock-host.mjs fixture dispatches semantic test workers.
 - Bun 1.4.2 owns workspace dependencies and scripts; commit bun.lock and Cargo.lock.
 - Source ~/.cargo/env if cargo is not on PATH. Use the pinned rust-toolchain.toml.
 - Verify with bun run test:all (equivalent: node scripts/test-all.mjs). The suite includes lint, unit/contracts, real OpenSpec, npm assets, Git/process e2e and strict specs.

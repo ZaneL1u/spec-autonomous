@@ -4,7 +4,7 @@
 
 用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-当前版本 `0.1.0-alpha.2`，npm registry 尚未发布。本仓库实现通过 OpenSpec 的 `host-driven-capabilities` 变更维护。
+当前版本 `0.1.0-alpha.3`，npm registry 尚未发布。被动工作流通过 `host-driven-capabilities` 维护；自动安装通过 OpenSpec 的 `provider-bootstrap` 变更维护。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -12,23 +12,32 @@
 - [本轮验收](docs/validation/host-driven.md)
 - [从 alpha.1 迁移](docs/migration-alpha2.md)
 - [npm 分平台发行](docs/distribution.md)
+- [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
 
 ## 安装和绑定
 
-源码开发需要 Git、Rust 1.98.1、Node 22+；Bun 管理 workspace 依赖。安装后的 npm 包只需要 Node 和项目所用原生工具，不需要 Rust/Bun。
+源码开发需要 Git、Rust 1.98.1、Node 22+；Bun 管理 workspace 依赖。安装后的 npm 包需要 Node 22+ 和 Git。JS 层自动补齐缺失的原生 SDD 工具及 Spec Kit 的 uv / Python，无需预装 Rust、Bun、Python。
 
 ```sh
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 node scripts/pack-local.mjs
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.2.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.3.tgz
 
-# 在已安装 OpenSpec 或 Spec Kit 的项目里绑定 Skills
+# 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
 spec-autonomous init --agent codex
+# 空仓库：明确框架，调用其原生初始化后绑定 Skills
+spec-autonomous init --provider openspec --agent codex --mcp
+spec-autonomous init --provider speckit --agent codex --mcp
 # 同时写入受所有权保护的项目 MCP 配置
 spec-autonomous init --agent codex --mcp
 # Claude Code 对应入口
 spec-autonomous init --agent claude --mcp
+
+# 安装状态、显式补齐、执行原生命令
+spec-autonomous providers status --json
+spec-autonomous providers ensure speckit --json
+spec-autonomous providers exec openspec -- --version
 ```
 
 MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规则仍然适用。Codex 使用 `$autonomous` / `$auto`，Claude 使用 `/autonomous` / `/auto`。另外提供 milestone、progress、resume。冲突时可用 `--prefix sa`，不会覆盖用户修改的文件。
@@ -37,7 +46,7 @@ MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规�
 
 ## 常用完整能力
 
-默认 CLI 帮助只强调七项能力；MCP 对应 `sa_inspect`、`sa_progress`、`sa_prepare`、`sa_next`、`sa_apply_result`、`sa_archive`、`sa_doctor`，以及一个高级目录/调用入口 `sa_tools`。
+工作流核心提供七项完整能力；MCP 对应 `sa_inspect`、`sa_progress`、`sa_prepare`、`sa_next`、`sa_apply_result`、`sa_archive`、`sa_doctor`，以及一个高级目录/调用入口 `sa_tools`。npm JS 层另提供 `sa_providers` 安装管理工具。
 
 ```sh
 spec-autonomous inspect --json

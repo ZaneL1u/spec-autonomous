@@ -107,7 +107,15 @@ pub fn uninstall(root: &Path) -> Result<Vec<String>> {
     Ok(deleted)
 }
 pub fn init(root: &Path, agent: Option<&str>, prefix: &str) -> Result<serde_json::Value> {
-    let detected = provider::framework(root, None)?;
+    init_selected(root, agent, prefix, None)
+}
+fn init_selected(
+    root: &Path,
+    agent: Option<&str>,
+    prefix: &str,
+    framework: Option<crate::Framework>,
+) -> Result<serde_json::Value> {
+    let detected = provider::framework(root, framework)?;
     let agent = if let Some(a) = agent {
         a
     } else {
@@ -158,6 +166,15 @@ pub fn init_with_mcp(
     prefix: &str,
     mcp: bool,
 ) -> Result<serde_json::Value> {
+    init_with_provider(root, agent, prefix, mcp, None)
+}
+pub fn init_with_provider(
+    root: &Path,
+    agent: Option<&str>,
+    prefix: &str,
+    mcp: bool,
+    framework: Option<crate::Framework>,
+) -> Result<serde_json::Value> {
     let selected = if let Some(agent) = agent {
         agent
     } else {
@@ -170,7 +187,7 @@ pub fn init_with_mcp(
     if mcp {
         crate::skills_mcp::preflight(root, selected)?;
     }
-    let mut result = init(root, Some(selected), prefix)?;
+    let mut result = init_selected(root, Some(selected), prefix, framework)?;
     if mcp {
         result["mcp"] = crate::skills_mcp::install(root, selected)?;
     }

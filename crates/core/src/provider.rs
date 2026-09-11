@@ -44,6 +44,14 @@ pub fn openspec_argv(root: &Path, config: &Config) -> Vec<String> {
     let local = root.join("node_modules/.bin/openspec");
     if local.is_file() {
         vec![local.to_string_lossy().into()]
+    } else if let Some(argv) = std::env::var("SPEC_AUTONOMOUS_OPENSPEC_BRIDGE")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .filter(|argv| !argv.is_empty() && argv.iter().all(|part| !part.is_empty()))
+    {
+        // The npm JS layer owns installation and runtime prerequisites. This
+        // fallback only passes argv; explicit project configuration wins above.
+        argv
     } else {
         vec!["openspec".into()]
     }

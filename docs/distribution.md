@@ -61,3 +61,7 @@ release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真
 ## alpha.2 host-driven 入口
 
 平台分包与 launcher 机制保留。Rust CLI 现在仅提供确定性能力与 stdio MCP，不启动 agent；同一包分发五个更新后的 Skills。独立测试宿主和语义 mock 不进入 npm files 白名单。root/CLI Cargo/npm 版本统一为 0.1.0-alpha.2；运行账本 schema 为 2，公开能力 envelope 与工作回执 schema 为 1。
+
+## alpha.3 原生工具准备
+
+当前版本 0.1.0-alpha.3 增加 [JS 自动安装层](provider-bootstrap.md)。`bin` / `lib` 白名单携带安装器和固定版本清单；仍无 npm lifecycle 下载脚本，`npm install --ignore-scripts` 可用。用户第一次 init 或需要原生工具的 CLI/MCP 请求负责安装。Rust 平台分包和公开发布流程保持原契约，私有测试可分发本机完整 tgz。

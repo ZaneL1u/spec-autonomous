@@ -42,6 +42,7 @@ test('local npm tarball includes public skills when lifecycle scripts are disabl
   const paths = new Set(packed.files.map((entry) => entry.path));
   for (const name of names) assert.ok(paths.has(`skills/${name}/SKILL.md`), `missing packed skill: ${name}`);
   assert.ok(paths.has('bin/spec-autonomous.mjs'));
+  for (const path of ['bin/provider-bridge.mjs', 'lib/providers.mjs', 'lib/provider-cli.mjs', 'lib/provider-mcp.mjs', 'lib/provider-process.mjs', 'lib/provider-versions.mjs']) assert.ok(paths.has(path), `missing provider runtime: ${path}`);
   assert.equal([...paths].some((path) => path.includes('.references/') || path.includes('.spec-autonomous/')), false);
   const installed = join(output, 'installed');
   npmCommand(['install', '--prefix', installed, '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', join(output, packed.filename)], { encoding: 'utf8' });

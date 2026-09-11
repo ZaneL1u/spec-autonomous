@@ -162,6 +162,33 @@ fn prepare_is_idempotent_and_never_requires_an_agent_executable() {
     );
 }
 #[test]
+fn pause_mailbox_is_acknowledged_when_a_receipt_arrives_after_lock_contention() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let request = &first["work"][0];
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let coordinator = spec_autonomous_core::state::Lease::acquire(&repo).unwrap();
+    engine::host_control(root.path(), first["id"].as_str().unwrap(), "pause").unwrap();
+    assert_eq!(
+        Store::open(&repo, false)
+            .unwrap()
+            .unwrap()
+            .get(first["id"].as_str().unwrap())
+            .unwrap()
+            .status,
+        "awaiting_host"
+    );
+    drop(coordinator);
+    let paused = answer_plan(root.path(), request);
+    assert_eq!(paused["status"], "paused");
+    assert_eq!(paused["attempts"][0]["status"], "submitted");
+    let replay = answer_plan(root.path(), request);
+    assert_eq!(replay["status"], "paused");
+    assert_eq!(replay["attempts"].as_array().unwrap().len(), 1);
+    let next = api::invoke(root.path(), "next", &json!({"run_id":first["id"]})).unwrap();
+    assert_eq!(next["status"], "paused");
+}
+#[test]
 fn receipts_bind_identity_and_replay_without_duplicate_integration() {
     let root = fixture();
     let first = prepare(root.path());

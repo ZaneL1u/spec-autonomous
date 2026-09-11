@@ -9,7 +9,7 @@ context: |
   User entry is /autonomous with exact alias /auto where supported by the host.
   Init binds host skills/commands to the user's existing SDD provider; it never
   silently replaces their framework or substitutes a private SDD workflow.
-  Stack: Rust workspace, Node.js 22+ npm launcher, Bun 1.4.2, Rust 1.98.1.
+  Stack: Rust workspace, Node.js 22+ / Bun 1.4.2 JS installation layer, Rust 1.98.1.
   The local alpha implements skills, roadmap, native planning, bounded concurrent
   execution, source CAS, verification/repair/recovery and all-worktree progress.
   Existing specs own requirements. The Git common-dir SQLite ledger owns attempts
@@ -17,7 +17,8 @@ context: |
   immutable work packets and apply-result consumes host-owned receipts.
   CLI and MCP share one capability registry, including granular document,
   roadmap, worktree, state, verification, repair and archive operations.
-  Current change: host-driven-capabilities; alpha.1 launcher evidence is historical.
+  Current change: provider-bootstrap adds JS installation in alpha.3;
+  host-driven-capabilities defines the passive core. Alpha.1 launcher evidence is historical.
   See docs/architecture.md and docs/validation/host-driven.md for
   implemented protocol and evidence; remote npm publishing/platform CI remain open.
   The host provides fresh contexts in assigned worktrees; the capability core alone

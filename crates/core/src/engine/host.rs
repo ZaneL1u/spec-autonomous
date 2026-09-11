@@ -327,6 +327,14 @@ pub fn apply_result(
         run.updated_at = paths::now();
         store.save(&run, "host_result_submitted")?;
         if store.requested(&run.id)? == "pause" {
+            // A pause can arrive while this receipt owns the coordinator lease,
+            // preventing host_control from updating the run row. Acknowledge
+            // its durable mailbox here; otherwise hosts keep seeing submitted
+            // work as awaiting_host and can replay the same receipt forever.
+            run.status = "paused".into();
+            run.blocker = Some("paused: requested by host".into());
+            run.updated_at = paths::now();
+            store.save(&run, "host_control_acknowledged")?;
             return work_view(&run, &store.root);
         }
     }
