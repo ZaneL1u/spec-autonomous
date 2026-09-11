@@ -6,4 +6,4 @@
 ## 2. Publication and acceptance
 
 - [x] 2.1 Preserve ordinary tarball / CLI / MCP behavior and update documentation; verify package tests, Git-local e2e and repository regression.
-- [ ] 2.2 Publish alpha.5 source and private Release assets; verify private visibility, exact source commit, asset hashes and real Git SSH npm installation under Node 22.
+- [x] 2.2 Publish alpha.5 source and private Release assets; verify private visibility, exact source commit, asset hashes and real Git SSH npm installation under Node 22.
