@@ -17,27 +17,20 @@ test('all five public entry points ship as CLI-owned skill assets', () => {
     const content = readFileSync(join(source, 'skills', name, 'SKILL.md'), 'utf8');
     assert.match(content, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
     assert.match(content, /description: .+/);
-    assert.match(content, /spec-autonomous /);
+    assert.match(content, /sa_(prepare|progress|next|inspect|apply_result)/);
+    assert.doesNotMatch(content, /codex exec|claude -p|runner\.profile/);
   }
 });
 
-test('auto delegates the same CLI, scope and resume contract as autonomous', () => {
+test('auto uses the same host-owned capability and receipt protocol as autonomous', () => {
   const canonical = readFileSync(join(source, 'skills/autonomous/SKILL.md'), 'utf8');
   const alias = readFileSync(join(source, 'skills/auto/SKILL.md'), 'utf8');
-  for (const command of [
-    'spec-autonomous detect --json',
-    'spec-autonomous progress --all-worktrees --json',
-    'spec-autonomous run --milestone <id> --mode autonomous',
-    'spec-autonomous milestone new "<goal>" --mode autonomous',
-  ]) {
-    assert.ok(canonical.includes(command), `autonomous must use ${command}`);
-    assert.ok(alias.includes(command), `auto must use ${command}`);
+  for (const entry of ['sa_prepare','sa_apply_result','work.claim','fresh','host']) {
+    assert.ok(canonical.includes(entry), `autonomous must describe ${entry}`);
+    assert.ok(alias.includes(entry), `auto must describe ${entry}`);
   }
-  assert.match(alias, /exactly the `autonomous` entry point/);
-  assert.match(alias, /from\/to\/only/);
-  assert.match(alias, /spec-autonomous resume <run-id>/);
-  assert.match(alias, /Do not create a separate shortcut loop/);
-  assert.match(alias, /do not infer whole-milestone completion from a completed range/);
+  assert.match(alias, /Exact alias/);assert.match(alias, /from\/to\/only/);
+  assert.match(alias, /scope_completed/);assert.match(alias, /CLI never starts an agent/);
 });
 
 test('local npm tarball includes public skills when lifecycle scripts are disabled', (t) => {

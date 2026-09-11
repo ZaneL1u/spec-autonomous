@@ -11,9 +11,15 @@ pub mod plan;
 pub mod process;
 pub mod progress;
 pub mod provider;
-pub mod runner;
 pub mod skills;
 pub mod state;
+pub mod work_packet;
 pub use discovery::{DetectionReport, Framework, detect};
 
 pub mod provenance;
+
+pub mod capabilities;
+
+pub mod mcp;
+
+pub mod skills_mcp;

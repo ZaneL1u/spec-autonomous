@@ -41,6 +41,34 @@ impl Coordinator<'_> {
         if self.run.mode == "native" {
             return self.handoff();
         }
+        if let Some(repair) = self
+            .run
+            .host
+            .as_ref()
+            .and_then(|h| h.pending_repair.clone())
+        {
+            let phase = self
+                .run
+                .milestone
+                .phases
+                .iter()
+                .find(|p| p.id == repair.phase_id)
+                .cloned()
+                .context("stale_repair: phase removed")?;
+            let snapshot = provider::inspect(
+                &self.project(),
+                self.run.milestone.framework,
+                &phase.source.selector,
+                &self.run.config,
+            )?;
+            if snapshot.source_hash != repair.source_hash {
+                bail!("source_drift: repair source changed");
+            }
+            self.converge(&phase, &snapshot, &repair.audit)?;
+            self.run.host.as_mut().unwrap().pending_repair = None;
+            self.reopen(&phase.id);
+            self.save("repair_applied")?;
+        }
         let mut phase_count = 0;
         loop {
             self.check()?;
@@ -289,8 +317,19 @@ impl Coordinator<'_> {
             bail!("repair_budget_exhausted: selected scope still fails verification");
         }
         self.run.repair_rounds += 1;
+        self.run
+            .host
+            .as_mut()
+            .context("legacy_run_read_only")?
+            .pending_repair = Some(PendingRepair {
+            phase_id: phase.id.clone(),
+            source_hash: snapshot.source_hash.clone(),
+            audit: audit.to_vec(),
+        });
         self.save("repair_scheduled")?;
-        self.converge(phase, snapshot, audit)
+        self.converge(phase, snapshot, audit)?;
+        self.run.host.as_mut().unwrap().pending_repair = None;
+        Ok(())
     }
     pub(super) fn reopen(&mut self, phase_id: &str) {
         let mut affected = vec![phase_id.to_string()];

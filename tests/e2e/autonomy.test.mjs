@@ -80,7 +80,7 @@ test('progress observes concurrent workers from a linked worktree and pause stop
   const running=start(root,['run','--milestone','M001']);
   t.after(()=>{if(running.child.exitCode===null)running.child.kill('SIGKILL');});
   const progress=await until(()=>{const r=cli(root,['progress','--all-worktrees']);return r.status===0&&r.data.active_workers>=2?r.data:null;},40000);
-  const worker=progress.worktrees.find(w=>w.kind==='managed-worker'&&w.status==='running');
+  const worker=progress.worktrees.find(w=>w.kind==='managed-worker'&&w.status==='claimed');
   assert.ok(worker);
   const nested=cli(worker.path,['progress','--all-worktrees']);assert.equal(nested.status,0,nested.details);
   assert.equal(nested.data.worktrees.length,progress.worktrees.length);

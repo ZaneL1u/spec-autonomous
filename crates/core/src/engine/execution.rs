@@ -4,7 +4,7 @@ use crate::markdown;
 
 impl Coordinator<'_> {
     pub(super) fn execute_phase(&mut self, phase: &Phase) -> Result<()> {
-        let snapshot = provider::inspect(
+        let mut snapshot = provider::inspect(
             &self.project(),
             self.run.milestone.framework,
             &phase.source.selector,
@@ -20,11 +20,26 @@ impl Coordinator<'_> {
             .run
             .plans
             .get(&phase.id)
-            .filter(|p| p.source_hash == snapshot.source_hash)
+            .filter(|p| {
+                p.source_hash == snapshot.source_hash
+                    || self
+                        .run
+                        .host
+                        .as_ref()
+                        .and_then(|h| h.source_revisions.get(&phase.id))
+                        == Some(&snapshot.source_hash)
+            })
             .cloned();
         let plan = if let Some(p) = existing {
             p
         } else {
+            if self.run.attempts.iter().any(|a| {
+                a.phase_id == phase.id
+                    && a.kind == "implement"
+                    && matches!(a.status.as_str(), "issued" | "claimed" | "submitted")
+            }) {
+                bail!("source_drift: stop outstanding host work before replanning");
+            }
             self.run.stage = "planning_tasks".into();
             let p = self.build_plan(phase, &snapshot)?;
             self.run
@@ -43,201 +58,180 @@ impl Coordinator<'_> {
                 Path::new(&self.run.integration),
                 "sa: record execution plan",
             )?;
+            self.run
+                .host
+                .as_mut()
+                .unwrap()
+                .source_revisions
+                .insert(phase.id.clone(), snapshot.source_hash.clone());
             self.save("plan_accepted")?;
             p
         };
-        plan::validate_plan(&plan, &snapshot)?;
         if plan.phase_id != phase.id {
             bail!("invalid_plan: supplied plan has wrong phase binding");
+        }
+        let done_ids: Vec<_> = plan
+            .tasks
+            .iter()
+            .filter(|t| {
+                self.run
+                    .completed_tasks
+                    .contains(&Run::key(&phase.id, &t.id))
+            })
+            .map(|t| t.id.clone())
+            .collect();
+        let mut remaining = plan.clone();
+        remaining.source_hash = snapshot.source_hash.clone();
+        remaining.tasks.retain(|t| !done_ids.contains(&t.id));
+        for task in &mut remaining.tasks {
+            task.depends_on.retain(|d| !done_ids.contains(d));
+        }
+        if !remaining.tasks.is_empty() {
+            plan::validate_plan(&remaining, &snapshot)?;
         }
         self.run.stage = "executing_phase".into();
         if self.run.mode == "plan" {
             return Ok(());
         }
-        let mut jobs: Vec<(Task, usize, thread::JoinHandle<Result<WorkerResult>>)> = vec![];
-        let mut failures: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut fingerprints: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut retry_after = BTreeMap::new();
-        for attempt in self
+        let submitted: Vec<_> = self
             .run
             .attempts
             .iter()
-            .filter(|a| a.phase_id == phase.id && a.kind == "implement" && a.status == "failed")
-        {
-            if let Some(error) = &attempt.error {
-                let diff = git::patch(Path::new(&attempt.worktree), &attempt.base_commit)?;
-                let code = error.split(':').next().unwrap_or("");
-                fingerprints
-                    .entry(attempt.task_id.clone())
-                    .or_default()
-                    .push(paths::hash(format!("{code}\n{diff}")));
+            .enumerate()
+            .filter(|(_, a)| {
+                a.phase_id == phase.id && a.kind == "implement" && a.status == "submitted"
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for index in submitted {
+            self.check()?;
+            let task = plan
+                .tasks
+                .iter()
+                .find(|t| t.id == self.run.attempts[index].task_id)
+                .context("stale_request: task no longer in plan")?;
+            let dir = self
+                .store
+                .attempt_dir(&self.run.id, &self.run.attempts[index].id)?;
+            let result = work_packet::read_result(&dir);
+            self.end_attempt(index, &result)?;
+            let accepted =
+                result.and_then(|_| self.integrate_task(phase, &plan, &snapshot, task, index));
+            if let Err(error) = accepted {
+                let message = format!("{error:#}");
+                self.run.attempts[index].status = "failed".into();
+                self.run.attempts[index].error = Some(message.clone());
+                self.save("task_retry")?;
+                if message.starts_with("needs_input:") {
+                    return Err(error);
+                }
+            } else {
+                snapshot = provider::inspect(
+                    &self.project(),
+                    self.run.milestone.framework,
+                    &phase.source.selector,
+                    &self.run.config,
+                )?;
+                self.run
+                    .host
+                    .as_mut()
+                    .unwrap()
+                    .source_revisions
+                    .insert(phase.id.clone(), snapshot.source_hash.clone());
+                self.save("source_progress_recorded")?;
             }
         }
-        let result = (|| -> Result<()> {
-            loop {
-                self.check()?;
-                let done: Vec<_> = plan
-                    .tasks
-                    .iter()
-                    .filter(|t| {
-                        self.run
-                            .completed_tasks
-                            .contains(&Run::key(&phase.id, &t.id))
-                    })
-                    .map(|t| t.id.clone())
-                    .collect();
-                if done.len() == plan.tasks.len() {
-                    break;
-                }
-                let running: Vec<_> = jobs.iter().map(|(t, _, _)| t).collect();
-                let available = plan::ready(
-                    &plan,
-                    &done,
-                    &running,
-                    self.run.config.execution.max_workers,
-                );
-                for task in available {
-                    if retry_after
-                        .get(&task.id)
-                        .is_some_and(|until| Instant::now() < *until)
-                    {
-                        continue;
-                    }
-                    let errors = failures.get(&task.id).cloned().unwrap_or_default();
-                    let prior = self
-                        .run
-                        .attempts
-                        .iter()
-                        .filter(|a| {
-                            a.phase_id == phase.id
-                                && a.task_id == task.id
-                                && a.kind == "implement"
-                                && a.status == "failed"
-                        })
-                        .count();
-                    if prior >= self.run.config.execution.max_attempts as usize {
-                        continue;
-                    }
-                    if repeated(
-                        fingerprints.get(&task.id),
-                        self.run.config.execution.no_progress_limit,
-                    ) {
-                        continue;
-                    }
-                    let (index, worktree, dir) =
-                        self.make_attempt("implement", &task.id, &phase.id)?;
-                    let input=self.input(index,"Implement only this assigned native task. Preserve source specifications and shared task checkboxes. Respect the declared write scope. Verification runs independently on the host after your result.".into(),Some(snapshot.clone()),Some(task.clone()),errors.last().cloned().or_else(||self.run.attempts.iter().rev().find(|a|a.phase_id==phase.id&&a.task_id==task.id&&a.kind=="implement"&&a.error.is_some()).and_then(|a|a.error.clone())));
-                    let project = worktree.join(&self.run.project_relative);
-                    let config = self.run.config.clone();
-                    let cancel = self.cancel.clone();
-                    jobs.push((
-                        task.clone(),
-                        index,
-                        thread::spawn(move || runner::run(&input, &project, &dir, &config, cancel)),
-                    ));
-                }
-                let mut position = 0;
-                while position < jobs.len() {
-                    if !jobs[position].2.is_finished() {
-                        position += 1;
-                        continue;
-                    }
-                    let (task, index, handle) = jobs.remove(position);
-                    let result = handle
-                        .join()
-                        .map_err(|_| anyhow::anyhow!("worker_thread_panicked"))
-                        .and_then(|r| r);
-                    self.end_attempt(index, &result)?;
-                    let accepted = result
-                        .and_then(|_| self.integrate_task(phase, &plan, &snapshot, &task, index));
-                    if let Err(e) = accepted {
-                        let error = format!("{e:#}");
-                        let a = &self.run.attempts[index];
-                        let code = error.split(':').next().unwrap_or("");
-                        let diff =
-                            git::patch(Path::new(&a.worktree), &a.base_commit).unwrap_or_default();
-                        fingerprints
-                            .entry(task.id.clone())
-                            .or_default()
-                            .push(paths::hash(format!("{code}\n{diff}")));
-                        self.run.attempts[index].status = "failed".into();
-                        self.run.attempts[index].error = Some(error.clone());
-                        failures.entry(task.id.clone()).or_default().push(error);
-                        // Bounded backoff leaves independent tasks runnable and
-                        // remains interruptible through the coordinator poll loop.
-                        let failed = failures[&task.id].len().min(4) as u32;
-                        retry_after.insert(
-                            task.id.clone(),
-                            Instant::now() + Duration::from_millis(100 * 2u64.pow(failed - 1)),
-                        );
-                        self.save("task_retry")?;
-                    }
-                }
-                if jobs.is_empty() {
-                    let remaining = plan.tasks.iter().any(|t| {
-                        !self
-                            .run
-                            .completed_tasks
-                            .contains(&Run::key(&phase.id, &t.id))
-                    });
-                    if remaining {
-                        let done: Vec<_> = plan
-                            .tasks
-                            .iter()
-                            .filter(|t| {
-                                self.run
-                                    .completed_tasks
-                                    .contains(&Run::key(&phase.id, &t.id))
-                            })
-                            .map(|t| t.id.clone())
-                            .collect();
-                        let runnable =
-                            plan::ready(&plan, &done, &[], self.run.config.execution.max_workers)
-                                .iter()
-                                .any(|t| {
-                                    self.run
-                                        .attempts
-                                        .iter()
-                                        .filter(|a| {
-                                            a.phase_id == phase.id
-                                                && a.task_id == t.id
-                                                && a.kind == "implement"
-                                                && a.status == "failed"
-                                        })
-                                        .count()
-                                        < self.run.config.execution.max_attempts as usize
-                                        && !repeated(
-                                            fingerprints.get(&t.id),
-                                            self.run.config.execution.no_progress_limit,
-                                        )
-                                });
-                        if !runnable {
-                            bail!(
-                                "no_progress: {}",
-                                failures
-                                    .values()
-                                    .filter_map(|v| v.last())
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                                    .join("; ")
-                            );
-                        }
-                    }
-                }
-                thread::sleep(Duration::from_millis(30));
+        let done: Vec<_> = plan
+            .tasks
+            .iter()
+            .filter(|t| {
+                self.run
+                    .completed_tasks
+                    .contains(&Run::key(&phase.id, &t.id))
+            })
+            .map(|t| t.id.clone())
+            .collect();
+        if done.len() == plan.tasks.len() {
+            return Ok(());
+        }
+        let active: Vec<_> = plan
+            .tasks
+            .iter()
+            .filter(|t| {
+                self.run.attempts.iter().any(|a| {
+                    a.phase_id == phase.id
+                        && a.kind == "implement"
+                        && a.task_id == t.id
+                        && matches!(a.status.as_str(), "issued" | "claimed" | "submitted")
+                })
+            })
+            .collect();
+        let limit = self
+            .run
+            .config
+            .execution
+            .max_workers
+            .min(self.run.config.host.max_concurrency);
+        let ready: Vec<_> = plan::ready(&plan, &done, &active, limit)
+            .into_iter()
+            .cloned()
+            .collect();
+        let mut issued = 0;
+        for task in ready {
+            let failures: Vec<_> = self
+                .run
+                .attempts
+                .iter()
+                .filter(|a| {
+                    a.phase_id == phase.id
+                        && a.kind == "implement"
+                        && a.task_id == task.id
+                        && a.status == "failed"
+                })
+                .collect();
+            if failures.len() >= self.run.config.execution.max_attempts as usize {
+                continue;
             }
-            Ok(())
-        })();
-        if result.is_err() {
-            self.cancel.store(true, Ordering::Relaxed);
+            let fingerprints: Vec<_> = failures
+                .iter()
+                .map(|a| {
+                    let code = a
+                        .error
+                        .as_deref()
+                        .unwrap_or("")
+                        .split(':')
+                        .next()
+                        .unwrap_or("");
+                    let diff =
+                        git::patch(Path::new(&a.worktree), &a.base_commit).unwrap_or_default();
+                    paths::hash(format!("{code}\n{diff}"))
+                })
+                .collect();
+            if repeated(
+                Some(&fingerprints),
+                self.run.config.execution.no_progress_limit,
+            ) {
+                continue;
+            }
+            let key = paths::hash(format!(
+                "implement/{}/{}/{}",
+                phase.id, task.id, self.run.accepted_head
+            ));
+            self.issue("implement",&task.id,&phase.id,"Implement only the assigned native task. Preserve shared native checkboxes and respect the declared write set. Submit a candidate result to the host; the CLI verifies and integrates it.".into(),Some(snapshot.clone()),Some(task.clone()),key)?;
+            issued += 1;
         }
-        for (_, index, handle) in jobs {
-            let r = handle
-                .join()
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("worker panic")));
-            self.end_attempt(index, &r)?;
+        if issued > 0 || !active.is_empty() {
+            bail!("awaiting_host: prepared task work is outstanding");
         }
-        result
+        let errors = self
+            .run
+            .attempts
+            .iter()
+            .filter(|a| a.phase_id == phase.id && a.status == "failed")
+            .filter_map(|a| a.error.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("no_progress: no eligible task remains: {errors}")
     }
     pub(super) fn integrate_task(
         &mut self,
@@ -525,7 +519,7 @@ impl Coordinator<'_> {
             });
             self.run.stage = format!("hook_{event}");
             self.save("hook_started")?;
-            let mut env = self.run.config.runner.environment.clone();
+            let mut env = self.run.config.environment.clone();
             env.insert(
                 "SPEC_AUTONOMOUS_HOOK_KEY".into(),
                 format!("{}:{key}", self.run.id),

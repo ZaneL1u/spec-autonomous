@@ -7,6 +7,7 @@ creates a roadmap through native planning workflows, then drives a whole milesto
 from/to phase range to verified delivery. Native and autonomous modes share the same
 Markdown specs. Skills call the CLI; TOML stores orchestration declarations. Progress
 must cover all worktrees in the Git repository, including external and unknown ones.
+The CLI never starts agents or model sessions. It exposes deterministic compound capabilities and granular tools; the host owns fresh contexts and dispatch.
 The user-facing primary entry is /autonomous with /auto as an exact alias where the
 host supports slash commands. It depends on the user's existing SDD provider; init
 binds commands/skills and never silently replaces the framework or its workflows.
@@ -15,14 +16,14 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 ## Start here
 
 - Read README.md for the current implemented boundary.
-- Read openspec/changes/autonomous-orchestration/{proposal,design,tasks}.md and docs/validation/autonomous.md for acceptance and remaining release work.
+- Read openspec/changes/host-driven-capabilities/{proposal,design,tasks}.md for the current implementation contract. The earlier autonomous-orchestration change and validation/autonomous.md are historical alpha.1 evidence.
 - Use the installed OpenSpec CLI and the existing spec-driven schema for behavioral changes.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.
 
 ## Structure and tools
 
-- Rust owns detection, native bridges and orchestration; Node is the thin npm launcher.
+- Rust owns passive workflow capabilities, work packets, native bridges and verified transitions; Node is the thin npm launcher. Only the independent tests/mock-host.mjs fixture dispatches semantic test workers.
 - Bun 1.4.2 owns workspace dependencies and scripts; commit bun.lock and Cargo.lock.
 - Source ~/.cargo/env if cargo is not on PATH. Use the pinned rust-toolchain.toml.
 - Verify with bun run test:all (equivalent: node scripts/test-all.mjs). The suite includes lint, unit/contracts, real OpenSpec, npm assets, Git/process e2e and strict specs.

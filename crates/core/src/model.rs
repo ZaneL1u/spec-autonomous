@@ -250,6 +250,8 @@ pub struct Run {
     pub repair_rounds: u32,
     #[serde(default)]
     pub hook_results: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostState>,
 }
 impl Run {
     pub fn terminal(&self) -> bool {
@@ -261,4 +263,44 @@ impl Run {
     pub fn key(phase: &str, task: &str) -> String {
         format!("{phase}/{task}")
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HostState {
+    pub protocol_version: u32,
+    pub requests: BTreeMap<String, WorkLease>,
+    #[serde(default)]
+    pub decisions: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub blockers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub pending_repair: Option<PendingRepair>,
+    #[serde(default)]
+    pub source_revisions: BTreeMap<String, String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkLease {
+    pub token: String,
+    pub input_hash: String,
+    pub request_key: String,
+    pub issued_at_ms: u64,
+    pub heartbeat_at_ms: u64,
+    pub owner: Option<HostIdentity>,
+    pub receipt_hash: Option<String>,
+    #[serde(default)]
+    pub revoked: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostIdentity {
+    pub host_id: String,
+    pub session_id: String,
+    pub fresh_context: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingRepair {
+    pub phase_id: String,
+    pub source_hash: String,
+    pub audit: Vec<AuditItem>,
 }

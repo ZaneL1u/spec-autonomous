@@ -1,8 +1,10 @@
 ---
 name: milestone
-description: Plan a milestone roadmap through the repository's existing SDD framework, or import existing OpenSpec and Spec Kit work into a milestone.
+description: Prepare a milestone roadmap or import existing OpenSpec and Spec Kit work using the host-driven Spec Autonomous capabilities.
 ---
 
-Resolve the user's goal, constraints and native framework with `spec-autonomous detect --json`. Run `spec-autonomous milestone new "<goal>" --mode native` to create a reviewable roadmap and native next action. Use `--mode autonomous` only when the user requested continued autonomous implementation. The CLI will preserve native templates, artifacts and gates.
+Use sa_inspect to identify the existing SDD provider and sa_prepare with the user's goal and mode. Native mode produces a roadmap work packet for the host, then hands off to the native flow. Autonomous mode continues returning native planning, implementation and audit packets. Existing work can be selected by milestone_id/change/feature; do not invent a replacement spec framework.
 
-Use `spec-autonomous roadmap --milestone <id> --format toml` for phase identities and dependencies. Do not replace the user's specifications with TOML: TOML describes orchestration; normative specs and tasks remain native Markdown. Ask only for missing product decisions required to establish scope. Do not guess a framework when detection is ambiguous.
+The host owns fresh agent contexts. Claim each issued packet via work.claim, dispatch through the existing host facility, and pass its structured WorkerResult to sa_apply_result. No CLI agent launcher is available or required. The capability handles roadmap persistence, validation and worktree mechanics.
+
+Use roadmap.get/select/add/insert/import through sa_tools when the user requests structural operations. Supply source hashes for updates and preserve stable phase IDs and dependencies. Do not infer phase ranges before the roadmap exists. Missing material decisions should be surfaced through the host; routine file/Git commands belong to the capability implementation.

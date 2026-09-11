@@ -93,7 +93,32 @@ pub fn snapshot(path: &Path) -> Result<Value> {
                 row["status"] = json!(a.status);
                 row["blocker"] = json!(a.error);
                 row["accepted_head"] = json!(run.accepted_head);
-                if a.status == "running" {
+                if let Some(lease) = run.host.as_ref().and_then(|h| h.requests.get(&a.id)) {
+                    if matches!(a.status.as_str(), "issued" | "claimed" | "submitted")
+                        && !lease.revoked
+                    {
+                        let age = (chrono::Utc::now().timestamp_millis().max(0) as u64)
+                            .saturating_sub(lease.heartbeat_at_ms);
+                        let stale = age > run.config.host.lease_seconds * 1000;
+                        row["lease_state"] = json!(if stale {
+                            "stale"
+                        } else if a.status == "claimed" {
+                            "host_reported"
+                        } else {
+                            "prepared"
+                        });
+                        row["host"] = json!(lease.owner);
+                        row["heartbeat_age_ms"] = json!(age);
+                        if stale {
+                            row["status"] = json!("stale");
+                        } else if a.status == "claimed" {
+                            active += 1;
+                        }
+                        if run.terminal() {
+                            row["host_action"] = json!("stop_and_acknowledge");
+                        }
+                    }
+                } else if a.status == "running" {
                     let file = paths::inside(
                         &runtime,
                         &format!("runs/{}/attempts/{}/process.json", run.id, a.id),
@@ -209,7 +234,13 @@ pub fn summary(run: &Run) -> Value {
 }
 pub fn public_run(run: &Run) -> Value {
     let mut value = serde_json::to_value(run).unwrap();
-    value["config"] = json!({"schema_version":run.config.schema_version,"execution":run.config.execution,"runner":{"profile":run.config.runner.profile,"sandbox":run.config.runner.sandbox,"environment":"redacted"}});
+    value.as_object_mut().unwrap().remove("host");
+    value["execution_model"] = json!(if run.host.is_some() {
+        "host-driven"
+    } else {
+        "legacy"
+    });
+    value["config"] = json!({"schema_version":run.config.schema_version,"execution":run.config.execution,"host":run.config.host,"environment":"redacted","runner":{"profile":run.config.runner.profile,"sandbox":run.config.runner.sandbox,"environment":"redacted"}});
     value
 }
 /// Remove null fields for the common JSON/TOML public representation.

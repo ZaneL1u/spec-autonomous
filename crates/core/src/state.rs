@@ -47,7 +47,7 @@ impl Store {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         db.busy_timeout(std::time::Duration::from_millis(250))?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version != 1 {
+        if version != 2 {
             bail!("schema_unsupported: controls require current runtime schema");
         }
         Ok(Self {
@@ -73,14 +73,17 @@ impl Store {
         let db = Connection::open_with_flags(&file, flags)?;
         db.busy_timeout(std::time::Duration::from_millis(250))?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 1 {
+        if version > 2 {
             bail!("schema_unsupported: runtime database is newer than this CLI");
         }
         if writable {
-            if version == 0 {
+            if version < 2 {
                 let tables: u64 = db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], |r| r.get(0))?;
                 if tables > 0 {
-                    let backup = root.join(format!("state.v0.{}.backup.db", uuid::Uuid::new_v4()));
+                    let backup = root.join(format!(
+                        "state.v{version}.{}.backup.db",
+                        uuid::Uuid::new_v4()
+                    ));
                     // SQLite creates a consistent standalone backup including WAL
                     // data before any schema or journal changes are attempted.
                     db.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
@@ -93,7 +96,7 @@ impl Store {
                 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS controls(run_id TEXT PRIMARY KEY,action TEXT NOT NULL);
-                PRAGMA user_version=1; COMMIT;")?;
+                PRAGMA user_version=2; COMMIT;")?;
             let registry = toml::to_string(
                 &serde_json::json!({"schema_version":1,"repository_id":paths::hash(repo.common.to_string_lossy().as_bytes()),"ledger":"state.db"}),
             )?;

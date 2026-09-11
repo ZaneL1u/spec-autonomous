@@ -1,12 +1,18 @@
 ---
 name: autonomous
-description: Run a milestone or roadmap phase range autonomously using the repository's existing OpenSpec or Spec Kit workflow. Use for autonomous SDD implementation, including resuming native planning.
+description: Advance a milestone or phase range through OpenSpec or Spec Kit using prepared work packets and the host's existing fresh-context agents.
 ---
 
-Use the installed `spec-autonomous` CLI as the state owner. Start with `spec-autonomous detect --json` and `spec-autonomous progress --all-worktrees --json`; select the user's milestone or source without guessing among ambiguous candidates.
+Use the Spec Autonomous capabilities. Prefer MCP `sa_inspect`, `sa_next`, `sa_prepare`, and `sa_apply_result`; `sa_tools` discovers granular tools. CLI equivalents are fixed public entry points (`spec-autonomous prepare`, `next`, `apply-result`, `tools call`). Do not assemble Git/file/state command chains: the capabilities already perform those operations.
 
-For a goal without a milestone, run `spec-autonomous milestone new "<goal>" --mode autonomous`. For an existing milestone, run `spec-autonomous run --milestone <id> --mode autonomous`, preserving requested `--from`, `--to`, `--only` and worker limits. Existing sources can use `--change <id>` or `--feature <path>` with `--framework` when needed.
+A goal uses prepare with `goal`, optional `id`, and `mode: autonomous`; existing work uses `milestone_id`, `change`, or `feature`. Carry the user's `from`/`to`/`only` range unchanged. After the first response, use its run ID for continuation. Native mode hands back the existing framework workflow after roadmap planning.
 
-`from/to` is an inclusive roadmap phase range, not a task number. Keep scope_completed distinct from milestone completed. Do not implement a second loop in chat, manually edit runtime state, or bypass native gates. If the CLI reports needs_input, summarize that specific decision. Preserve existing authorization on resume.
+When prepare returns `awaiting_host`, the work packets describe what the host must do. For each issued request:
 
-If the runner is missing, inspect `spec-autonomous doctor --json` and help configure the user's existing agent in `.spec-autonomous/config.toml`. Do not silently substitute an SDD framework. Full logs stay on disk; show bounded progress and evidence references. `/auto` is an exact alias of this workflow.
+1. Have the host allocate a unique fresh work context and claim the request through `work.claim`, using the supplied token and a host-assigned session identity. Do not reuse a parent conversation as a fresh child.
+2. Dispatch through the host's existing agent facility. Pass only the packet and its assigned project/worktree. The child reads its complete context references, follows the installed native SDD contract, and returns the specified WorkerResult. The child does not update shared checkboxes or the ledger.
+3. Submit the returned JSON through apply-result with the same ownership identity. The CLI verifies, integrates and returns the next eligible work; repeat until a terminal state or an actionable blocker.
+
+The CLI never launches agents. If the host cannot provide fresh contexts/worktree access, report that capability gap; do not substitute an embedded CLI runner. Execute independent packets concurrently only within the declared host capacity. Send work.heartbeat during long host work. Do not dispatch claimed/stale requests again: inspect the host session, then work.revoke only after confirming it stopped. Receiving/submitted receipts need recovery, not a new agent.
+
+Use progress for bounded updates. `scope_completed` is only the selected phase range; native checkboxes and verified completion are distinct. Archive is a separate explicit capability with preview and hash-checked apply, following the user's scope. Preserve the user's native SDD framework and specifications.

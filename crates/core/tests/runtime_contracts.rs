@@ -8,8 +8,9 @@ use spec_autonomous_core::{
     config::Config,
     git::{self, Repository},
     model::{Run, WorkerInput, WorkerResult},
-    process, runner,
+    process,
     state::{Lease, Store},
+    work_packet as runner,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -1076,7 +1077,7 @@ fn runner_rejects_bad_transport_results_even_when_worker_exits_successfully() {
         ("blocked", "needs_input"),
     ] {
         let root = tempdir().unwrap();
-        let error = runner::run(
+        let error = external_test_host(
             &worker_input("attempt-contract"),
             root.path(),
             &root.path().join("attempt"),
@@ -1100,7 +1101,7 @@ fn runner_bounds_context_before_launch_and_refuses_reusing_result_files() {
     input.instruction = "x".repeat(2048);
     let dir = root.path().join("attempt");
     assert!(
-        runner::run(
+        external_test_host(
             &input,
             root.path(),
             &dir,
@@ -1114,7 +1115,7 @@ fn runner_bounds_context_before_launch_and_refuses_reusing_result_files() {
     assert!(!dir.exists());
     input.instruction = "bounded".into();
     config.execution.max_context_bytes = 4096;
-    runner::run(
+    external_test_host(
         &input,
         root.path(),
         &dir,
@@ -1127,7 +1128,7 @@ fn runner_bounds_context_before_launch_and_refuses_reusing_result_files() {
     let original_prompt = fs::read(dir.join("prompt.md")).unwrap();
     input.goal = "different goal on a reused attempt".into();
     assert!(
-        runner::run(
+        external_test_host(
             &input,
             root.path(),
             &dir,
@@ -1144,26 +1145,15 @@ fn runner_bounds_context_before_launch_and_refuses_reusing_result_files() {
 }
 
 #[test]
-fn runner_doctor_rejects_nonfresh_command_profiles() {
+fn packet_doctor_never_launches_or_requires_a_legacy_runner() {
     let root = tempdir().unwrap();
     let mut config = runner_config(root.path(), "");
-    assert!(runner::doctor(&config).is_ok());
-    config.runner.fresh_session = false;
-    assert!(
-        runner::doctor(&config)
-            .unwrap_err()
-            .to_string()
-            .contains("runner_not_configured")
-    );
-    config.runner.fresh_session = true;
     for flag in ["resume", "--resume", "--last"] {
-        config.runner.command = vec![test_argv()[0].clone(), flag.into()];
-        assert!(
-            runner::doctor(&config)
-                .unwrap_err()
-                .to_string()
-                .contains("runner_not_fresh")
-        );
+        config.runner.command = vec!["this-agent-must-never-be-launched".into(), flag.into()];
+        config.runner.fresh_session = false;
+        let result = runner::doctor(&config).unwrap();
+        assert_eq!(result["starts_agents"], false);
+        assert_eq!(result["execution"], "host-driven");
     }
 }
 
@@ -1175,7 +1165,7 @@ fn hundred_mock_attempts_have_fresh_packets_and_bounded_results() {
     for index in 0..100 {
         let input = worker_input(&format!("attempt-{index:03}"));
         let dir = root.path().join(&input.attempt_id);
-        let result = runner::run(
+        let result = external_test_host(
             &input,
             root.path(),
             &dir,
@@ -1230,11 +1220,50 @@ fn legacy_ledger_is_backed_up_before_transactional_upgrade() {
     let version: u32 = upgraded
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
     assert_eq!(
         upgraded
             .query_row("SELECT value FROM legacy", [], |r| r.get::<_, String>(0))
             .unwrap(),
         "preserve this"
     );
+}
+
+// An external TEST host executes its fixture after the product has only
+// materialized a packet. No launcher exists in production work_packet.
+fn external_test_host(
+    input: &WorkerInput,
+    root: &Path,
+    dir: &Path,
+    config: &Config,
+    cancel: Arc<AtomicBool>,
+) -> anyhow::Result<WorkerResult> {
+    runner::prepare(input, root, dir, config)?;
+    let mut env = config.runner.environment.clone();
+    env.insert(
+        "SPEC_AUTONOMOUS_INPUT".into(),
+        dir.join("input.json").to_string_lossy().into(),
+    );
+    env.insert(
+        "SPEC_AUTONOMOUS_RESULT".into(),
+        dir.join("result.json").to_string_lossy().into(),
+    );
+    env.insert("SPEC_AUTONOMOUS_ATTEMPT".into(), input.attempt_id.clone());
+    let output = process::execute(process::Request {
+        argv: &config.runner.command,
+        cwd: root,
+        env: &env,
+        stdin: None,
+        directory: dir,
+        timeout: Duration::from_secs(10),
+        max_log_bytes: config.execution.max_log_bytes,
+        cancel,
+    })?;
+    if output.code != 0 {
+        anyhow::bail!("worker_failed: external fixture exited {}", output.code);
+    }
+    if !dir.join("result.json").exists() {
+        anyhow::bail!("worker_protocol_error: missing result");
+    }
+    runner::read_result(dir)
 }

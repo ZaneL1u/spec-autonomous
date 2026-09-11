@@ -81,10 +81,10 @@ async function observeHungAttempt(root, kind, owned) {
   return until(() => {
     const status = cli(root, ['status']);
     if (status.status !== 0) return null;
-    const attempt = status.data.attempts.find(a => a.kind === kind && a.status === 'running');
+    const attempt = status.data.attempts.find(a => a.kind === kind && a.status === 'claimed');
     if (!attempt) return null;
     const directory = attemptDirectory(root, status.data, attempt);
-    const processPath = join(directory, 'process.json');
+    const processPath = join(directory, 'host-process.json');
     const grandchildPath = join(directory, 'grandchild.pid');
     if (!existsSync(processPath) || !existsSync(grandchildPath)) return null;
     const process = JSON.parse(readFileSync(processPath, 'utf8'));
@@ -210,7 +210,7 @@ await import(${JSON.stringify(mockAgent)});`);
   assert.equal(readFileSync(join(root, '.specify/feature.json'), 'utf8'), sourceFeature);
 });
 
-test('pause interrupts a synchronous audit and terminates its descendants promptly', { timeout: 90000, skip: process.platform === 'win32' }, async t => {
+test('host pause stops an external audit and its descendants promptly', { timeout: 90000, skip: process.platform === 'win32' }, async t => {
   const root = fixture(t, 'speckit');
   driver(root, `if (input.kind === 'audit') process.env.MOCK_HANG = '1';
 await import(${JSON.stringify(mockAgent)});`);
@@ -232,7 +232,7 @@ await import(${JSON.stringify(mockAgent)});`);
   assert.ok(!stopped.data.completed_phases.includes('P001'));
 });
 
-test('the run deadline interrupts synchronous roadmap work before the attempt timeout', { timeout: 30000, skip: process.platform === 'win32' }, async t => {
+test('the external host honors the run deadline before the work timeout', { timeout: 30000, skip: process.platform === 'win32' }, async t => {
   const root = fixture(t, 'speckit', { goalOnly: true });
   driver(root, `if (input.kind === 'roadmap') process.env.MOCK_HANG = '1';
 await import(${JSON.stringify(mockAgent)});`);

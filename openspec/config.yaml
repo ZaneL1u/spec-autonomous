@@ -13,9 +13,14 @@ context: |
   The local alpha implements skills, roadmap, native planning, bounded concurrent
   execution, source CAS, verification/repair/recovery and all-worktree progress.
   Existing specs own requirements. The Git common-dir SQLite ledger owns attempts
-  and evidence. See docs/architecture.md and docs/validation/autonomous.md for
+  and evidence. The CLI never launches agents or calls models: prepare returns
+  immutable work packets and apply-result consumes host-owned receipts.
+  CLI and MCP share one capability registry, including granular document,
+  roadmap, worktree, state, verification, repair and archive operations.
+  Current change: host-driven-capabilities; alpha.1 launcher evidence is historical.
+  See docs/architecture.md and docs/validation/host-driven.md for
   implemented protocol and evidence; remote npm publishing/platform CI remain open.
-  Each worker uses a fresh session and isolated worktree; the coordinator alone
+  The host provides fresh contexts in assigned worktrees; the capability core alone
   integrates code and writes shared completion state. Unknown write sets serialize.
   Use docs/research/upstreams.lock.json for upstream compatibility baselines.
   Documentation is primarily Chinese; code and JSON identifiers use English.

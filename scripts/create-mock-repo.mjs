@@ -36,7 +36,7 @@ export function createMock(output,framework='openspec',{goalOnly=false,failOnce=
   const openspec=join(workspace,'node_modules/@fission-ai/openspec/bin/openspec.js');
   const q=JSON.stringify;
   const renderChecks=checks=>`[${checks.map(c=>`{argv = ${JSON.stringify(c.argv)}, cwd = ${q(c.cwd)}}`).join(", ")}]`;
-  write('.spec-autonomous/config.toml',`schema_version = 1\n[execution]\nmax_workers = 2\nmax_attempts = 3\nattempt_timeout_seconds = 20\nrun_timeout_seconds = 180\nmax_repair_rounds = 2\n[runner]\nprofile = "command"\ncommand = [${q(node)}, ${q(runner)}]\nfresh_session = true\n[provider]\nopenspec_command = [${q(node)}, ${q(openspec)}]\n`);
+  write('.spec-autonomous/config.toml',`schema_version = 1\n[execution]\nmax_workers = 2\nmax_attempts = 3\nattempt_timeout_seconds = 20\nrun_timeout_seconds = 180\nmax_repair_rounds = 2\n[host]\nmax_concurrency = 2\n[runner]\nprofile = "command"\ncommand = [${q(node)}, ${q(runner)}]\nfresh_session = true\n[provider]\nopenspec_command = [${q(node)}, ${q(openspec)}]\n`);
   if(framework==='openspec'){
     write('openspec/config.yaml','schema: spec-driven\n');
     mkdirSync(join(output,'openspec/specs'),{recursive:true});mkdirSync(join(output,'openspec/changes/archive'),{recursive:true});

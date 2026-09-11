@@ -57,3 +57,7 @@ wrapper 已包含 milestone/autonomous/auto/progress/resume 五个 SKILL.md。np
 `publish-npm.yml` 默认 dry-run，校验输入来自同仓库、默认分支、同一 head SHA 的成功 release-artifacts run，并下载唯一对应 artifact。发布 job 使用 npm-release environment 和 OIDC/provenance；维护者仍需配置保护规则、七个包的名称所有权/Trusted Publisher，然后设置 environment variable `NPM_RELEASE_READY=true`。声明 environment 名字不等于保护规则已经存在。本地没有触发工作流或发布。
 
 release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真实 repository.url 写入全部七包；本地也可显式传 `--repository https://github.com/<owner>/<repo>`。没有仓库来源时不虚构 URL。升级稳定 tag 或回退 tag 均由维护者基于已完成的 registry 安装 smoke 执行，尚未演练真实 tag 变更。
+
+## alpha.2 host-driven 入口
+
+平台分包与 launcher 机制保留。Rust CLI 现在仅提供确定性能力与 stdio MCP，不启动 agent；同一包分发五个更新后的 Skills。独立测试宿主和语义 mock 不进入 npm files 白名单。root/CLI Cargo/npm 版本统一为 0.1.0-alpha.2；运行账本 schema 为 2，公开能力 envelope 与工作回执 schema 为 1。

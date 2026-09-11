@@ -16,6 +16,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+pub fn interrupt() {
+    INTERRUPTED.store(true, Ordering::Relaxed);
+}
+pub fn interrupted() -> bool {
+    INTERRUPTED.load(Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub pid: u32,
@@ -175,7 +183,7 @@ pub fn execute(req: Request<'_>) -> Result<Output> {
     }
     let start = Instant::now();
     loop {
-        let cancelled = req.cancel.load(Ordering::Relaxed);
+        let cancelled = req.cancel.load(Ordering::Relaxed) || interrupted();
         let timed_out = start.elapsed() >= req.timeout;
         let oversized = [&stdout_path, &stderr_path]
             .iter()

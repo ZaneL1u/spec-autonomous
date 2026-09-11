@@ -1,144 +1,134 @@
 # Spec Autonomous
 
-**在用户现有的 OpenSpec / Spec Kit 上，从里程碑目标规划 roadmap，再自主实现、验证、修复和交付。**
+**给 LLM、Skills 和现有 agent 宿主使用的 Rust 能力层。CLI 不启动 agent，不调用模型。**
 
-`0.1.0-alpha.1` 已实现本地编排 CLI、TOML roadmap、原生 Markdown 适配、阶段范围、独立 worktree workers、验证与恢复、全 worktree progress，以及 `autonomous` / `auto` 等 skill。npm registry 尚未发布；当前可从源码或本机 tarball 安装。
+用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-- [架构与实际协议](docs/architecture.md)
-- [测试、mock 仓库与故障注入](docs/testing.md)
-- [本轮验收记录](docs/validation/autonomous.md)
-- [OpenSpec 实施清单](openspec/changes/autonomous-orchestration/tasks.md)
-- [源码调研](docs/research/README.md) · [发行流程](docs/distribution.md)
+当前版本 `0.1.0-alpha.2`，npm registry 尚未发布。本仓库实现通过 OpenSpec 的 `host-driven-capabilities` 变更维护。
 
-## 本地安装
+- [架构与工作协议](docs/architecture.md)
+- [全部能力与 CLI/MCP 接口](docs/capabilities.md)
+- [测试和独立 mock 宿主](docs/testing.md)
+- [本轮验收](docs/validation/host-driven.md)
+- [从 alpha.1 迁移](docs/migration-alpha2.md)
+- [npm 分平台发行](docs/distribution.md)
 
-开发环境：Git、Node.js 22+、Bun 1.4.2、Rust 1.98.1（由 rust-toolchain.toml 固定）。安装好的 native npm 包不需要 Rust/Bun。
+## 安装和绑定
+
+源码开发需要 Git、Rust 1.98.1、Node 22+；Bun 管理 workspace 依赖。安装后的 npm 包只需要 Node 和项目所用原生工具，不需要 Rust/Bun。
 
 ```sh
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
-bun run build
-bun run pack:local
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.1.tgz
-spec-autonomous --help
-```
+node scripts/pack-local.mjs
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.2.tgz
 
-本机 tarball 只适合生成它的平台。正式 registry 发布后，入口为 `npm install -g spec-autonomous@next`；这条 registry 命令目前不代表已经发布。
-
-进入已配置 OpenSpec 或 Spec Kit 的仓库，绑定宿主入口：
-
-```sh
-spec-autonomous detect --json
+# 在已安装 OpenSpec 或 Spec Kit 的项目里绑定 Skills
 spec-autonomous init --agent codex
-# Claude Code 的 slash command 绑定：
-spec-autonomous init --agent claude
+# 同时写入受所有权保护的项目 MCP 配置
+spec-autonomous init --agent codex --mcp
+# Claude Code 对应入口
+spec-autonomous init --agent claude --mcp
 ```
 
-Codex 使用 `$autonomous` / `$auto`，支持 slash commands 的宿主使用 `/autonomous` / `/auto`。`auto` 是同义别名；另有 milestone、progress、resume。安装会保留用户手写或修改过的同名入口；冲突时可显式使用 `--prefix sa`。npm 全局安装不会猜测并修改当前仓库。
+MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规则仍然适用。Codex 使用 `$autonomous` / `$auto`，Claude 使用 `/autonomous` / `/auto`。另外提供 milestone、progress、resume。冲突时可用 `--prefix sa`，不会覆盖用户修改的文件。
 
-## 配置已有 agent 与验证命令
+本机 tgz 只包含本机架构。正式发布使用一个 launcher/skills 包与六个精确版本的平台包，npm 按 os/cpu/libc 选择二进制；发布后用户只需 `npm install -g spec-autonomous`。当前不把这条 registry 命令描述成已发布可用。
 
-编辑 `.spec-autonomous/config.toml`。配置优先级为 CLI 覆盖 > 项目 TOML > `$XDG_CONFIG_HOME/spec-autonomous/config.toml`（默认 `~/.config/spec-autonomous/config.toml`）> 默认值。未知配置键会报错，避免把拼错的预算字段静默忽略。
+## 常用完整能力
 
-```toml
-schema_version = 1
-# 按项目实际情况填写；每个阶段/任务也能声明自己的验证命令。
-verification = [{ argv = ["node", "--test", "tests/add.test.mjs"], cwd = "." }]
-
-[execution]
-mode = "autonomous"
-max_workers = 3
-max_attempts = 3
-attempt_timeout_seconds = 1800
-run_timeout_seconds = 28800
-max_repair_rounds = 2
-max_context_bytes = 131072
-max_source_bytes = 2097152
-max_planner_tasks = 32
-delivery = "ff-original"
-
-[runner]
-profile = "codex"
-command = ["codex"]
-```
-
-Codex profile 使用本机已登录的 `codex exec --ephemeral`，按工作单元使用 read-only/workspace-write，并要求结构化结果。没有携带父会话或 resume ID。其他 agent 可通过 `profile = "command"` 和 argv 数组接入，但 launcher 必须履行 `fresh_session = true` 的契约，详见架构文档；这不是对所有 agent CLI 的自动兼容承诺。
-
-OpenSpec 执行需要其已安装 CLI。可用 `[provider].openspec_command` 配置明确 argv，例如 `['node', '/absolute/path/to/openspec/bin/openspec.js']`。Spec Kit 读取现有文档无需 Python；从头规划会使用目标仓库安装的原生 skill/template，相关脚本需要其原有运行依赖。
+默认 CLI 帮助只强调七项能力；MCP 对应 `sa_inspect`、`sa_progress`、`sa_prepare`、`sa_next`、`sa_apply_result`、`sa_archive`、`sa_doctor`，以及一个高级目录/调用入口 `sa_tools`。
 
 ```sh
+spec-autonomous inspect --json
+spec-autonomous progress --all-worktrees --json
 spec-autonomous doctor --json
-# 自主写入前需要有初始 commit，且起始 checkout 干净。
-git add .
-git commit -m "Configure autonomous orchestration"
+
+# 已有原生工作
+spec-autonomous prepare --change add-auth --json
+spec-autonomous prepare --feature specs/001-auth --json
+# 从目标开始；只生成工作包，语义工作由宿主完成
+spec-autonomous prepare --goal "团队邀请 MVP" --id M001 --json
+# 已有里程碑的闭区间
+spec-autonomous prepare --milestone M001 --from 2 --to 4 --json
+spec-autonomous next --run-id <run-id> --json
+spec-autonomous prepare --run-id <run-id> --json
 ```
 
-## 规划与自主执行
+`prepare` 返回 `awaiting_host` 不表示任务完成。它包含不可变输入/结果 schema 的引用、唯一 request ID、领取凭据、已分配 worktree 和限制。重复 prepare 复用待处理请求；不会重复创建 agent 或工作区。
+
+宿主通过自己的能力创建新上下文，领取请求，在指定 worktree 中完成语义工作，再提交结构化结果：
 
 ```sh
-# 生成完整 roadmap 后交给原生流程继续
-spec-autonomous milestone new "团队邀请与权限 MVP" --mode native
+spec-autonomous claim <run-id> <request-id> --token <token> \
+  --host-id <host> --session-id <unique-session> --fresh-context --json
 
-# 从目标自动规划并继续开发
-spec-autonomous milestone new "团队邀请与权限 MVP" --mode autonomous
-spec-autonomous roadmap --milestone M001 --format toml
-
-# 执行完整里程碑或阶段范围
-spec-autonomous run --milestone M001 --mode autonomous
-spec-autonomous run --milestone M001 --from 2 --to 4 --mode autonomous
-spec-autonomous run --milestone M001 --only 3 --mode autonomous
-
-# 直接接续已存在的原生规划
-spec-autonomous run --framework openspec --change add-team-auth --mode autonomous
-spec-autonomous run --framework speckit --feature specs/001-auth --mode autonomous
+spec-autonomous apply-result --result <host-result.json> --token <token> \
+  --host-id <host> --session-id <unique-session> --fresh-context --json
 ```
 
-实际 milestone ID 会在创建结果中返回，也可通过 `milestone new ... --id M001` 指定。from/to 指 roadmap 阶段闭区间，only 只跑一个阶段。范围外未完成依赖会阻止执行；`scope_completed` 不等于整个 milestone 完成，也不会自动归档。
+MCP 使用同样的结构化参数，无需生成 shell 字符串。CLI 会处理实际 diff、验证、候选集成、原生 checkbox CAS、下一批就绪工作以及验收；宿主无需拼装底层 Git/文件命令。结果相同的重提是幂等的；不同结果、错误身份或过期输入被拒绝。
 
-每个 roadmap phase 指向一个原生 change/feature。规范、设计和原生任务仍是 Markdown；TOML 保存编排拓扑和执行计划，SQLite 保存运行事务。缺工件时沿原生流程规划；每个 worker 使用新会话和独立 worktree；coordinator 验证实际代码、串行集成，再写回 checkbox。失败修复有次数、时间、退避与跨恢复的无进展上限。大任务列表分批规划并做完整 DAG 校验；超出内联预算的原生上下文以不可变文件和 hash 引用传递，保留完整规则。
-
-## 查看、暂停与恢复
+## 高级工具
 
 ```sh
-spec-autonomous progress --all-worktrees
-spec-autonomous progress --all-worktrees --format json
-spec-autonomous progress --all-worktrees --format toml
-spec-autonomous inspect --milestone M001 --phase 1 --json
-spec-autonomous status <run-id> --json
-spec-autonomous report <run-id> --json
+spec-autonomous tools list --all --json --limit 200
+spec-autonomous tools call document.inspect --input '{"file":"specs/001-auth/tasks.md"}' --json
+spec-autonomous tools call roadmap.get --input '{"milestone_id":"M001"}' --json
+spec-autonomous tools call audit.open --input '{"run_id":"<run-id>"}' --json
+spec-autonomous tools call worktree.list --json
+```
+
+目录包含参数 schema、读写属性和说明。支持结构化文档/frontmatter/TOML CAS、roadmap 增删与范围选择、任务领取和回执、状态/决策/阻塞/检查点、Git 显式文件提交、worktree 生命周期、历史摘要、校验和修复。`task.complete` 与 apply-result 复用同一验收门，不能直接伪造已验证状态。
+
+读取默认使用 agent 视图；需要详细数据可加 `--view full`。`--fields` 按字段选择，`--limit` / `--offset` 分页。分页保留全仓聚合数量和后续偏移；unknown/stale/partial 和 host-reported 状态不被伪装为已完成。
+
+## 归档、暂停与修复
+
+```sh
+# 先预览，再使用返回的 plan_hash 执行
+spec-autonomous archive --change add-auth --json
+spec-autonomous archive --change add-auth --apply --plan-hash <hash> --json
+spec-autonomous archive --milestone M001 --json
+
 spec-autonomous pause <run-id>
 spec-autonomous cancel <run-id>
-# 终态运行的安全清理，保留 dirty/external/integration worktree、分支和证据
-spec-autonomous cleanup <run-id>
-spec-autonomous resume <run-id>
-spec-autonomous resume <run-id> --mode native
-# 显式采用修改后的配置或增加预算
-spec-autonomous resume <run-id> --reload-config --extend-seconds 600
+spec-autonomous tools call repair --input '{"kind":"legacy-config"}' --json
 ```
 
-progress 从 Git common directory 汇总主 checkout、所有受管 worker/candidate/integration worktree 和外部 worktree。原生任务计数标明 recorded/observed_at，验证状态与之分开；不可确认的状态显示 unknown/stale/partial。它不会启动 agent、修复工作区或执行仓库脚本。
+归档在隔离候选 worktree 中完成，校验后 fast-forward 交付。OpenSpec 使用原生 archive；Spec Kit 保留 feature 目录内容搬入明确归档目录，同时协调当前 feature 指针。里程碑归档按依赖顺序处理全部原生来源并保留 roadmap。预览过期、活跃工作、dirty/locked workspace 或交付分支改变时拒绝或保留待交付候选。
 
-默认最终 fast-forward 原 checkout；原分支或文件发生变化时保留已验证分支并报告 delivery_pending。运行中 source drift 可在用户提交原生修改后 resume，由隔离合并与重新验证接续；冲突不会被 force/reset 覆盖。未知 hook 副作用需要明确确认：
+暂停/取消返回宿主需要处理的请求；CLI 不宣称能停止外部 agent。宿主停止它们后，用 `work.revoke` 确认。过期心跳只表示未知状态，不触发重复执行。历史 alpha.1 run 只读；新账本版本阻止旧版程序误续跑。
 
-```sh
-spec-autonomous resolve-hook <run-id> --key '<phase>/<event>/<command>' \
-  --outcome completed --evidence '已检查外部结果和本地日志'
-spec-autonomous resume <run-id>
+## 配置与测试
+
+新配置没有 agent launcher：
+
+```toml
+schema_version = 2
+verification = [{ argv = ["cargo", "test", "--workspace", "--locked"], cwd = "." }]
+
+[execution]
+max_workers = 3
+max_attempts = 3
+run_timeout_seconds = 28800
+max_repair_rounds = 2
+
+[host]
+max_concurrency = 3
+lease_seconds = 1800
 ```
 
-## 本地 mock 与完整测试
+宿主并发能力未声明时默认串行。框架与验证命令可使用独立 `environment` 配置；旧 `runner` 字段被忽略并诊断，不会执行。
 
 ```sh
-bun run mock:create --framework openspec --output .artifacts/demo-openspec --fail-once add
-node packages/cli/bin/spec-autonomous.mjs run --path .artifacts/demo-openspec --milestone M001 --json
-
-bun run test:all
-# 等价入口（无需 Bun shell）：
+# 不调用真实模型、不发布 npm
 node scripts/test-all.mjs
+
+# 创建本地仓库，由独立测试宿主模拟语义工作
+node scripts/create-mock-repo.mjs --framework openspec --output .artifacts/my-mock --fail-once add
+node tests/mock-host.mjs --path .artifacts/my-mock prepare --milestone M001 --max-workers 2
+spec-autonomous progress --path .artifacts/my-mock --all-worktrees
 ```
 
-mock 只替代 agent 决策：实际 CLI、OpenSpec、Git worktrees、SQLite、进程、Node 断言、集成和恢复都在真实临时仓库运行。测试套件默认不调用付费模型或 npm publish；真实 Codex runner 验收单独记录在验收文档中。
-
-支持边界：一个写 coordinator 管理同仓多个并行 workers；外部 worktree 只观察。当前支持 repo-local OpenSpec、单个可确定 tracking file、Spec Kit 文档与原生核心规划步骤，未知必需 hook/条件/外部 store 会明确阻塞。worktree 不是 OS 沙箱，command runner 的执行权限由该 launcher 提供。自动远程 push/publish/deploy 与原生归档不在本地执行 profile 中；使用独立发布流程或原生工具。
-
-本机已验证 macOS arm64。其他平台的构建和测试 workflow 已配置，未经实际运行的平台不记作通过。项目继续通过 OpenSpec 清单维护剩余真实发布与平台验收工作。
+mock 宿主位于测试目录，不随产品包分发，也不被 CLI 调用。实际 Git、SQLite、OpenSpec、进程验证、CAS、集成和恢复都走生产代码。

@@ -1,7 +1,7 @@
 {
   "name": "spec-autonomous-workspace",
   "private": true,
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "packageManager": "bun@1.4.2",
   "engines": {
     "node": ">=22"
@@ -22,7 +22,8 @@
     "test:provider": "cargo test -p spec-autonomous-core --locked --test provider_contracts real_openspec_plans_then_accepts_skipped_specs_and_custom_tracking_artifact -- --ignored --exact",
     "test:e2e": "cargo build -p spec-autonomous-cli --locked && node --test --test-concurrency=2 tests/e2e/*.test.mjs",
     "test:all": "node scripts/test-all.mjs",
-    "mock:create": "node scripts/create-mock-repo.mjs"
+    "mock:create": "node scripts/create-mock-repo.mjs",
+    "mock:run": "node tests/mock-host.mjs"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.0"

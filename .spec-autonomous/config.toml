@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 verification = [{ argv = ["cargo", "test", "--workspace", "--locked"], cwd = "." }]
 
 [execution]
@@ -15,13 +15,9 @@ max_context_bytes = 131072
 max_source_bytes = 2097152
 max_planner_tasks = 32
 
-[runner]
-profile = "codex"
-command = ["codex"]
-fresh_session = true
-sandbox = "codex-per-unit"
-
-[runner.environment]
+[host]
+max_concurrency = 3
+lease_seconds = 1800
 
 [provider]
 openspec_command = []

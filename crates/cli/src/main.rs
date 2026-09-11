@@ -2,71 +2,81 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use spec_autonomous_core::{
-    Framework,
-    config::Config,
-    engine,
-    git::Repository,
-    model::{Milestone, Plan, Range, Run},
-    progress, provider, runner, skills,
-    state::Store,
+    capabilities as api, git::Repository, model::HostIdentity, progress, skills, state::Store,
 };
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
 };
-
 #[derive(Parser)]
 #[command(
     name = "spec-autonomous",
     version,
-    about = "Autonomous orchestration over your native OpenSpec or Spec Kit workflow"
+    about = "Deterministic SDD capabilities for LLM hosts and Skills; never starts agents"
 )]
 struct Cli {
-    /// Project directory; progress/resume resolve its shared Git common directory.
     #[arg(long, global = true, default_value = ".")]
     path: PathBuf,
     #[arg(long, global = true, value_enum)]
-    framework: Option<Selection>,
-    /// JSON output; run/resume emit NDJSON events followed by a final result.
+    framework: Option<Framework>,
     #[arg(long, global = true)]
     json: bool,
     #[arg(long, global = true, value_enum)]
     format: Option<Format>,
+    #[arg(long, global = true, value_enum, default_value = "agent")]
+    view: View,
+    #[arg(long, global = true)]
+    fields: Option<String>,
+    #[arg(long, global = true)]
+    limit: Option<u64>,
+    #[arg(long, global = true)]
+    offset: Option<u64>,
     #[command(subcommand)]
     command: Command,
 }
 #[derive(Clone, Copy, ValueEnum)]
-enum Selection {
+enum Framework {
     Auto,
     Openspec,
     Speckit,
 }
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+impl Framework {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Openspec => "openspec",
+            Self::Speckit => "speckit",
+        }
+    }
+}
+#[derive(Clone, Copy, ValueEnum, PartialEq)]
 enum Format {
     Human,
     Json,
     Toml,
 }
 #[derive(Clone, Copy, ValueEnum)]
+enum View {
+    Agent,
+    Full,
+}
+#[derive(Clone, Copy, ValueEnum)]
 enum Mode {
     Native,
     Autonomous,
+    Plan,
 }
 impl Mode {
-    fn name(self) -> String {
+    fn name(self) -> &'static str {
         match self {
             Self::Native => "native",
             Self::Autonomous => "autonomous",
+            Self::Plan => "plan",
         }
-        .into()
     }
 }
 #[derive(Args, Default)]
-struct SourceArgs {
+struct Source {
     #[arg(long,conflicts_with_all=["change","feature"])]
     milestone: Option<String>,
     #[arg(long, conflicts_with = "feature")]
@@ -74,54 +84,46 @@ struct SourceArgs {
     #[arg(long)]
     feature: Option<String>,
 }
+impl Source {
+    fn args(self) -> Value {
+        let mut v = json!({});
+        if let Some(s) = self.milestone {
+            v["milestone_id"] = json!(s);
+        }
+        if let Some(s) = self.change {
+            v["change"] = json!(s);
+        }
+        if let Some(s) = self.feature {
+            v["feature"] = json!(s);
+        }
+        v
+    }
+}
 #[derive(Subcommand)]
 enum Command {
-    /// Read-only provider discovery, never executing repository scripts.
-    Detect,
-    /// Bind /autonomous and /auto (or native skill equivalents) to this repository.
-    Init {
-        #[arg(long)]
-        agent: Option<String>,
-        #[arg(long, default_value = "")]
-        prefix: String,
-    },
-    /// Install or remove owned host skills without replacing native SDD commands.
-    Skills {
-        #[command(subcommand)]
-        command: SkillCommand,
-    },
-    /// Check the selected framework, runner capabilities and configuration.
-    Doctor {
-        #[arg(long)]
-        runner: Option<String>,
-    },
-    /// Create a roadmap from a goal using your existing SDD framework.
-    Milestone {
-        #[command(subcommand)]
-        command: MilestoneCommand,
-    },
-    /// Read the versioned milestone roadmap.
-    Roadmap {
-        #[arg(long)]
-        milestone: String,
-    },
-    /// Read native artifacts, task provenance, capabilities and next action.
+    /// Inspect native providers, artifacts and structured project state.
     Inspect {
         #[command(flatten)]
-        source: SourceArgs,
+        source: Source,
         #[arg(long)]
         phase: Option<String>,
     },
-    /// Complete native planning and prepare the next phase execution DAG.
-    Plan {
-        #[command(flatten)]
-        source: SourceArgs,
+    /// Read progress across every worktree in the common Git repository.
+    Progress {
+        #[arg(long)]
+        all_worktrees: bool,
     },
-    /// Execute a milestone or inclusive phase range with verification and repair.
-    #[command(visible_aliases = ["autonomous", "auto"])]
-    Run {
+    /// Prepare complete work packets; the calling host owns agent execution.
+    #[command(aliases=["run","autonomous","auto"])]
+    Prepare {
         #[command(flatten)]
-        source: SourceArgs,
+        source: Source,
+        #[arg(long,conflicts_with_all=["milestone","change","feature","goal","plan"])]
+        run_id: Option<String>,
+        #[arg(long,conflicts_with_all=["milestone","change","feature","plan"])]
+        goal: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
         #[arg(long,conflicts_with_all=["milestone","change","feature"])]
         plan: Option<PathBuf>,
         #[arg(long)]
@@ -135,18 +137,69 @@ enum Command {
         #[arg(long)]
         autonomous: bool,
         #[arg(long)]
-        max_workers: Option<usize>,
+        max_workers: Option<u64>,
         #[arg(long)]
         delivery: Option<String>,
     },
-    /// Read repository-wide progress across all Git worktrees.
-    Progress {
+    /// Preview ready work and blockers without allocating or executing anything.
+    Next {
         #[arg(long)]
-        all_worktrees: bool,
+        run_id: Option<String>,
     },
-    /// Read one run, or the most recently updated run.
+    /// Accept a host receipt, verify/integrate it and prepare subsequent work.
+    ApplyResult {
+        #[arg(long)]
+        result: PathBuf,
+        #[arg(long)]
+        token: String,
+        #[command(flatten)]
+        host: HostArgs,
+    },
+    /// Preview a native archive; use --apply --plan-hash to execute it.
+    Archive {
+        #[command(flatten)]
+        source: Source,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        plan_hash: Option<String>,
+    },
+    /// Read configuration, state and repair diagnostics; never starts a model.
+    Doctor {
+        #[arg(long, hide = true)]
+        runner: Option<String>,
+    },
+    /// Discover or call granular tools through structured JSON arguments.
+    Tools {
+        #[command(subcommand)]
+        command: ToolCommand,
+    },
+    /// Bind Skills and optionally an owned MCP entry to the existing SDD host.
+    Init {
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long, default_value = "")]
+        prefix: String,
+        #[arg(long)]
+        mcp: bool,
+    },
+    /// Serve the same capabilities as stdio MCP tools/resources.
+    Mcp {
+        #[arg(long)]
+        all_tools: bool,
+    },
+    #[command(hide = true)]
+    Detect,
+    #[command(hide = true)]
+    Skills {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
+    #[command(hide = true)]
     Status { run_id: Option<String> },
-    /// Reconcile and continue a run with its saved scope and policy.
+    #[command(hide = true)]
+    Report { run_id: String },
+    #[command(hide = true)]
     Resume {
         run_id: String,
         #[arg(long, value_enum)]
@@ -156,17 +209,39 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         extend_seconds: u64,
         #[arg(long)]
-        max_attempts: Option<u32>,
+        max_attempts: Option<u64>,
     },
-    /// Request a durable pause and stop active workers.
+    #[command(hide = true)]
     Pause { run_id: String },
-    /// Request cancellation while preserving worktrees and evidence.
+    #[command(hide = true)]
     Cancel { run_id: String },
-    /// Read the run report, evidence and event history.
-    Report { run_id: String },
-    /// Remove clean completed workers, retaining branches and evidence.
+    #[command(hide = true)]
     Cleanup { run_id: String },
-    /// Record an explicit outcome for an interrupted native hook.
+    #[command(hide = true)]
+    Roadmap {
+        #[arg(long)]
+        milestone: String,
+    },
+    #[command(hide = true)]
+    Plan {
+        #[command(flatten)]
+        source: Source,
+    },
+    #[command(hide = true)]
+    Milestone {
+        #[command(subcommand)]
+        command: MilestoneCommand,
+    },
+    #[command(hide = true)]
+    Claim {
+        run_id: String,
+        request_id: String,
+        #[arg(long)]
+        token: String,
+        #[command(flatten)]
+        host: HostArgs,
+    },
+    #[command(hide = true)]
     ResolveHook {
         run_id: String,
         #[arg(long)]
@@ -175,6 +250,36 @@ enum Command {
         outcome: String,
         #[arg(long)]
         evidence: String,
+    },
+}
+#[derive(Args)]
+struct HostArgs {
+    #[arg(long)]
+    host_id: String,
+    #[arg(long)]
+    session_id: String,
+    #[arg(long)]
+    fresh_context: bool,
+}
+impl HostArgs {
+    fn value(self) -> Value {
+        json!(HostIdentity {
+            host_id: self.host_id,
+            session_id: self.session_id,
+            fresh_context: self.fresh_context
+        })
+    }
+}
+#[derive(Subcommand)]
+enum ToolCommand {
+    List {
+        #[arg(long)]
+        all: bool,
+    },
+    Call {
+        capability: String,
+        #[arg(long, default_value = "{}")]
+        input: String,
     },
 }
 #[derive(Subcommand)]
@@ -198,65 +303,28 @@ enum MilestoneCommand {
         #[arg(long, value_enum, default_value = "native")]
         mode: Mode,
         #[arg(long)]
-        max_workers: Option<usize>,
+        max_workers: Option<u64>,
     },
 }
-fn requested(value: Option<Selection>) -> Option<Framework> {
-    match value {
-        Some(Selection::Openspec) => Some(Framework::Openspec),
-        Some(Selection::Speckit) => Some(Framework::Speckit),
-        _ => None,
+fn put(v: &mut Value, key: &str, value: Option<impl serde::Serialize>) {
+    if let Some(value) = value {
+        v[key] = json!(value);
     }
 }
-fn source(root: &Path, args: &SourceArgs, framework: Option<Framework>) -> Result<Milestone> {
-    if let Some(id) = &args.milestone {
-        return provider::load_milestone(root, id);
+fn read_json(path: &Path, limit: u64) -> Result<Value> {
+    if fs::metadata(path)?.len() > limit {
+        bail!("input_too_large");
     }
-    let framework = provider::framework(root, framework)?;
-    let selector = match framework {
-        Framework::Openspec => args
-            .change
-            .clone()
-            .context("selection_required: specify --change or --milestone")?,
-        Framework::Speckit => provider::select_feature(root, args.feature.as_deref())?,
-    };
-    Ok(engine::source_milestone(framework, &selector))
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
-fn emit(mut value: Value, format: Format) -> Result<()> {
+fn print(mut value: Value, format: Format) -> Result<()> {
     progress::portable(&mut value);
     match format {
-        Format::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+        Format::Json => println!("{value}"),
         Format::Toml => println!("{}", toml::to_string_pretty(&value)?),
         Format::Human => println!("{}", progress::human(&value)),
-    }
+    };
     Ok(())
-}
-fn emit_run(run: &Run, format: Format) -> Result<()> {
-    let mut value = json!({"schema_version":1,"data":progress::public_run(run)});
-    progress::portable(&mut value);
-    if format == Format::Json {
-        println!("{}", value);
-        Ok(())
-    } else {
-        emit(value, format)
-    }
-}
-fn observe(format: Format) -> impl FnMut(&Run, &str) {
-    move |run, event| {
-        let data = json!({"schema_version":1,"event":event,"data":progress::summary(run)});
-        if format == Format::Json {
-            println!("{}", data);
-        } else {
-            eprintln!("{} | {} | {}", run.id, run.stage, event);
-        }
-    }
-}
-fn run_exit(run: &Run) -> i32 {
-    match run.status.as_str() {
-        "completed" | "scope_completed" | "plan_ready" | "handed_off" => 0,
-        "cancelled" => 130,
-        _ => 4,
-    }
 }
 fn execute(cli: Cli, format: Format) -> Result<i32> {
     let root = cli
@@ -264,97 +332,37 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
         .canonicalize()
         .context("invalid_path: cannot resolve --path")?;
     if !root.is_dir() {
-        bail!("invalid_path: --path must be a directory");
+        bail!("invalid_path: expected directory");
     }
-    let framework = requested(cli.framework);
-    if matches!(cli.command, Command::Detect) {
-        let report = spec_autonomous_core::detect(&root, framework)?;
-        emit(serde_json::to_value(report)?, format)?;
-        return Ok(0);
+    if let Command::Mcp { all_tools } = cli.command {
+        return spec_autonomous_core::mcp::serve(
+            &root,
+            all_tools,
+            std::io::BufReader::new(std::io::stdin()),
+            std::io::stdout().lock(),
+        )
+        .map(|_| 0);
     }
-    let project = spec_autonomous_core::detect(&root, None)?.root;
-    let mut config = Config::load(&project)?;
-    let cancel = Arc::new(AtomicBool::new(false));
-    let signal = cancel.clone();
-    ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
-    let mut observer = observe(format);
-    let result = match cli.command {
-        Command::Detect => unreachable!(),
-        Command::Init { agent, prefix } => skills::init(&project, agent.as_deref(), &prefix)?,
-        Command::Skills { command } => match command {
-            SkillCommand::Install {
-                agent,
-                scope,
-                prefix,
-            } => {
-                if scope != "project" {
-                    bail!("scope_unsupported: use project scope");
-                }
-                json!({"installed":skills::install(&project,&agent,&prefix)?})
-            }
-            SkillCommand::Uninstall => json!({"removed":skills::uninstall(&project)?}),
-        },
-        Command::Doctor { runner: profile } => {
-            if let Some(profile) = profile {
-                config.runner.profile = profile;
-            }
-            json!({"framework":provider::framework(&project,framework)?,"runner":runner::doctor(&config)?})
+    let selected = cli.framework.map(|f| f.name());
+    let mut direct = None;
+    let (cap, mut args) = match cli.command {
+        Command::Inspect { source, phase } => {
+            let mut a = source.args();
+            put(&mut a, "phase_id", phase);
+            ("inspect", a)
         }
-        Command::Roadmap { milestone } => {
-            serde_json::to_value(provider::load_milestone(&project, &milestone)?)?
+        Command::Progress { all_worktrees: _ } => ("progress", json!({})),
+        Command::Next { run_id } => {
+            let mut a = json!({});
+            put(&mut a, "run_id", run_id);
+            ("next", a)
         }
-        Command::Inspect {
-            source: args,
-            phase,
-        } => {
-            let m = source(&project, &args, framework)?;
-            let p = if let Some(id) = phase {
-                m.phases
-                    .iter()
-                    .find(|p| p.id == id || p.label == id)
-                    .context("selection_required: phase not found")?
-            } else if m.phases.len() == 1 {
-                &m.phases[0]
-            } else {
-                bail!("selection_required: use --phase for a multi-phase milestone");
-            };
-            serde_json::to_value(provider::inspect(
-                &project,
-                m.framework,
-                &p.source.selector,
-                &config,
-            )?)?
-        }
-        Command::Progress { all_worktrees: _ } => progress::snapshot(&root)?,
-        Command::Status { run_id } => {
-            let repo = Repository::discover(&root)?;
-            let store = Store::open(&repo, false)?.context("run_not_found: no runtime state")?;
-            let run = if let Some(id) = run_id {
-                store.get(&id)?
-            } else {
-                store.list()?.into_iter().next().context("run_not_found")?
-            };
-            progress::public_run(&run)
-        }
-        Command::Report { run_id } => {
-            let repo = Repository::discover(&root)?;
-            let store = Store::open(&repo, false)?.context("run_not_found")?;
-            json!({"run":progress::public_run(&store.get(&run_id)?),"events":store.events(&run_id)?,"report_path":spec_autonomous_core::state::report_path(&store.root,&run_id)})
-        }
-        Command::Cleanup { run_id } => spec_autonomous_core::cleanup::cleanup(&root, &run_id)?,
-        Command::ResolveHook {
+        Command::Prepare {
+            source,
             run_id,
-            key,
-            outcome,
-            evidence,
-        } => progress::public_run(&engine::resolve_hook(
-            &root, &run_id, &key, &outcome, &evidence,
-        )?),
-        Command::Pause { run_id } => control(&root, &run_id, "pause")?,
-        Command::Cancel { run_id } => control(&root, &run_id, "cancel")?,
-        Command::Run {
-            source: args,
-            plan: plan_path,
+            goal,
+            id,
+            plan,
             from,
             to,
             only,
@@ -364,65 +372,110 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
             delivery,
         } => {
             if autonomous && matches!(mode, Some(Mode::Native)) {
-                bail!("invalid_mode: --autonomous conflicts with --mode native");
+                bail!("invalid_mode: autonomous conflicts with native");
             }
-            if let Some(n) = max_workers {
-                config.execution.max_workers = n;
+            let mut a = source.args();
+            put(&mut a, "run_id", run_id);
+            put(&mut a, "goal", goal);
+            put(&mut a, "id", id);
+            put(&mut a, "from", from);
+            put(&mut a, "to", to);
+            put(&mut a, "only", only);
+            put(&mut a, "max_workers", max_workers);
+            put(&mut a, "delivery", delivery);
+            put(
+                &mut a,
+                "mode",
+                mode.map(Mode::name)
+                    .or(if autonomous { Some("autonomous") } else { None }),
+            );
+            if let Some(path) = plan {
+                let p: spec_autonomous_core::model::Plan =
+                    toml::from_str(&fs::read_to_string(path)?)?;
+                a["plan"] = json!(p);
             }
-            if let Some(v) = delivery {
-                config.execution.delivery = v;
-            }
-            let supplied_plan: Option<Plan> = plan_path
-                .map(|p| -> Result<Plan> { Ok(toml::from_str(&fs::read_to_string(p)?)?) })
-                .transpose()?;
-            let m = if let Some(p) = &supplied_plan {
-                p.milestone
-                    .clone()
-                    .context("invalid_plan: missing native milestone binding")?
-            } else {
-                source(&project, &args, framework)?
-            };
-            let run = engine::start(
-                &project,
-                engine::Start {
-                    milestone: m,
-                    range: Range { from, to, only },
-                    mode: mode.map(Mode::name).unwrap_or_else(|| {
-                        if autonomous {
-                            "autonomous".into()
-                        } else {
-                            config.execution.mode.clone()
-                        }
-                    }),
-                    create_roadmap: false,
-                    plan: supplied_plan,
-                },
-                config,
-                cancel,
-                &mut observer,
-            )?;
-            let code = run_exit(&run);
-            emit_run(&run, format)?;
-            return Ok(code);
+            ("prepare", a)
         }
-        Command::Plan { source: args } => {
-            let m = source(&project, &args, framework)?;
-            let run = engine::start(
-                &project,
-                engine::Start {
-                    milestone: m,
-                    range: Range::default(),
-                    mode: "plan".into(),
-                    create_roadmap: false,
-                    plan: None,
-                },
-                config,
-                cancel,
-                &mut observer,
-            )?;
-            let code = run_exit(&run);
-            emit_run(&run, format)?;
-            return Ok(code);
+        Command::ApplyResult {
+            result,
+            token,
+            host,
+        } => (
+            "apply-result",
+            json!({"result":read_json(&result,65536)?,"token":token,"host":host.value()}),
+        ),
+        Command::Archive {
+            source,
+            apply,
+            plan_hash,
+        } => {
+            let mut a = source.args();
+            a["apply"] = json!(apply);
+            put(&mut a, "plan_hash", plan_hash);
+            ("archive", a)
+        }
+        Command::Doctor { runner: _ } => ("doctor", json!({})),
+        Command::Tools {
+            command: ToolCommand::List { all },
+        } => ("capabilities", json!({"all":all})),
+        Command::Tools {
+            command: ToolCommand::Call { capability, input },
+        } => {
+            let args = if let Some(path) = input.strip_prefix('@') {
+                read_json(Path::new(path), 2 * 1024 * 1024)?
+            } else {
+                serde_json::from_str(&input)?
+            };
+            return execute_cap(
+                &root,
+                &capability,
+                args,
+                &cli.view,
+                cli.fields,
+                cli.limit,
+                cli.offset,
+                selected,
+                format,
+            );
+        }
+        Command::Resume {
+            run_id,
+            mode,
+            reload_config,
+            extend_seconds,
+            max_attempts,
+        } => {
+            let mut a = json!({"run_id":run_id,"reload_config":reload_config,"extend_seconds":extend_seconds});
+            put(&mut a, "mode", mode.map(Mode::name));
+            put(&mut a, "max_attempts", max_attempts);
+            ("prepare", a)
+        }
+        Command::Pause { run_id } => ("run.pause", json!({"run_id":run_id})),
+        Command::Cancel { run_id } => ("run.cancel", json!({"run_id":run_id})),
+        Command::Cleanup { run_id } => ("run.cleanup", json!({"run_id":run_id})),
+        Command::Claim {
+            run_id,
+            request_id,
+            token,
+            host,
+        } => (
+            "work.claim",
+            json!({"run_id":run_id,"request_id":request_id,"token":token,"host":host.value()}),
+        ),
+        Command::ResolveHook {
+            run_id,
+            key,
+            outcome,
+            evidence,
+        } => (
+            "hook.resolve",
+            json!({"run_id":run_id,"key":key,"outcome":outcome,"evidence":evidence}),
+        ),
+        Command::Roadmap { milestone } => ("roadmap.get", json!({"milestone_id":milestone})),
+        Command::Plan { source } => {
+            let mut a = source.args();
+            a["mode"] = json!("plan");
+            ("prepare", a)
         }
         Command::Milestone {
             command:
@@ -433,62 +486,125 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
                     max_workers,
                 },
         } => {
-            if let Some(n) = max_workers {
-                config.execution.max_workers = n;
-            }
-            let m = engine::goal_milestone(id, goal, provider::framework(&project, framework)?);
-            let run = engine::start(
-                &project,
-                engine::Start {
-                    milestone: m,
-                    range: Range::default(),
-                    mode: mode.name(),
-                    create_roadmap: true,
-                    plan: None,
-                },
-                config,
-                cancel,
-                &mut observer,
-            )?;
-            let code = run_exit(&run);
-            emit_run(&run, format)?;
-            return Ok(code);
+            let mut a = json!({"goal":goal,"mode":mode.name()});
+            put(&mut a, "id", id);
+            put(&mut a, "max_workers", max_workers);
+            ("prepare", a)
         }
-        Command::Resume {
-            run_id,
-            mode,
-            reload_config,
-            extend_seconds,
-            max_attempts,
-        } => {
-            let run = engine::resume_with(
+        Command::Report { run_id } => ("history.get", json!({"run_id":run_id})),
+        Command::Status { run_id } => {
+            let repo = Repository::discover(&root)?;
+            let store = Store::open(&repo, false)?.context("run_not_found")?;
+            let run = if let Some(id) = run_id {
+                store.get(&id)?
+            } else {
+                store.list()?.into_iter().next().context("run_not_found")?
+            };
+            direct = Some(progress::public_run(&run));
+            ("", json!({}))
+        }
+        Command::Detect => {
+            direct = Some(serde_json::to_value(spec_autonomous_core::detect(
                 &root,
-                &run_id,
-                engine::ResumeOptions {
-                    mode: mode.map(Mode::name),
-                    reload_config,
-                    extend_seconds,
-                    max_attempts,
+                match selected {
+                    Some("openspec") => Some(spec_autonomous_core::Framework::Openspec),
+                    Some("speckit") => Some(spec_autonomous_core::Framework::Speckit),
+                    _ => None,
                 },
-                cancel,
-                &mut observer,
-            )?;
-            let code = run_exit(&run);
-            emit_run(&run, format)?;
-            return Ok(code);
+            )?)?);
+            ("", json!({}))
         }
+        Command::Init { agent, prefix, mcp } => {
+            let project = spec_autonomous_core::detect(&root, None)?.root;
+            let data = skills::init_with_mcp(&project, agent.as_deref(), &prefix, mcp)?;
+            direct = Some(data);
+            ("", json!({}))
+        }
+        Command::Skills { command } => {
+            let project = spec_autonomous_core::detect(&root, None)?.root;
+            direct = Some(match command {
+                SkillCommand::Install {
+                    agent,
+                    scope,
+                    prefix,
+                } => {
+                    if scope != "project" {
+                        bail!("scope_unsupported");
+                    }
+                    json!({"installed":skills::install(&project,&agent,&prefix)?})
+                }
+                SkillCommand::Uninstall => json!({"removed":skills::uninstall(&project)?}),
+            });
+            ("", json!({}))
+        }
+        Command::Mcp { .. } => unreachable!(),
     };
-    emit(json!({"schema_version":1,"data":result}), format)?;
-    Ok(0)
+    if let Some(data) = direct {
+        if cap.is_empty() && data.get("detected").is_some() {
+            print(data, format)?;
+        } else {
+            print(json!({"schema_version":1,"data":data}), format)?;
+        }
+        return Ok(0);
+    }
+    if cap == "prepare" && args.get("run_id").is_some() {
+        args.as_object_mut().unwrap().remove("framework");
+    }
+    execute_cap(
+        &root, cap, args, &cli.view, cli.fields, cli.limit, cli.offset, selected, format,
+    )
 }
-fn control(root: &Path, id: &str, action: &str) -> Result<Value> {
-    let repo = Repository::discover(root)?;
-    let store = Store::for_control(&repo)?;
-    store.control(id, action)?;
-    Ok(json!({"run_id":id,"requested":action}))
+#[allow(clippy::too_many_arguments)]
+fn execute_cap(
+    root: &Path,
+    cap: &str,
+    mut args: Value,
+    view: &View,
+    fields: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+    framework: Option<&str>,
+    format: Format,
+) -> Result<i32> {
+    if !args.is_object() {
+        bail!("invalid_arguments: input must be a JSON object");
+    }
+    args["view"] = json!(match view {
+        View::Agent => "agent",
+        View::Full => "full",
+    });
+    if let Some(fields) = fields {
+        args["fields"] = json!(fields.split(',').map(str::to_string).collect::<Vec<_>>());
+    }
+    put(&mut args, "limit", limit);
+    put(&mut args, "offset", offset);
+    if let Some(f) = framework {
+        if api::catalog::get(cap)?.input_schema["properties"]
+            .get("framework")
+            .is_some()
+        {
+            args["framework"] = json!(f);
+        }
+    }
+    let result = api::invoke(root, cap, &args)?;
+    let code = if ["prepare", "apply-result"].contains(&cap) {
+        match result["status"].as_str() {
+            Some("cancelled") => 130,
+            Some("paused" | "needs_input" | "delivery_pending") => 4,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    print(json!({"schema_version":1,"data":result}), format)?;
+    Ok(code)
 }
 fn main() {
     let cli = Cli::parse();
+    if let Err(error) = ctrlc::set_handler(spec_autonomous_core::process::interrupt) {
+        eprintln!("signal_handler_failed: {error}");
+        std::process::exit(1);
+    }
     let format = cli.format.unwrap_or(if cli.json {
         Format::Json
     } else {
@@ -498,10 +614,10 @@ fn main() {
         eprintln!("--json conflicts with --format");
         std::process::exit(2);
     }
-    let code = match execute(cli, format) {
-        Ok(c) => c,
-        Err(e) => {
-            let message = format!("{e:#}");
+    let exit = match execute(cli, format) {
+        Ok(code) => code,
+        Err(error) => {
+            let message = format!("{error:#}");
             let code = message
                 .split(':')
                 .next()
@@ -512,20 +628,21 @@ fn main() {
                 || code == "operation_failed"
             {
                 2
-            } else if code.contains("unavailable")
-                || code.contains("unsupported")
-                || code.contains("configured")
-            {
+            } else if code.contains("unavailable") || code.contains("unsupported") {
                 3
             } else {
                 5
             };
-            let _ = emit(
+            let _ = print(
                 json!({"schema_version":1,"error":{"code":code,"message":message}}),
                 format,
             );
             exit
         }
     };
-    std::process::exit(code);
+    std::process::exit(if spec_autonomous_core::process::interrupted() {
+        130
+    } else {
+        exit
+    });
 }

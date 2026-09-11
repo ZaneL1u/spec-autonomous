@@ -5,8 +5,9 @@ use crate::{
     config::Config,
     git::{self, Repository},
     model::*,
-    paths, plan, process, provider, runner,
+    paths, plan, process, provider,
     state::{Lease, Store},
+    work_packet,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -22,9 +23,13 @@ use std::{
 };
 
 mod execution;
+mod host;
 mod lifecycle;
 mod planning;
 mod recovery;
+pub use host::{
+    apply_result, claim, heartbeat, host_control, next, revoke, work_context, work_view,
+};
 
 pub type Observer<'a> = &'a mut dyn FnMut(&Run, &str);
 pub struct Start {
@@ -107,12 +112,11 @@ pub fn start(
         config.provider.openspec_command = provider::openspec_argv(root, &config);
     }
     config.validate()?;
+    config.schema_version = 2;
     if start.mode == "autonomous" && detected == Framework::Speckit {
         provider::check_hooks(root, &config)?;
     }
-    if start.mode != "native" || start.create_roadmap {
-        runner::doctor(&config)?;
-    }
+
     let repo = Repository::discover(root)?;
     repo.preflight()?;
     let _lease = Lease::acquire(&repo)?;
@@ -121,6 +125,33 @@ pub fn start(
     let origin_branch = repo.branch()?;
     let id = paths::id("run");
     let relative = paths::localize(&repo.root, root)?;
+    if let Some(existing) = store.list()?.into_iter().find(|r| {
+        r.host.is_some()
+            && (!r.terminal() && !["plan_ready", "handed_off"].contains(&r.status.as_str())
+                || r.attempts.iter().any(|a| {
+                    matches!(
+                        a.status.as_str(),
+                        "issued" | "claimed" | "submitted" | "receiving"
+                    )
+                }))
+            && r.project_relative == relative
+    }) {
+        if repo.head()? != existing.origin_head {
+            bail!("source_drift: resume the existing run to reconcile committed changes");
+        }
+        if existing.milestone.id == start.milestone.id
+            && existing.milestone.goal == start.milestone.goal
+            && serde_json::to_string(&existing.range)? == serde_json::to_string(&start.range)?
+            && existing.mode == start.mode
+        {
+            return Ok(existing);
+        }
+        bail!(
+            "project_in_use: active run {} must be continued or cancelled before starting another workflow for this project",
+            existing.id
+        );
+    }
+
     let mut completed = vec![];
     let mut phase_hashes = BTreeMap::new();
     for old in store
@@ -132,18 +163,21 @@ pub fn start(
             || serde_json::to_string(&(
                 &old.milestone,
                 &old.config.verification,
-                &old.config.runner.environment,
+                &old.config.environment,
                 &old.config.hooks,
             ))? != serde_json::to_string(&(
                 &start.milestone,
                 &config.verification,
-                &config.runner.environment,
+                &config.environment,
                 &config.hooks,
             ))?
         {
             continue;
         }
         for phase in &start.milestone.phases {
+            if !old.completed_phases.contains(&phase.id) {
+                continue;
+            }
             if let Some(hash) = old.phase_hashes.get(&phase.id) {
                 if provider::inspect(root, detected, &phase.source.selector, &config)
                     .is_ok_and(|s| s.source_hash == *hash)
@@ -211,6 +245,10 @@ pub fn start(
         evidence: vec![],
         repair_rounds: 0,
         hook_results: BTreeMap::new(),
+        host: Some(HostState {
+            protocol_version: 1,
+            ..Default::default()
+        }),
     };
     let mut c = Coordinator {
         repo,
@@ -262,6 +300,11 @@ pub fn resume_with(
     if run.terminal() {
         return Ok(run);
     }
+    if run.host.is_none() {
+        bail!(
+            "legacy_run_read_only: inspect or import the native source into a new host-driven run"
+        );
+    }
     let mode = options.mode;
     if options.reload_config {
         run.config = Config::load(&Path::new(&run.origin).join(&run.project_relative))?;
@@ -288,10 +331,10 @@ pub fn resume_with(
         }
     }
     if mode.as_deref().unwrap_or(&run.mode) == "autonomous" {
-        runner::doctor(&run.config)?;
+        work_packet::doctor(&run.config)?;
     }
     store.control(id, "")?;
-    let elapsed_before = run.elapsed_ms;
+    let elapsed_before = elapsed(&run);
     let mut c = Coordinator {
         repo,
         store,
@@ -379,6 +422,18 @@ impl Coordinator<'_> {
         Ok(())
     }
     fn check(&self) -> Result<()> {
+        if let Some(host) = &self.run.host {
+            if !host.blockers.is_empty() {
+                bail!(
+                    "needs_input: {}",
+                    host.blockers
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+            }
+        }
         let control = self.store.requested(&self.run.id)?;
         if !control.is_empty() {
             self.cancel.store(true, Ordering::Relaxed);
@@ -390,7 +445,7 @@ impl Coordinator<'_> {
             self.cancel.store(true, Ordering::Relaxed);
             bail!("budget_exhausted: run deadline reached");
         }
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.cancel.load(Ordering::Relaxed) || process::interrupted() {
             bail!("paused: interrupted");
         }
         for (path, expected) in &self.run.origin_sources {
@@ -434,7 +489,9 @@ impl Coordinator<'_> {
             {
                 message = "budget_exhausted: run deadline reached".into();
             }
-            self.run.status = if message.starts_with("cancel:") {
+            self.run.status = if message.starts_with("awaiting_host:") {
+                "awaiting_host"
+            } else if message.starts_with("cancel:") {
                 "cancelled"
             } else if message.contains("delivery_pending") {
                 "delivery_pending"
@@ -444,6 +501,18 @@ impl Coordinator<'_> {
                 "paused"
             }
             .into();
+            if !message.starts_with("awaiting_host:") {
+                if let Some(attempt) = self
+                    .run
+                    .attempts
+                    .iter_mut()
+                    .rev()
+                    .find(|a| a.status == "candidate")
+                {
+                    attempt.status = "failed".into();
+                    attempt.error = Some(message.clone());
+                }
+            }
             self.run.blocker = Some(message);
             self.save("stopped")?;
         }
@@ -564,37 +633,7 @@ impl Coordinator<'_> {
         instruction: String,
         snapshot: Option<Snapshot>,
     ) -> Result<(WorkerResult, PathBuf, usize)> {
-        let mut failure = None;
-        for _ in 0..self.run.config.execution.max_attempts {
-            let (index, worktree, dir) = self.make_attempt(kind, task, phase)?;
-            let mut snapshot = snapshot.clone();
-            if kind == "audit" {
-                if let Some(snapshot) = snapshot.as_mut() {
-                    snapshot.metadata["execution_evidence"] =
-                        crate::provenance::record(&self.run, &self.store.root, &dir)?;
-                }
-            }
-            let input = self.input(index, instruction.clone(), snapshot, None, failure.clone());
-            let result = runner::run(
-                &input,
-                &worktree.join(&self.run.project_relative),
-                &dir,
-                &self.run.config,
-                self.cancel.clone(),
-            );
-            self.end_attempt(index, &result)?;
-            match result {
-                Ok(r) => return Ok((r, worktree, index)),
-                Err(e) => {
-                    let message = e.to_string();
-                    if message.starts_with("needs_input:") || failure.as_ref() == Some(&message) {
-                        return Err(e);
-                    }
-                    failure = Some(message);
-                }
-            }
-        }
-        bail!("attempts_exhausted: {}", failure.unwrap_or_default())
+        self.invoke_host(kind, task, phase, instruction, snapshot)
     }
 }
 fn failpoint(name: &str) {
@@ -658,4 +697,14 @@ fn repeated(keys: Option<&Vec<String>>, limit: u32) -> bool {
                 .take(limit as usize)
                 .all(|k| Some(k) == v.last())
     })
+}
+
+fn elapsed(run: &Run) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(&run.started_at)
+        .ok()
+        .map(|start| {
+            (chrono::Utc::now().timestamp_millis() - start.timestamp_millis()).max(0) as u64
+        })
+        .unwrap_or(run.elapsed_ms)
+        .max(run.elapsed_ms)
 }

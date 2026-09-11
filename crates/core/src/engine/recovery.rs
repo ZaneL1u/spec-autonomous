@@ -73,12 +73,36 @@ impl Coordinator<'_> {
                 return Ok(());
             }
         }
+
+        for index in 0..self.run.attempts.len() {
+            if self.run.attempts[index].status == "receiving" {
+                let id = self.run.attempts[index].id.clone();
+                let meta = &self
+                    .run
+                    .host
+                    .as_ref()
+                    .context("legacy_run_read_only")?
+                    .requests[&id];
+                let file = paths::inside(
+                    &self.store.root,
+                    &format!("runs/{}/attempts/{id}/result.json", self.run.id),
+                )?;
+                if !file.exists() {
+                    bail!("receipt_recovery_required: resubmit the same result for {id}");
+                }
+                if Some(paths::hash(fs::read(file)?)) != meta.receipt_hash {
+                    bail!("receipt_corrupt");
+                }
+                self.run.attempts[index].status = "submitted".into();
+                self.run.attempts[index].finished_at = Some(paths::now());
+            }
+        }
         for a in self
             .run
             .attempts
             .clone()
             .iter()
-            .filter(|a| a.status == "running")
+            .filter(|a| a.status == "running" && a.kind == "hook")
         {
             let dir = self.store.attempt_dir(&self.run.id, &a.id)?;
             process::reconcile_process(&dir.join("process.json"))?;
@@ -145,6 +169,23 @@ impl Coordinator<'_> {
                 {
                     a.status = "integrated".into();
                 }
+                if let Some((phase_id, _)) = intent.task_id.split_once('/') {
+                    if let Some(phase) = self.run.milestone.phases.iter().find(|p| p.id == phase_id)
+                    {
+                        let snap = provider::inspect(
+                            &self.project(),
+                            self.run.milestone.framework,
+                            &phase.source.selector,
+                            &self.run.config,
+                        )?;
+                        self.run
+                            .host
+                            .as_mut()
+                            .unwrap()
+                            .source_revisions
+                            .insert(phase_id.into(), snap.source_hash);
+                    }
+                }
             } else {
                 self.run.intents[index].state = "abandoned".into();
             }
@@ -160,6 +201,10 @@ impl Coordinator<'_> {
                 self.run.plans.clear();
                 self.run.completed_phases.clear();
                 self.run.phase_hashes.clear();
+                if let Some(host) = self.run.host.as_mut() {
+                    host.pending_repair = None;
+                    host.source_revisions.clear();
+                }
             }
         }
         if git::head(Path::new(&self.run.integration))? != self.run.accepted_head {
@@ -176,6 +221,33 @@ impl Coordinator<'_> {
         }
         if !git::clean(origin)? {
             bail!("dirty_checkout: commit native changes before resuming");
+        }
+        if self
+            .run
+            .attempts
+            .iter()
+            .any(|a| matches!(a.status.as_str(), "issued" | "claimed" | "receiving"))
+        {
+            bail!(
+                "source_drift: revoke outstanding host work after it stops before reconciling source changes"
+            );
+        }
+        for attempt in &mut self.run.attempts {
+            if attempt.status == "submitted" {
+                attempt.status = "superseded".into();
+                attempt.error = Some(
+                    "source_drift: receipt retained but old planning context is no longer current"
+                        .into(),
+                );
+                if let Some(lease) = self
+                    .run
+                    .host
+                    .as_mut()
+                    .and_then(|h| h.requests.get_mut(&attempt.id))
+                {
+                    lease.revoked = true;
+                }
+            }
         }
         if !git::ancestor(origin, &self.run.origin_head, &current) {
             bail!(
@@ -260,6 +332,10 @@ impl Coordinator<'_> {
         } else {
             self.run.completed_phases.clear();
             self.run.phase_hashes.clear();
+            if let Some(host) = self.run.host.as_mut() {
+                host.pending_repair = None;
+                host.source_revisions.clear();
+            }
             self.run.plans.clear();
         }
         let mut range = self.run.range.clone();

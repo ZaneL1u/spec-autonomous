@@ -17,3 +17,5 @@ packages/cli/native/
 !.spec-autonomous/milestones/
 !.spec-autonomous/plans/
 !.spec-autonomous/skills-installed.toml
+!.spec-autonomous/mcp-installed.toml
+!.spec-autonomous/archives/

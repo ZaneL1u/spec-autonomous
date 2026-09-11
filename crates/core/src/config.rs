@@ -11,7 +11,10 @@ use std::{collections::BTreeMap, path::Path};
 pub struct Config {
     pub schema_version: u32,
     pub execution: Execution,
+    #[serde(skip_serializing_if = "Runner::is_disabled")]
     pub runner: Runner,
+    pub host: HostConfig,
+    pub environment: BTreeMap<String, String>,
     pub provider: Provider,
     pub verification: Vec<Check>,
     pub hooks: BTreeMap<String, Hook>,
@@ -64,9 +67,11 @@ pub struct Policy {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            schema_version: SCHEMA,
+            schema_version: 2,
             execution: Execution::default(),
             runner: Runner::default(),
+            host: HostConfig::default(),
+            environment: BTreeMap::new(),
             provider: Provider::default(),
             verification: vec![],
             hooks: BTreeMap::new(),
@@ -95,7 +100,7 @@ impl Default for Execution {
 impl Default for Runner {
     fn default() -> Self {
         Self {
-            profile: "command".into(),
+            profile: "disabled".into(),
             command: vec![],
             fresh_session: false,
             sandbox: "runner-managed".into(),
@@ -134,8 +139,15 @@ impl Config {
         Ok(value)
     }
     pub fn validate(&self) -> Result<()> {
-        if self.schema_version != SCHEMA {
+        if ![SCHEMA, 2].contains(&self.schema_version) {
             bail!("schema_unsupported: config version");
+        }
+        if self.host.max_concurrency == 0
+            || self.host.max_concurrency > 32
+            || self.host.lease_seconds == 0
+            || self.host.lease_seconds > 2_592_000
+        {
+            bail!("invalid_config: invalid host limits");
         }
         let x = &self.execution;
         if x.max_workers == 0
@@ -165,7 +177,7 @@ impl Config {
                 "policy_capability_unavailable: use explicit native archive or the separate release workflow; unattended external lifecycle actions are not enabled in this local profile"
             );
         }
-        if !["command", "codex"].contains(&self.runner.profile.as_str()) {
+        if !["disabled", "command", "codex"].contains(&self.runner.profile.as_str()) {
             bail!("runner_unsupported: unknown profile");
         }
         for c in &self.verification {
@@ -203,4 +215,24 @@ pub fn validate_check(check: &Check) -> Result<()> {
     }
     paths::relative(&check.cwd)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HostConfig {
+    pub max_concurrency: usize,
+    pub lease_seconds: u64,
+}
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrency: 1,
+            lease_seconds: 1800,
+        }
+    }
+}
+impl Runner {
+    fn is_disabled(&self) -> bool {
+        self.profile == "disabled" && self.command.is_empty() && self.environment.is_empty()
+    }
 }

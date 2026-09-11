@@ -1,3 +1,5 @@
+> 历史 alpha.1 方案：CLI agent launcher 的职责已由 [host-driven-capabilities](../host-driven-capabilities/design.md) 替代。保留此前验收和未完成发行项，不以旧模型运行记录证明新 host 协议。
+
 # Spec Autonomous：整里程碑自主开发技术方案
 
 状态：**本地 runtime 已实现，验收与发行状态见清单**。更新：2026-09-11。实际模块、配置与协议见 [architecture.md](../../../docs/architecture.md)，本轮证据见 [验收记录](../../../docs/validation/autonomous.md)。适配基线见 [upstreams.lock.json](../../../docs/research/upstreams.lock.json)。

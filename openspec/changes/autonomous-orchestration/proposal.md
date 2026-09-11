@@ -1,3 +1,5 @@
+> 历史 alpha.1 方案：CLI agent launcher 的职责已由 [host-driven-capabilities](../host-driven-capabilities/design.md) 替代。保留此前验收和未完成发行项，不以旧模型运行记录证明新 host 协议。
+
 # Autonomous milestone execution
 
 ## Why

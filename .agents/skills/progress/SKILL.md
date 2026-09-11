@@ -1,8 +1,10 @@
 ---
 name: progress
-description: Inspect milestone, phase and worker progress across all worktrees of the current Git repository without modifying execution state.
+description: Read milestone and host work progress across every Git worktree through a compact structured capability, without changing execution state.
 ---
 
-Run `spec-autonomous progress --all-worktrees --json`. This enumerates the common Git repository, including the main checkout, managed workers/integration trees and external worktrees. Use `status <run-id> --json` for run details and `roadmap --milestone <id> --format toml` for phase structure.
+Use MCP sa_progress or `spec-autonomous progress --all-worktrees --json`. The capability resolves the shared Git repository and joins native, runtime and worktree facts. It does not launch agents or require command-chain construction.
 
-Report verified progress separately from native checkbox counts. Keep unknown/stale/partial observations visible; do not label unregistered worktrees idle or complete. Count a logical task once across retries. Summarize active work, blockers and next actions with bounded output; do not read full worker logs unless needed for a specific issue. This skill is read-only and never repairs or cleans up worktrees implicitly.
+Report verified progress separately from native checkbox counts. Keep external, unknown, stale, partial and host-reported states visible. A host claim/heartbeat is not a CLI observation of an agent process. Count logical tasks once across retries and preserve scope_completed versus full milestone completion.
+
+Use pagination metadata when more worktrees/runs exist than the first page. Query sa_next for next-action hints, and use sa_tools state.get/history.get/audit.open only for relevant details. Do not ingest full worker logs unless resolving a concrete issue. This skill never cleans, repairs, archives or re-dispatches work implicitly.

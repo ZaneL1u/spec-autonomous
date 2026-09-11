@@ -9,6 +9,11 @@ use std::{
 };
 
 pub fn command(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<String> {
+    let mut safe_args = args.to_vec();
+    if safe_args.first() == Some(&"diff") {
+        safe_args.insert(1, "--no-ext-diff");
+        safe_args.insert(2, "--no-textconv");
+    }
     let mut child = Command::new("git")
         .args([
             "-c",
@@ -18,13 +23,16 @@ pub fn command(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Strin
             "-c",
             "core.hooksPath=/dev/null",
             "-c",
+            "core.fsmonitor=false",
+            "-c",
             "gc.auto=0",
             "-c",
             "maintenance.auto=false",
         ])
-        .args(args)
+        .args(&safe_args)
         .current_dir(root)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")

@@ -79,7 +79,7 @@ pub fn install(root: &Path, agent: &str, prefix: &str) -> Result<Vec<String>> {
 pub fn uninstall(root: &Path) -> Result<Vec<String>> {
     let path = paths::inside(root, ".spec-autonomous/skills-installed.toml")?;
     if !path.exists() {
-        return Ok(vec![]);
+        return crate::skills_mcp::uninstall(root);
     }
     let mut manifest: Manifest = toml::from_str(&fs::read_to_string(&path)?)?;
     let mut eligible = vec![];
@@ -103,6 +103,7 @@ pub fn uninstall(root: &Path) -> Result<Vec<String>> {
         manifest.files.remove(name);
     }
     paths::atomic_write(&path, toml::to_string_pretty(&manifest)?)?;
+    deleted.extend(crate::skills_mcp::uninstall(root)?);
     Ok(deleted)
 }
 pub fn init(root: &Path, agent: Option<&str>, prefix: &str) -> Result<serde_json::Value> {
@@ -129,13 +130,13 @@ pub fn init(root: &Path, agent: Option<&str>, prefix: &str) -> Result<serde_json
         paths::atomic_write(&path, toml::to_string_pretty(&Config::default())?)?;
     }
     if !text.contains("# Spec Autonomous declarations") {
-        text.push_str("\n# Spec Autonomous declarations (runtime lives in the Git common directory)\n!.spec-autonomous/\n.spec-autonomous/*\n!.spec-autonomous/config.toml\n!.spec-autonomous/skills-installed.toml\n!.spec-autonomous/milestones/\n!.spec-autonomous/plans/\n");
+        text.push_str("\n# Spec Autonomous declarations (runtime lives in the Git common directory)\n!.spec-autonomous/\n.spec-autonomous/*\n!.spec-autonomous/config.toml\n!.spec-autonomous/skills-installed.toml\n!.spec-autonomous/mcp-installed.toml\n!.spec-autonomous/archives/\n!.spec-autonomous/milestones/\n!.spec-autonomous/plans/\n");
         paths::atomic_write(&ignore, &text)?;
     } else if !text
         .lines()
         .any(|line| line == "!.spec-autonomous/skills-installed.toml")
     {
-        text.push_str("\n!.spec-autonomous/skills-installed.toml\n");
+        text.push_str("\n!.spec-autonomous/skills-installed.toml\n!.spec-autonomous/mcp-installed.toml\n!.spec-autonomous/archives/\n");
         paths::atomic_write(&ignore, &text)?;
     }
     let sigil = if agent == "claude" { "/" } else { "$" };
@@ -145,6 +146,33 @@ pub fn init(root: &Path, agent: Option<&str>, prefix: &str) -> Result<serde_json
         format!("{prefix}-")
     };
     Ok(
-        serde_json::json!({"framework":detected,"agent":agent,"installed":installed,"entry":format!("{sigil}{namespace}autonomous {sigil}{namespace}auto"),"next_action":"Configure runner and verification in .spec-autonomous/config.toml, then commit the initialized project before run."}),
+        serde_json::json!({"framework":detected,"agent":agent,"installed":installed,"entry":format!("{sigil}{namespace}autonomous {sigil}{namespace}auto"),"next_action":"Configure host capacity and verification, then commit the project before prepare. The CLI never launches agents."}),
     )
+}
+
+pub use crate::skills_mcp::install as install_mcp;
+
+pub fn init_with_mcp(
+    root: &Path,
+    agent: Option<&str>,
+    prefix: &str,
+    mcp: bool,
+) -> Result<serde_json::Value> {
+    let selected = if let Some(agent) = agent {
+        agent
+    } else {
+        match (root.join(".agents").exists(), root.join(".claude").exists()) {
+            (true, false) => "codex",
+            (false, true) => "claude",
+            _ => bail!("host_selection_required: choose --agent codex|claude"),
+        }
+    };
+    if mcp {
+        crate::skills_mcp::preflight(root, selected)?;
+    }
+    let mut result = init(root, Some(selected), prefix)?;
+    if mcp {
+        result["mcp"] = crate::skills_mcp::install(root, selected)?;
+    }
+    Ok(result)
 }

@@ -25,10 +25,10 @@ if(input.kind==='roadmap'){
   const source=input.snapshot.source_dir;
   let path=input.snapshot.next_action.outputs[0];
   let content='';
-  if(stage==='proposal')content=`## Why\n\n${input.goal}\n\n## What Changes\n\n- Implement ${phase.title}.\n\n## Capabilities\n\n### New Capabilities\n\n- arithmetic: Verified arithmetic operations.\n\n### Modified Capabilities\n\nNone.\n\n## Impact\n\nLocal JavaScript modules and tests.\n`;
+  if(stage==='proposal')content=`## Why\n\n${input.goal}\n\n## What Changes\n\n- Implement ${phase.title}.\n\n## Capabilities\n\n### New Capabilities\n\n- ${phase.slug}: Verified phase operations.\n\n### Modified Capabilities\n\nNone.\n\n## Impact\n\nLocal JavaScript modules and tests.\n`;
   else if(stage==='specs'){
-    path=`${source}/specs/arithmetic/spec.md`;
-    content=`## Purpose\n\nProvide correct and independently verifiable arithmetic behavior for the local mock project used to exercise the orchestration pipeline.\n\n## ADDED Requirements\n\n### Requirement: Arithmetic correctness\nThe system SHALL implement the operations assigned to this phase correctly.\n\n#### Scenario: Arithmetic checks\n- **WHEN** the phase test suite runs\n- **THEN** every arithmetic assertion passes\n`;
+    path=`${source}/specs/${phase.slug}/spec.md`;
+    content=`## Purpose\n\nProvide correct and independently verifiable arithmetic behavior for the local mock project used to exercise the orchestration pipeline.\n\n## ADDED Requirements\n\n### Requirement: ${phase.title} correctness\nThe system SHALL implement the operations assigned to this phase correctly.\n\n#### Scenario: Arithmetic checks\n- **WHEN** the phase test suite runs\n- **THEN** every arithmetic assertion passes\n`;
   }else if(stage==='design'||stage==='plan')content=`# ${phase.title}\n\n## Context\n\nUse independent JavaScript modules and Node test contracts.\n\n## Goals / Non-Goals\n\nImplement phase scope only.\n\n## Decisions\n\nSeparate modules, verify each with its dedicated test.\n\n## Risks / Trade-offs\n\nDo not break prior arithmetic operations.\n`;
   else if(stage==='tasks')content=`## 1. Implementation\n\n${phase.tasks.map((t,i)=>`- [ ] ${input.framework==='openspec'?`1.${i+1}`:`T${String(i+1).padStart(3,'0')}`} [P] [US1] Implement ${t.name} in ${t.path}`).join('\n')}\n`;
   else if(stage==='specify')content=`# Feature Specification: ${phase.title}\n\n## User Scenarios & Testing\n\nUsers receive correct arithmetic results. All listed phase tests must pass.\n\n## Requirements\n\n${phase.tasks.map(t=>`- Implement ${t.name} in ${t.path}`).join('\n')}\n`;
