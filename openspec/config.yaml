@@ -1,0 +1,31 @@
+schema: spec-driven
+context: |
+  Spec Autonomous reuses an existing OpenSpec change or Spec Kit feature to
+  autonomously implement a whole preplanned milestone, including verification,
+  bounded repair, integration and recovery. Parallel agents support that outcome.
+  Stack: Rust workspace, Node.js 22+ npm launcher, Bun 1.4.2, Rust 1.98.1.
+  Bootstrap currently implements only read-only detection and npm packaging.
+  Runtime is planned in autonomous-orchestration; it is not implemented yet.
+  Existing specs own requirements. A future SQLite ledger owns attempts/evidence.
+  Each worker uses a fresh session and isolated worktree; the coordinator alone
+  integrates code and writes shared completion state. Unknown write sets serialize.
+  Use docs/research/upstreams.lock.json for upstream compatibility baselines.
+  Documentation is primarily Chinese; code and JSON identifiers use English.
+  Report actual macOS checks separately from unrun platforms and external agents.
+rules:
+  proposal:
+    - Lead with the autonomous milestone outcome and observable capabilities.
+  design:
+    - Specify unattended continuation, failure recovery and completion criteria.
+    - Include source revision checks, adapter capabilities and fresh context rules.
+  tasks:
+    - Include a concrete verification method in every task.
+    - Leave future implementation unchecked; artifact readiness is not code completion.
+operations:
+  apply:
+    guidance:
+      - Continue authorized independent work and routine verification within scope.
+      - Record evidence before updating task checkboxes; coordinator owns shared writes.
+  archive:
+    guidance:
+      - Archive only a completed change with relevant verification evidence.

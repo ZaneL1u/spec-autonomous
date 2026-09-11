@@ -1,0 +1,11 @@
+{
+  "name": "spec-autonomous",
+  "version": "0.1.0-alpha.0",
+  "description": "Lightweight native orchestration for spec-driven repositories",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "bin": { "spec-autonomous": "bin/spec-autonomous.mjs" },
+  "files": ["bin", "lib", "native", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" }
+}

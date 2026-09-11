@@ -1,0 +1,18 @@
+{
+  "name": "spec-autonomous-workspace",
+  "private": true,
+  "version": "0.1.0-alpha.0",
+  "packageManager": "bun@1.4.2",
+  "engines": { "node": ">=22" },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "node scripts/build-native.mjs",
+    "test": "cargo test --workspace --locked && node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs",
+    "check": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "spec:validate": "openspec validate --all --strict --no-interactive",
+    "pack:local": "node scripts/pack-local.mjs",
+    "package:release": "node scripts/package-release.mjs",
+    "references:clone": "node scripts/clone-references.mjs"
+  },
+  "devDependencies": { "@fission-ai/openspec": "1.13.0" }
+}

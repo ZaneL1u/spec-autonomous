@@ -1,0 +1,11 @@
+.references/
+.artifacts/
+.spec-autonomous/
+target/
+node_modules/
+packages/cli/native/
+*.tgz
+.DS_Store
+.env
+.env.*
+!.env.example

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "researchedAt": "2026-09-10",
+  "repositories": [
+    { "directory": "openspec", "url": "https://github.com/Fission-AI/OpenSpec.git", "commit": "9d4e5974e5c0d9a09b9c6c1e1eb0975e80ec4461", "version": "1.13.0", "license": "MIT" },
+    { "directory": "spec-kit", "url": "https://github.com/github/spec-kit.git", "commit": "c173bf19a6654e3b05386ec3599349a55282b897", "version": "1.0.7.dev0", "license": "MIT" },
+    { "directory": "gsd-pi", "url": "https://github.com/open-gsd/gsd-pi.git", "commit": "0fd02c1ea7a87d9d9a8bb8323322de597520e1b4", "version": "1.19.0", "license": "MIT" },
+    { "directory": "gsd-core", "url": "https://github.com/open-gsd/gsd-core.git", "commit": "523be34133bf92922f42b031954b53c6101827e4", "version": "1.13.0", "license": "MIT" }
+  ]
+}

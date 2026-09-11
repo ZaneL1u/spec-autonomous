@@ -1,0 +1,31 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+env:
+  OPENSPEC_TELEMETRY: '0'
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: rustup show
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test
+      - run: bun run spec:validate
+      - run: bun run build
+      - run: node packages/cli/bin/spec-autonomous.mjs detect --json
+      - run: bun run pack:local

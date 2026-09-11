@@ -1,0 +1,58 @@
+name: Build release artifacts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            executable: spec-autonomous
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: spec-autonomous
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            executable: spec-autonomous
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: spec-autonomous
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            executable: spec-autonomous.exe
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            executable: spec-autonomous.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p spec-autonomous-cli
+      - run: ./target/${{ matrix.target }}/release/${{ matrix.executable }} detect --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.executable }}
+          if-no-files-found: error
+  assemble:
+    needs: native
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          path: .artifacts/binaries
+      - run: node scripts/package-release.mjs
+      - run: node scripts/pack-release.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-tarballs
+          path: .artifacts/npm
+          if-no-files-found: error
