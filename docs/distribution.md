@@ -6,7 +6,7 @@
 Node.js launcher 负责平台选择、argv/stdio/退出码与 SIGINT/SIGTERM 转发，不承载调度逻辑。
 发布包要求 Node.js 22+；Rust/Bun 只在源码开发或发布构建时需要。
 
-`bun run build` 在本机生成 `packages/cli/native/<platform>/<binary>`。
+`bun run build:native` 在本机生成 `packages/cli/native/<platform>/<binary>`。
 `bun run pack:local` 将该二进制与 launcher 打成 `.artifacts/local/*.tgz`，用于本机 npm 安装验收。
 **本地 tarball 不可作为通用跨平台发布包。**
 
@@ -73,3 +73,7 @@ release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真
 ## alpha.5 私有 Git 入口
 
 根 package.json 可直接通过 Git SSH 全局安装，第一次调用复用 gh 登录获取 Release 的本机二进制并校验固定 SHA256。原有独立 CLI tarball 继续携带 native binary。见 [私有 Git 安装](private-git-install.md)。源码与二进制发布在同一私有仓库；binary 只作为 Release asset，不进入 Git 历史。
+
+## alpha.6 CLI 国际化
+
+当前版本在 native Clap、Node Commander、Bun 和 npm 包共享 English / 简体中文 catalog。语言按 `--lang`、`SPEC_AUTONOMOUS_LANG` 和 POSIX locale 环境变量协商；JSON/MCP 的字段、状态和错误 code 不变。locale 资源随 wrapper 与普通 CLI tarball 分发。

@@ -16,7 +16,7 @@ for (const ignoreScripts of [false, true]) test(`npm Git installs the root facad
   const source = join(temp, 'source'), prefix = join(temp, 'global'), tools = join(temp, 'tools'), cache = join(temp, 'cache'), marker = join(temp, 'gh-calls');
   mkdirSync(source); mkdirSync(tools);
   for (const file of ['package.json', 'git-install.json', 'Cargo.toml', 'README.md', 'LICENSE']) cpSync(join(workspace, file), join(source, file));
-  for (const file of ['bin', 'lib', 'skills', 'package.json']) cpSync(join(workspace, 'packages/cli', file), join(source, 'packages/cli', file), { recursive: true });
+  for (const file of ['bin', 'lib', 'locales', 'skills', 'package.json']) cpSync(join(workspace, 'packages/cli', file), join(source, 'packages/cli', file), { recursive: true });
   const version = JSON.parse(readFileSync(join(source, 'package.json'))).version;
   const key = `${process.platform}-${process.arch}`;
   const sha256 = createHash('sha256').update(readFileSync(binary)).digest('hex');

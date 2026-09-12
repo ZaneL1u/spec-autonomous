@@ -12,7 +12,7 @@ export function assemble(input, output, { repository } = {}) {
     if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('Repository must be an explicit public GitHub HTTPS URL');
     manifest.repository = { type: 'git', url: repository };
   }
-  const wrapperFiles = ['bin', 'lib', 'skills', 'README.md', 'LICENSE'];
+  const wrapperFiles = ['bin', 'lib', 'locales', 'skills', 'README.md', 'LICENSE'];
   // Preflight before writing anything. A release requires the entire declared matrix.
   if (existsSync(output)) throw new Error(`Output already exists: ${output}. Choose a fresh directory.`);
   for (const name of wrapperFiles) {

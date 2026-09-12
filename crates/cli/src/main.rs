@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use spec_autonomous_core::{
     capabilities as api, git::Repository, model::HostIdentity, progress, skills, state::Store,
@@ -9,11 +9,13 @@ use std::{
     path::{Path, PathBuf},
 };
 mod cli_metadata;
+mod locale;
 #[derive(Parser, serde::Serialize)]
 #[command(
     name = "spec-autonomous",
     version,
-    about = "Deterministic SDD capabilities for LLM hosts and Skills; never starts agents"
+    about = "Deterministic SDD capabilities for LLM hosts and Skills; never starts agents",
+    disable_help_subcommand = true
 )]
 struct Cli {
     /// Repository directory (also accepted after a subcommand).
@@ -40,6 +42,9 @@ struct Cli {
     /// Number of items to skip when paging results.
     #[arg(long, global = true)]
     offset: Option<u64>,
+    /// Override the detected interface language, for example `zh-CN` or `en-US`.
+    #[arg(long, global = true, value_name = "LOCALE")]
+    lang: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -342,16 +347,16 @@ fn read_json(path: &Path, limit: u64) -> Result<Value> {
     }
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
-fn print(mut value: Value, format: Format) -> Result<()> {
+fn print(mut value: Value, format: Format, locale: locale::Locale) -> Result<()> {
     progress::portable(&mut value);
     match format {
         Format::Json => println!("{value}"),
         Format::Toml => println!("{}", toml::to_string_pretty(&value)?),
-        Format::Human => println!("{}", progress::human(&value)),
+        Format::Human => println!("{}", locale::human(&value, locale)),
     };
     Ok(())
 }
-fn execute(cli: Cli, format: Format) -> Result<i32> {
+fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
     let root = cli
         .path
         .canonicalize()
@@ -461,6 +466,7 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
                 cli.offset,
                 selected,
                 format,
+                locale,
             );
         }
         Command::Resume {
@@ -579,9 +585,9 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
     };
     if let Some(data) = direct {
         if cap.is_empty() && data.get("detected").is_some() {
-            print(data, format)?;
+            print(data, format, locale)?;
         } else {
-            print(json!({"schema_version":1,"data":data}), format)?;
+            print(json!({"schema_version":1,"data":data}), format, locale)?;
         }
         return Ok(0);
     }
@@ -589,7 +595,7 @@ fn execute(cli: Cli, format: Format) -> Result<i32> {
         args.as_object_mut().unwrap().remove("framework");
     }
     execute_cap(
-        &root, cap, args, &cli.view, cli.fields, cli.limit, cli.offset, selected, format,
+        &root, cap, args, &cli.view, cli.fields, cli.limit, cli.offset, selected, format, locale,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -603,6 +609,7 @@ fn execute_cap(
     offset: Option<u64>,
     framework: Option<&str>,
     format: Format,
+    locale: locale::Locale,
 ) -> Result<i32> {
     if !args.is_object() {
         bail!("invalid_arguments: input must be a JSON object");
@@ -634,13 +641,42 @@ fn execute_cap(
     } else {
         0
     };
-    print(json!({"schema_version":1,"data":result}), format)?;
+    print(json!({"schema_version":1,"data":result}), format, locale)?;
     Ok(code)
 }
 fn main() {
-    let cli = Cli::parse();
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let preliminary = locale::detect(locale::explicit_from_args(&raw).as_deref());
+    if raw.iter().any(|arg| arg == "--help" || arg == "-h") {
+        let mut command = Cli::command();
+        command.build();
+        let mut command = locale::localize_command(command, preliminary);
+        let target = locale_command_for_help(&mut command, &raw);
+        let _ = target.print_help();
+        println!();
+        return;
+    }
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let current = locale::detect(locale::explicit_from_args(&raw).as_deref());
+            let text = error.to_string();
+            if error.exit_code() == 0 {
+                print!("{text}");
+            } else if raw.iter().any(|arg| arg == "--json") {
+                println!(
+                    "{}",
+                    json!({"schema_version":1,"error":{"code":"invalid_arguments","message":locale::clap_error(current, &text)}})
+                );
+            } else {
+                eprintln!("{}", locale::clap_error(current, &text));
+            }
+            std::process::exit(error.exit_code());
+        }
+    };
+    let current_locale = locale::detect(cli.lang.as_deref());
     if let Command::CliMetadata { command } = &cli.command {
-        println!("{}", cli_metadata::invoke(command));
+        println!("{}", cli_metadata::invoke(command, current_locale));
         return;
     }
     if let Err(error) = ctrlc::set_handler(spec_autonomous_core::process::interrupt) {
@@ -656,15 +692,16 @@ fn main() {
         eprintln!("--json conflicts with --format");
         std::process::exit(2);
     }
-    let exit = match execute(cli, format) {
+    let exit = match execute(cli, format, current_locale) {
         Ok(code) => code,
         Err(error) => {
-            let message = format!("{error:#}");
-            let code = message
+            let raw_message = format!("{error:#}");
+            let code = raw_message
                 .split(':')
                 .next()
                 .filter(|s| s.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
                 .unwrap_or("operation_failed");
+            let message = locale::error(current_locale, &raw_message);
             let exit = if code.starts_with("invalid")
                 || code.contains("selection")
                 || code == "operation_failed"
@@ -678,6 +715,7 @@ fn main() {
             let _ = print(
                 json!({"schema_version":1,"error":{"code":code,"message":message}}),
                 format,
+                current_locale,
             );
             exit
         }
@@ -687,4 +725,62 @@ fn main() {
     } else {
         exit
     });
+}
+
+fn locale_command_for_help<'a>(
+    command: &'a mut clap::Command,
+    raw: &[String],
+) -> &'a mut clap::Command {
+    let value_flags = [
+        "--path",
+        "--framework",
+        "--format",
+        "--view",
+        "--fields",
+        "--limit",
+        "--offset",
+        "--lang",
+    ];
+    let mut path = Vec::new();
+    let mut skip = false;
+    for value in raw {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if value == "--" {
+            break;
+        }
+        if value_flags.contains(&value.as_str()) {
+            skip = true;
+            continue;
+        }
+        if value_flags
+            .iter()
+            .any(|flag| value.starts_with(&format!("{flag}=")))
+        {
+            continue;
+        }
+        if !value.starts_with('-') {
+            path.push(value.as_str());
+        }
+    }
+    fn descend<'a>(command: &'a mut clap::Command, path: &[&str]) -> &'a mut clap::Command {
+        let Some((head, tail)) = path.split_first() else {
+            return command;
+        };
+        let index = command
+            .get_subcommands()
+            .position(|sub| sub.get_name() == *head);
+        if let Some(index) = index {
+            let child = command
+                .get_subcommands_mut()
+                .nth(index)
+                .expect("subcommand index exists");
+            descend(child, tail)
+        } else {
+            command
+        }
+    }
+    descend(command, &path)
 }

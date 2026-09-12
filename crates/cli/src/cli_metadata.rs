@@ -1,5 +1,5 @@
 //! Read-only CLI grammar bridge for the Commander npm entry point.
-use super::{Cli, Format};
+use super::{Cli, Format, locale};
 use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::{Value, json};
 
@@ -38,14 +38,16 @@ fn describe(command: &clap::Command) -> Value {
     })
 }
 
-pub fn invoke(command: &MetadataCommand) -> Value {
+pub fn invoke(command: &MetadataCommand, current: locale::Locale) -> Value {
     match command {
         MetadataCommand::Describe => {
             let mut grammar = Cli::command();
             grammar.build();
-            json!({"schema_version":1,"data":describe(&grammar)})
+            let grammar = locale::localize_command(grammar, current);
+            json!({"schema_version":1,"locale":current.code(),"data":describe(&grammar)})
         }
         MetadataCommand::Parse { argv } => {
+            let current = locale::detect(locale::explicit_from_args(argv).as_deref());
             match Cli::try_parse_from(
                 std::iter::once("spec-autonomous").chain(argv.iter().map(String::as_str)),
             ) {
@@ -54,7 +56,7 @@ pub fn invoke(command: &MetadataCommand) -> Value {
                 }
                 Ok(cli) => json!({"ok":true,"parsed":cli}),
                 Err(error) => {
-                    let text = error.to_string();
+                    let text = locale::error(current, &error.to_string());
                     json!({"ok":false,"exit_code":error.exit_code(),
                         "stdout":if error.use_stderr(){""}else{&text},
                         "stderr":if error.use_stderr(){&text}else{""}})
@@ -69,7 +71,7 @@ mod tests {
     use super::*;
     #[test]
     fn grammar_and_preflight_use_clap_without_loading_a_project() {
-        let grammar = invoke(&MetadataCommand::Describe);
+        let grammar = invoke(&MetadataCommand::Describe, locale::Locale::En);
         assert!(
             grammar["data"]["commands"]
                 .as_array()
@@ -85,9 +87,12 @@ mod tests {
             "a b $(literal)",
             "--json",
         ];
-        let result = invoke(&MetadataCommand::Parse {
-            argv: args.map(str::to_owned).to_vec(),
-        });
+        let result = invoke(
+            &MetadataCommand::Parse {
+                argv: args.map(str::to_owned).to_vec(),
+            },
+            locale::Locale::En,
+        );
         assert_eq!(result["ok"], true);
         assert_eq!(result["parsed"]["command"]["name"], "prepare");
         assert_eq!(
@@ -104,15 +109,21 @@ mod tests {
             vec!["init", "--unknown"],
             vec!["progress", "--json", "--format", "toml"],
         ] {
-            let result = invoke(&MetadataCommand::Parse {
-                argv: args.into_iter().map(str::to_owned).collect(),
-            });
+            let result = invoke(
+                &MetadataCommand::Parse {
+                    argv: args.into_iter().map(str::to_owned).collect(),
+                },
+                locale::Locale::En,
+            );
             assert_eq!(result["ok"], false);
             assert_eq!(result["exit_code"], 2);
         }
-        let result = invoke(&MetadataCommand::Parse {
-            argv: vec!["prepare".into(), "--help".into()],
-        });
+        let result = invoke(
+            &MetadataCommand::Parse {
+                argv: vec!["prepare".into(), "--help".into()],
+            },
+            locale::Locale::En,
+        );
         assert_eq!(result["exit_code"], 0);
         assert!(result["stdout"].as_str().unwrap().contains("--goal"));
     }

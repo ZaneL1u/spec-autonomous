@@ -20,6 +20,7 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 - Read openspec/changes/provider-bootstrap/{proposal,design,tasks}.md and docs/provider-bootstrap.md for alpha.3 JS native-tool installation and CLI/MCP setup.
 - Read openspec/changes/cli-framework-standardization/{proposal,design,tasks}.md for alpha.4 Commander + Clap integration. Native CLI definitions stay in Clap; do not add another hand-written argv parser.
 - Read openspec/changes/private-git-install and docs/private-git-install.md for alpha.5 Git installation. The root Git facade has no npm preparation/lifecycle hooks; use build:native, and do not add a same-name JS workspace declaration.
+- Read openspec/changes/cli-localization/{proposal,design,tasks}.md and docs/localization.md for alpha.6 locale behavior. Keep command identifiers, JSON/MCP fields, status values and error codes stable; localize only human text.
 - Use the installed OpenSpec CLI and the existing spec-driven schema for behavioral changes.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.

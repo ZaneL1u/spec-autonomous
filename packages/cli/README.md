@@ -2,9 +2,11 @@
 
 Native deterministic capabilities for LLM hosts and Skills using OpenSpec or Spec Kit. **The CLI never launches agents or calls models.** The host owns fresh-context sessions; the CLI prepares work, verifies receipts, manages isolated worktrees and safely updates native state.
 
-This is the `0.1.0-alpha.5` private preview release. No npm registry publication has been performed.
+This is the `0.1.0-alpha.6` private preview release. No npm registry publication has been performed.
 
 The repository root also supports `npm install -g git+ssh://git@github.com/ZaneL1u/spec-autonomous.git`. That Git facade uses your authenticated gh CLI to retrieve and verify its platform binary on first invocation. The ordinary platform tarball already includes its native binary and does not require gh.
+
+The interface follows the user's locale. Use `--lang zh-CN`, `--lang en-US`, or `SPEC_AUTONOMOUS_LANG` and POSIX locale variables. Command names, JSON fields, error codes and MCP tool names remain stable.
 
 The command interface uses Commander.js 14.0.3 and Rust Clap. Native command definitions are exported from Clap, and the same native parser checks arguments before provider installation or project writes. Commander owns provider subcommands, nested help and structured syntax errors. npm installs the pinned Commander dependency automatically; installed runtime still requires neither Rust nor Bun.
 

@@ -36,6 +36,7 @@ test('release isolates platform packages and pins optional dependencies exactly'
   assert.equal(Object.keys(wrapper.optionalDependencies).length, 6);
   assert.ok(Object.values(wrapper.optionalDependencies).every((v) => v === wrapper.version));
   assert.equal(existsSync(join(output, 'spec-autonomous/native')), false);
+  assert.ok(existsSync(join(output, 'spec-autonomous/locales/en.json')));
   assert.equal(JSON.parse(readFileSync(join(output, 'spec-autonomous/package.json'))).repository.url, 'https://github.com/example/spec-autonomous');
   const linux = JSON.parse(readFileSync(join(output, 'spec-autonomous-linux-x64/package.json')));
   assert.equal(linux.repository.url, 'https://github.com/example/spec-autonomous');

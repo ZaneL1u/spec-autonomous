@@ -10,6 +10,7 @@
     "packages/cli/bin",
     "packages/cli/lib",
     "packages/cli/skills",
+    "packages/cli/locales",
     "packages/cli/package.json",
     "git-install.json",
     "README.md",
@@ -19,7 +20,7 @@
     "type": "git",
     "url": "git+ssh://git@github.com/ZaneL1u/spec-autonomous.git"
   },
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "packageManager": "bun@1.4.2",
   "engines": {
     "node": ">=22"

@@ -13,7 +13,7 @@ function setup(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'provider-home');
   const env = cleanEnv({ SPEC_AUTONOMOUS_BINARY: binary, SPEC_AUTONOMOUS_PROVIDER_HOME: home, SPEC_AUTONOMOUS_OFFLINE: '1' });
-  return { root, home, cli: args => {
+  return { root, home, env, cli: args => {
     const result = spawnSync(process.execPath, [launcher, ...args], { cwd: root, env, encoding: 'utf8', timeout: 15_000 });
     if (result.error) throw result.error;
     return result;
@@ -90,4 +90,15 @@ test('structured native input and init use parsed objects without rescanning arg
   assert.equal(await runCli(['init', '--path', f.root, '--agent', 'codex', '--framework', 'auto', '--provider', 'openspec', '--prefix', 'literal-prefix', '--mcp'], { ...common,
     initialize: async () => { assert.equal(options.agent, 'codex'); assert.equal(options.provider, 'openspec'); assert.equal(options.framework, 'openspec'); assert.equal(options.path, f.root); },
   }), 0);
+});
+test('Chinese environment and explicit English override localize only human text', t => {
+  const f = setup(t);
+  const run = args => spawnSync(process.execPath, [launcher, ...args], { cwd: f.root, env: { ...f.env, LC_ALL: 'zh_CN.UTF-8' }, encoding: 'utf8', timeout: 15_000 });
+  const zh = run(['--help']); assert.equal(zh.status, 0, zh.stderr); assert.match(zh.stdout, /准备完整工作包/); assert.doesNotMatch(zh.stdout, /Deterministic SDD capabilities/);
+  const en = run(['--lang', 'en-US', '--help']); assert.equal(en.status, 0, en.stderr); assert.match(en.stdout, /Prepare complete work packets/); assert.doesNotMatch(en.stdout, /准备完整工作包/);
+  const zhError = run(['--lang', 'zh-CN', '--path', join(f.root, 'missing'), 'detect', '--json']);
+  const enError = run(['--lang', 'en-US', '--path', join(f.root, 'missing'), 'detect', '--json']);
+  assert.equal(zhError.status, 2); assert.equal(enError.status, 2);
+  const zhJson = JSON.parse(zhError.stdout), enJson = JSON.parse(enError.stdout);
+  assert.equal(zhJson.error.code, enJson.error.code); assert.notEqual(zhJson.error.message, enJson.error.message);
 });

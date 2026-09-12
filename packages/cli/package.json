@@ -1,6 +1,6 @@
 {
   "name": "spec-autonomous",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "Lightweight native orchestration for spec-driven repositories",
   "type": "module",
   "license": "MIT",
@@ -15,6 +15,7 @@
     "lib",
     "native",
     "skills",
+    "locales",
     "README.md",
     "LICENSE"
   ],

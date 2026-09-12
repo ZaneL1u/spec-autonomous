@@ -1,6 +1,6 @@
 # 私有 Git 安装验收
 
-日期：2026-09-11。版本：0.1.0-alpha.5。实际预编译平台：macOS arm64。
+日期：2026-09-11。版本：0.1.0-alpha.6。实际预编译平台：macOS arm64。
 
 ## 本地验证
 
@@ -16,14 +16,14 @@ npm 11 测试曾发现 Git preparation 将全局包链接到临时 clone。最�
 
 ## 发行产物
 
-- `spec-autonomous-darwin-arm64`：SHA256 `288086a189852d67957f827f84975382d55a22e96da03c9cc2138f209281f7dc`。
-- `spec-autonomous-0.1.0-alpha.5.tgz`：SHA256 `5075ab4f9ac0aeafc3b98416621165ea55bf9fb200069edb5d2d01ce6eef1728`。
+- `spec-autonomous-darwin-arm64`：alpha.6 SHA256 `ee9f624348bbf2bf40abee92d08e733f3d27ed8de9678b0a7a8403670d078ed9`。
+- `spec-autonomous-0.1.0-alpha.6.tgz`：最终本地包哈希记录在生成后的验收 JSON 中。
 - 根 git-install.json 固定 repository、tag 和 binary SHA256；仓库与 Release 均要求保持 private。
 
 ## 私有 GitHub 实测
 
-私有仓库 [ZaneL1u/spec-autonomous](https://github.com/ZaneL1u/spec-autonomous) 已发布源代码；[v0.1.0-alpha.5 Release](https://github.com/ZaneL1u/spec-autonomous/releases/tag/v0.1.0-alpha.5) 绑定 `5a7466d42c21a498827f1e805f5cce174df1ea1c`，标记 prerelease。API 验证 private=true，三个附件的服务端 digest 与本地一致。
+私有仓库 [ZaneL1u/spec-autonomous](https://github.com/ZaneL1u/spec-autonomous) 的上一版 Release 为 alpha.5；alpha.6 会在本次源代码提交后创建新的 prerelease，并绑定同一提交的二进制 asset。API 验证 private=true。
 
-使用全新全局 prefix 和 binary cache，在 Node 22.23.2 / npm 10.9.8 下实际运行私有 Git SSH 安装，通过已登录的 gh 获取 binary。版本返回 0.1.0-alpha.5，SHA256 与 manifest 一致；离线 help 和真实项目 detect 通过。安装产物不是临时目录链接，不含 Rust 源码或本地 native 副本。证据 `.artifacts/private-git-real.json` / `.log`。
+alpha.5 已在 Node 22.23.2 / npm 10.9.8 下完成真实 Git SSH 安装；alpha.6 将在发布后复用同样的全新 prefix、gh 下载、SHA256、离线 help 和 detect 验收。安装产物不是临时目录链接，不含 Rust 源码或本地 native 副本。证据分别见 `.artifacts/private-git-real.json` / `.log` 与 alpha.6 发布记录。
 
-本机未构建其他平台的 alpha.5 二进制，因此不将那些平台标为可安装。此前 alpha.4 的 GitHub macos-14 CI 成功；Linux / Windows CI 有失败，不能作为跨平台交付证据。
+本机未构建其他平台的 alpha.6 二进制，因此不将那些平台标为可安装。此前 alpha.4 的 GitHub macos-14 CI 成功；Linux / Windows CI 有失败，不能作为跨平台交付证据。
