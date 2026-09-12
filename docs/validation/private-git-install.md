@@ -17,13 +17,13 @@ npm 11 测试曾发现 Git preparation 将全局包链接到临时 clone。最�
 ## 发行产物
 
 - `spec-autonomous-darwin-arm64`：alpha.6 SHA256 `ee9f624348bbf2bf40abee92d08e733f3d27ed8de9678b0a7a8403670d078ed9`。
-- `spec-autonomous-0.1.0-alpha.6.tgz`：最终本地包哈希记录在生成后的验收 JSON 中。
+- `spec-autonomous-0.1.0-alpha.6.tgz`：SHA256 `77f0cc9e6d03533d610f87bf3e45d75af0fa5d41b4f9e48046e468e3e5e03082`。
 - 根 git-install.json 固定 repository、tag 和 binary SHA256；仓库与 Release 均要求保持 private。
 
 ## 私有 GitHub 实测
 
-私有仓库 [ZaneL1u/spec-autonomous](https://github.com/ZaneL1u/spec-autonomous) 的上一版 Release 为 alpha.5；alpha.6 会在本次源代码提交后创建新的 prerelease，并绑定同一提交的二进制 asset。API 验证 private=true。
+私有仓库 [ZaneL1u/spec-autonomous](https://github.com/ZaneL1u/spec-autonomous) 的 alpha.6 Release 已创建：[v0.1.0-alpha.6](https://github.com/ZaneL1u/spec-autonomous/releases/tag/v0.1.0-alpha.6)，绑定提交 `c1473734707b19d1307ac0edb27520c1f46ed8da`。API 验证 private=true、prerelease=true，三个附件服务端 digest 与本地一致。
 
-alpha.5 已在 Node 22.23.2 / npm 10.9.8 下完成真实 Git SSH 安装；alpha.6 将在发布后复用同样的全新 prefix、gh 下载、SHA256、离线 help 和 detect 验收。安装产物不是临时目录链接，不含 Rust 源码或本地 native 副本。证据分别见 `.artifacts/private-git-real.json` / `.log` 与 alpha.6 发布记录。
+alpha.6 已在 Node 22.23.2 / npm 10.9.8 下使用全新 prefix 和 binary cache 完成真实 Git SSH 安装：gh 下载、SHA256、中文 help、英文显式覆盖、双语 JSON 错误、离线 help 和 detect 全部通过。安装产物不是临时目录链接，不含 Rust 源码或本地 native 副本。证据 `.artifacts/cli-localization-private-git-final.json` / `.log`。
 
 本机未构建其他平台的 alpha.6 二进制，因此不将那些平台标为可安装。此前 alpha.4 的 GitHub macos-14 CI 成功；Linux / Windows CI 有失败，不能作为跨平台交付证据。

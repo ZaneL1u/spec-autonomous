@@ -16,7 +16,7 @@
 - native `LC_ALL=zh_CN.UTF-8 --help`：命令描述、选项描述、帮助/版本文字中文；`--lang en` 切换英文。
 - Node 22 / Bun 的 provider、CLI、MCP 测试保持通过；新增资源随 npm `bin/lib/locales/skills` 一起打包。
 
-最终本地回归：131 项 Rust 测试及真实 OpenSpec 合约、49 项 JS/发布测试、70 项 E2E，全部通过；OpenSpec strict validation 8 项通过。alpha.6 tarball 包含 24 个文件和 `locales/en.json` / `locales/zh-CN.json`，SHA256 为 `77f0cc9e6d03533d610f87bf3e45d75af0fa5d41b4f9e48046e468e3e5e03082`。
+最终本地回归：131 项 Rust 测试及真实 OpenSpec 合约、49 项 JS/发布测试、70 项 E2E，全部通过；OpenSpec strict validation 8 项通过。alpha.6 tarball 包含 24 个文件和 `locales/en.json` / `locales/zh-CN.json`，SHA256 为 `77f0cc9e6d03533d610f87bf3e45d75af0fa5d41b4f9e48046e468e3e5e03082`。私有 Git alpha.6 真实安装在 Node 22 下通过中文环境与英文显式覆盖。
 
 ## 不变内容
 

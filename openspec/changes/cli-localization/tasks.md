@@ -11,4 +11,4 @@
 ## 3. Release acceptance
 
 - [x] 3.1 Bump to alpha.6, build the macOS arm64 binary, run the full Rust/JS/E2E/OpenSpec gate and produce a verified package.
-- [ ] 3.2 Publish the private GitHub Release with the localized binary and verify Git SSH installation under Chinese and English environments.
+- [x] 3.2 Publish the private GitHub Release with the localized binary and verify Git SSH installation under Chinese and English environments.
