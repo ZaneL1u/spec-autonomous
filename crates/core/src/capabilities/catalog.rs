@@ -437,6 +437,8 @@ pub fn all() -> Vec<Capability> {
             json!({"expected_head":s,"message":s,"files":{"type":"array","items":s}}),
         ),
     ]);
+    out.push(entry("run.revise", "Preview/apply pending verification corrections while preserving verified work and native requirements.", false, true, &["run_id", "reason"], json!({"run_id":s,"reason":s,"task_checks":{"type":"array","items":{"type":"object"}},"phase_checks":{"type":"array","items":{"type":"object"}},"milestone_checks":{"type":"array","items":{"type":"object"}},"apply":b,"plan_hash":s})));
+    out.push(entry("work.claim-batch", "Atomically claim prepared work for distinct host sessions in one operation.", false, true, &["run_id","requests"], json!({"run_id":s,"requests":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["request_id","token","host"],"properties":{"request_id":s,"token":s,"host":host}}}})));
     for (id, description, write) in [
         (
             "run.pause",
@@ -450,7 +452,7 @@ pub fn all() -> Vec<Capability> {
         ),
         (
             "run.cleanup",
-            "Clean completed workers while keeping evidence and branches.",
+            "Preview/apply terminal worktree cleanup and optional safe merged-branch deletion.",
             true,
         ),
         (
@@ -470,7 +472,11 @@ pub fn all() -> Vec<Capability> {
             false,
             write,
             &["run_id"],
-            json!({"run_id":s,"phase_id":s}),
+            if id == "run.cleanup" {
+                json!({"run_id":s,"apply":b,"delete_branches":b,"plan_hash":s})
+            } else {
+                json!({"run_id":s,"phase_id":s})
+            },
         ));
     }
     let mut complete = out.iter().find(|c| c.id == "apply-result").unwrap().clone();
@@ -501,6 +507,11 @@ pub fn validate(id: &str, args: &Value) -> Result<()> {
     let cap = get(id)?;
     validate_value(args, &cap.input_schema, "arguments")?;
     if id == "prepare" {
+        if args.get("run_id").is_some() && args.get("plan").is_some() {
+            bail!(
+                "revision_required: prepare cannot replace a running plan; use run.revise for pending verification corrections"
+            );
+        }
         let selectors = [
             "run_id",
             "milestone_id",

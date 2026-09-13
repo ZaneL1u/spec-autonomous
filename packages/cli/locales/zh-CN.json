@@ -196,7 +196,7 @@
   "error.invalid_plan": "执行计划无效",
   "error.invalid_plan_hash": "预览哈希无效，请重新预览",
   "error.invalid_resource": "资源引用无效",
-  "error.invalid_revision": "修订版本无效",
+  "error.invalid_revision": "验证修订无效。请提供修订原因与非空检查命令，并核对原生需求。",
   "error.invalid_roadmap": "路线图定义无效",
   "error.invalid_source": "原生来源无效",
   "error.job_unavailable": "无法创建进程作业",
@@ -339,5 +339,16 @@
   "error.init_terminal_required": "交互初始化需要终端。脚本中请传入 --provider、--agent 和 --non-interactive。",
   "error.init_path_conflict": "初始化目录与已有文件冲突，请保留原文件并解决冲突后重试。",
   "error.init_git_failed": "Git 初始化失败，请检查 Git 是否可用及目录权限。",
-  "error.init_preflight_failed": "初始化预检失败，请检查现有项目配置。"
+  "error.init_preflight_failed": "初始化预检失败，请检查现有项目配置。",
+  "error.revision_required": "续跑时不能替换整个计划。请用 run.revise 预览并应用待完成工作的验证修订。",
+  "error.revision_conflict": "验证修订预览已过期或内容不一致，请重新预览后应用。",
+  "error.revision_scope_violation": "仅可修订本次范围内尚未完成工作的验证命令，已验证任务保持原样。",
+  "error.revision_busy": "还有待处理的工作、回执或修复。确认宿主停止并撤销请求，或完成恢复后再修订。",
+  "error.run_cancelled": "运行已有取消请求，请先处理取消状态。",
+  "error.run_terminal": "运行已经结束，请保留现有记录；验证修订只适用于未结束的运行。",
+  "error.verification_preflight_failed": "验证命令预检发现配置问题。查看诊断后继续 prepare，让新的规划上下文修正命令。",
+  "error.duplicate_request": "批量认领包含重复请求，请为每个工作包提供唯一请求和新会话。",
+  "error.cleanup_plan_stale": "清理预览已变化，请重新获取预览后执行。",
+  "error.cleanup_preview_required": "执行清理前请先预览，并传入匹配的 plan_hash。",
+  "error.cleanup_conflict": "清理对象已变化，已保留相关资源，请重新预览。"
 }

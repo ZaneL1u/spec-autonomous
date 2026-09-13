@@ -1,5 +1,20 @@
 use super::*;
 pub fn compact(mut value: Value) -> Value {
+    if let Some(report) = value.get_mut("verification_readiness")
+        && report.is_object()
+    {
+        let checks = report["checks"].as_array().map_or(0, Vec::len);
+        let diagnostics = report["diagnostics"].as_array().map_or(0, Vec::len);
+        report["counts"] = json!({"checks":checks,"diagnostics":diagnostics});
+        for (key, limit) in [("checks", 8), ("diagnostics", 16)] {
+            if let Some(items) = report[key].as_array_mut() {
+                items.truncate(limit);
+            }
+        }
+        report["truncated"] = json!(checks > 8 || diagnostics > 16);
+        report["full_view"] =
+            json!("Use next or prepare with view: full for the complete readiness report.");
+    }
     for key in ["run", "progress", "inventory"] {
         if let Some(v) = value.get_mut(key) {
             *v = compact(v.take());
@@ -29,6 +44,9 @@ pub fn compact(mut value: Value) -> Value {
             "receipt_replayed",
             "execution_model",
             "updated_at",
+            "verification_readiness",
+            "verification_revision_count",
+            "recovery_options",
         ];
         value
             .as_object_mut()

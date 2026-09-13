@@ -13,6 +13,7 @@ pub mod progress;
 pub mod provider;
 pub mod skills;
 pub mod state;
+pub mod verification_preflight;
 pub mod work_packet;
 pub use discovery::{DetectionReport, Framework, detect};
 
@@ -23,3 +24,5 @@ pub mod capabilities;
 pub mod mcp;
 
 pub mod skills_mcp;
+
+pub mod run_revision;

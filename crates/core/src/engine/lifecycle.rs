@@ -8,6 +8,15 @@ impl Coordinator<'_> {
             self.run.stage = "planning_roadmap".into();
             self.save("planning_roadmap")?;
             let instruction="Return a Milestone object for the user's bounded goal using ONLY their existing framework. Include schema_version=1, id, goal, framework, revision=1, phases with id/label/title/depends_on/source{kind,selector}/verification, and milestone verification. Split into useful phases with explicit dependencies. Do not edit files. Source kind is openspec-change or speckit-feature. Keep the supplied milestone ID and framework. Propose real verification argv, not echo/true placeholders.".to_string();
+            let instruction = format!(
+                "{}\n{}\nEnvironment: {}",
+                instruction,
+                crate::verification_preflight::planning_guidance(),
+                crate::verification_preflight::environment_with_overrides(
+                    &self.project(),
+                    &self.run.config.runner.environment
+                )
+            );
             let (result, worktree, index) =
                 self.invoke("roadmap", "roadmap", "", instruction, None)?;
             if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
@@ -23,6 +32,21 @@ impl Coordinator<'_> {
                 bail!("scope_violation: roadmap changed milestone identity, goal or provider");
             }
             plan::validate_milestone(&m)?;
+            let readiness = crate::verification_preflight::inspect_milestone_with_environment(
+                &self.project(),
+                &m,
+                &self.run.config.runner.environment,
+            );
+            if !readiness.ready {
+                let message = format!(
+                    "verification_preflight_failed: {}",
+                    serde_json::to_string(&readiness)?
+                );
+                self.run.attempts[index].status = "failed".into();
+                self.run.attempts[index].error = Some(message.clone());
+                self.save("roadmap_verification_rejected")?;
+                bail!("{message}");
+            }
             self.run.milestone = m;
             self.run.attempts[index].status = "accepted".into();
             provider::save_milestone(&self.project(), &self.run.milestone)?;
@@ -356,7 +380,7 @@ impl Coordinator<'_> {
         if !path.exists() {
             return Ok(());
         }
-        let m = provider::load_milestone(&self.project(), &self.run.milestone.id)?;
+        let mut m = provider::load_milestone(&self.project(), &self.run.milestone.id)?;
         if m.revision != self.run.milestone.revision {
             if m.goal != self.run.milestone.goal || m.framework != self.run.milestone.framework {
                 bail!("needs_input: roadmap scope changed");
@@ -368,6 +392,10 @@ impl Coordinator<'_> {
                 range.to = self.run.selected_phases.last().cloned();
             }
             self.run.selected_phases = plan::select(&m, &range, &self.run.completed_phases)?;
+            crate::run_revision::reconcile_milestone(
+                &mut m,
+                &mut self.run.host.as_mut().unwrap().verification_revisions,
+            )?;
             self.run.milestone = m;
             self.save("roadmap_reconciled")?;
         }
@@ -544,6 +572,23 @@ impl Coordinator<'_> {
                 bail!("verification_mutated_tree: check changed the code or HEAD being verified");
             }
             if output.code != 0 {
+                let readiness = crate::verification_preflight::inspect_checks_with_environment(
+                    project,
+                    std::slice::from_ref(check),
+                    &[],
+                    &self.run.config.runner.environment,
+                );
+                if stderr.contains("MODULE_NOT_FOUND")
+                    && readiness
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.code == "node_test_directory_operand")
+                {
+                    bail!(
+                        "needs_input: verification_configuration: Node rejected a test directory operand {:?}; use run.revise to select explicit test files or supported discovery",
+                        check.argv
+                    );
+                }
                 let stdout = fs::read_to_string(&log).unwrap_or_default();
                 bail!(
                     "verification_failed: {label} {:?}, exit {}: {}",

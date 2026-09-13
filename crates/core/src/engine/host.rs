@@ -102,6 +102,33 @@ pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
         }
     }
     data["work"] = json!(work);
+    if let Some(phase) = run.current_phase.as_ref()
+        && let Some(plan) = run.plans.get(phase)
+    {
+        let project = Path::new(&run.integration).join(&run.project_relative);
+        data["verification_readiness"] = serde_json::to_value(
+            crate::verification_preflight::inspect_plan_with_environment(
+                &project,
+                plan,
+                &run.config.verification,
+                &run.config.runner.environment,
+            ),
+        )?;
+    } else {
+        data["verification_readiness"] = serde_json::to_value(
+            crate::verification_preflight::inspect_milestone_with_environment(
+                &Path::new(&run.integration).join(&run.project_relative),
+                &run.milestone,
+                &run.config.runner.environment,
+            ),
+        )?;
+    }
+    if let Some(host) = &run.host {
+        data["verification_revision_count"] = json!(host.verification_revisions.len());
+    }
+    if run.status == "needs_input" || run.status == "blocked" || run.status == "paused" {
+        data["recovery_options"] = json!({"inspect":"state.get","revise_pending_verification":"run.revise","continue":"prepare","stop_active_work":"work.revoke","cleanup_terminal_work":"run.cleanup"});
+    }
     data["starts_agents"] = json!(false);
     data["host_action"] = json!(match run.status.as_str() {
         "awaiting_host" => "execute_prepared_work",
@@ -141,7 +168,7 @@ pub fn next(root: &Path, id: Option<&str>) -> Result<Value> {
         w.as_object_mut().unwrap().remove("token");
     }
     Ok(
-        json!({"action":action,"run_id":run.id,"status":run.status,"stage":run.stage,"blocker":run.blocker,"work":value["work"],"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(&run)),"starts_agents":false}),
+        json!({"action":action,"run_id":run.id,"status":run.status,"stage":run.stage,"blocker":run.blocker,"work":value["work"],"verification_readiness":value["verification_readiness"],"recovery_options":value["recovery_options"],"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(&run)),"starts_agents":false}),
     )
 }
 pub fn claim(
@@ -175,6 +202,73 @@ pub fn claim(
     store.save(&run, "host_claimed")?;
     work_view(&run, &store.root)
 }
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimRequest {
+    pub request_id: String,
+    pub token: String,
+    pub host: HostIdentity,
+}
+
+/// Claim a prepared wave atomically, preserving existing ownership on retries.
+pub fn claim_batch(root: &Path, run_id: &str, requests: Vec<ClaimRequest>) -> Result<Value> {
+    if requests.is_empty() || requests.len() > 256 {
+        bail!("invalid_arguments: claim batch requires between 1 and 256 requests");
+    }
+    let repo = Repository::discover(root)?;
+    let _lock = Lease::acquire(&repo)?;
+    let mut store = Store::open(&repo, true)?.unwrap();
+    let mut run = store.get(run_id)?;
+    if run.terminal() || matches!(store.requested(run_id)?.as_str(), "pause" | "cancel") {
+        bail!("request_not_claimable");
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut sessions = std::collections::BTreeSet::new();
+    let mut indices = Vec::with_capacity(requests.len());
+    for request in &requests {
+        if !ids.insert(&request.request_id) {
+            bail!("duplicate_request: each request may appear only once in a claim batch");
+        }
+        if !sessions.insert((&request.host.host_id, &request.host.session_id)) {
+            bail!("host_session_reused: each work unit requires a distinct host session");
+        }
+        let index = own(&run, &request.request_id, &request.token)?;
+        validate_owner(&run, &request.request_id, &request.host)?;
+        validate_global_owner(&store, run_id, &request.host)?;
+        if !matches!(run.attempts[index].status.as_str(), "issued" | "claimed") {
+            bail!("request_not_claimable");
+        }
+        indices.push(index);
+    }
+    let timestamp = now_ms();
+    let mut changed = false;
+    for (request, index) in requests.into_iter().zip(indices) {
+        let meta = run
+            .host
+            .as_mut()
+            .unwrap()
+            .requests
+            .get_mut(&request.request_id)
+            .unwrap();
+        if run.attempts[index].status == "claimed" && meta.owner.as_ref() == Some(&request.host) {
+            continue;
+        }
+        meta.owner = Some(request.host);
+        meta.heartbeat_at_ms = timestamp;
+        run.attempts[index].status = "claimed".into();
+        changed = true;
+    }
+    if changed {
+        run.updated_at = paths::now();
+    }
+    // Validate every returned packet before persisting any ownership changes.
+    let view = work_view(&run, &store.root)?;
+    if changed {
+        store.save(&run, "host_batch_claimed")?;
+    }
+    Ok(view)
+}
+
 pub fn heartbeat(root: &Path, run_id: &str, attempt_id: &str, token: &str) -> Result<Value> {
     let repo = Repository::discover(root)?;
     let _lock = Lease::acquire(&repo)?;

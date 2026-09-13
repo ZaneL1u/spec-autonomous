@@ -174,7 +174,7 @@ export const providerTool = {
 
 // These operations can ask the core to read or modify native OpenSpec artifacts.
 // Unknown tools and passive state/progress operations are forwarded unchanged.
-const nativeCapabilities = new Set(['inspect', 'prepare', 'apply-result', 'archive', 'plan', 'resume', 'milestone.new',
+const nativeCapabilities = new Set(['inspect', 'prepare', 'apply-result', 'archive', 'plan', 'resume', 'milestone.new', 'run.revise',
   'task.complete', 'native.instructions', 'native.create', 'roadmap.import', 'verify.source', 'verify.plan', 'task.list', 'task.ready']);
 export function needsProvider(command, capability) {
   if (nativeCapabilities.has(command)) return true;

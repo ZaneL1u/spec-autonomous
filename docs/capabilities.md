@@ -64,7 +64,7 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 | `git.commit` | 细粒度 | 写入/可写 | `expected_head`, `message`, `files` | Commit explicitly selected files without capturing unrelated staged changes. |
 | `run.pause` | 细粒度 | 写入/可写 | `run_id` | Request pause and return host cancellation actions. |
 | `run.cancel` | 细粒度 | 写入/可写 | `run_id` | Cancel a run without pretending external sessions stopped. |
-| `run.cleanup` | 细粒度 | 写入/可写 | `run_id` | Clean completed workers while keeping evidence and branches. |
+| `run.cleanup` | 细粒度 | 写入/可写 | `run_id` | Preview terminal cleanup, apply with plan_hash, optionally delete safe merged refs. |
 | `task.list` | 细粒度 | 只读 | `run_id` | Read execution tasks and source bindings. |
 | `task.ready` | 细粒度 | 只读 | `run_id` | Read eligible tasks under dependency and conflict constraints. |
 | `task.complete` | 细粒度 | 写入/可写 | `token`, `host`, `result` | Complete owned task work through the same verified receipt gate. |
@@ -94,3 +94,5 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 - `spec-autonomous://work/<run_id>/<request_id>`：带 hash 校验的不可变上下文。
 
 URI 只接受注册的形式和安全 ID，不提供任意文件路径读取。查询中的缺失字段、不支持能力和模糊选择均有明确错误。
+
+运行恢复新增 `run.revise`（见 [修订与续跑](run-revision.md)）；批量认领使用 `work.claim-batch`。`run.cleanup` 采用预览/哈希应用，详见 [清理规则](run-cleanup.md)。

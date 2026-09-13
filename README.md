@@ -4,7 +4,7 @@
 
 用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-当前版本 `0.1.0-alpha.8`，通过私有 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
+当前版本 `0.1.0-alpha.9`，通过私有 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -12,6 +12,8 @@
 - [本轮验收](docs/validation/host-driven.md)
 - [从 alpha.1 迁移](docs/migration-alpha2.md)
 - [npm 分平台发行](docs/distribution.md)
+- [修订验证并续跑](docs/run-revision.md)
+- [运行结束后的资源清理](docs/run-cleanup.md)
 - [交互式与参数式初始化](docs/initialization.md)
 - [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
 - [CLI 框架与命令接口](docs/cli-interface.md)
@@ -35,7 +37,7 @@ Git 入口没有安装脚本。第一次运行自动用 gh 下载并校验该版
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 node scripts/pack-local.mjs
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.8.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.9.tgz
 
 # 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
 spec-autonomous init --agent codex

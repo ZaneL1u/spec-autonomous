@@ -277,6 +277,12 @@ pub struct HostState {
     pub pending_repair: Option<PendingRepair>,
     #[serde(default)]
     pub source_revisions: BTreeMap<String, String>,
+    /// Reviewed run-local verification changes; baseline spec/plan files remain immutable.
+    #[serde(default)]
+    pub verification_revisions: Vec<serde_json::Value>,
+    /// Earlier failures stay in history, but do not consume the revised task's retry budget.
+    #[serde(default)]
+    pub task_retry_epochs: BTreeMap<String, usize>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkLease {

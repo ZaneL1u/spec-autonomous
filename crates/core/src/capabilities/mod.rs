@@ -209,6 +209,11 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
             text(args, "request_id")?,
             text(args, "token")?,
         )?,
+        "work.claim-batch" => engine::claim_batch(
+            &root,
+            text(args, "run_id")?,
+            serde_json::from_value(args["requests"].clone())?,
+        )?,
         "work.revoke" => engine::revoke(
             &root,
             text(args, "run_id")?,
@@ -222,7 +227,14 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         }
         "run.pause" => engine::host_control(&root, text(args, "run_id")?, "pause")?,
         "run.cancel" => engine::host_control(&root, text(args, "run_id")?, "cancel")?,
-        "run.cleanup" => crate::cleanup::cleanup(&root, text(args, "run_id")?)?,
+        "run.revise" => crate::run_revision::revise(&root, args)?,
+        "run.cleanup" => crate::cleanup::cleanup_with_options(
+            &root,
+            text(args, "run_id")?,
+            args["apply"] == true,
+            args["delete_branches"] == true,
+            args["plan_hash"].as_str(),
+        )?,
         "hook.resolve" => crate::progress::public_run(&engine::resolve_hook(
             &root,
             text(args, "run_id")?,

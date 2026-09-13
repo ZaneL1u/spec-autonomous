@@ -1,6 +1,6 @@
 {
   "name": "spec-autonomous",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "Lightweight native orchestration for spec-driven repositories",
   "type": "module",
   "license": "MIT",

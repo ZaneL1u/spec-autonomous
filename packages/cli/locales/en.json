@@ -339,5 +339,16 @@
   "error.init_terminal_required": "Interactive init requires a terminal. Supply --provider and --agent with --non-interactive for scripts.",
   "error.init_path_conflict": "An initialization path conflicts with an existing file. Preserve it and resolve the conflict before retrying.",
   "error.init_git_failed": "Git initialization failed. Check Git availability and the directory permissions.",
-  "error.init_preflight_failed": "Initialization preflight failed; check the existing project configuration."
+  "error.init_preflight_failed": "Initialization preflight failed; check the existing project configuration.",
+  "error.revision_required": "revision required",
+  "error.revision_conflict": "revision conflict",
+  "error.revision_scope_violation": "revision scope violation",
+  "error.revision_busy": "revision busy",
+  "error.run_cancelled": "run cancelled",
+  "error.run_terminal": "run terminal",
+  "error.verification_preflight_failed": "verification preflight failed",
+  "error.duplicate_request": "duplicate request",
+  "error.cleanup_plan_stale": "cleanup plan stale",
+  "error.cleanup_preview_required": "cleanup preview required",
+  "error.cleanup_conflict": "cleanup conflict"
 }

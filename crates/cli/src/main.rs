@@ -495,7 +495,10 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
         }
         Command::Pause { run_id } => ("run.pause", json!({"run_id":run_id})),
         Command::Cancel { run_id } => ("run.cancel", json!({"run_id":run_id})),
-        Command::Cleanup { run_id } => ("run.cleanup", json!({"run_id":run_id})),
+        Command::Cleanup { run_id } => {
+            direct = Some(spec_autonomous_core::cleanup::cleanup(&root, &run_id)?);
+            ("", json!({}))
+        }
         Command::Claim {
             run_id,
             request_id,

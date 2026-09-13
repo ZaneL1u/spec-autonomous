@@ -125,6 +125,19 @@ impl Coordinator<'_> {
                 if message.starts_with("needs_input:") {
                     return Err(error);
                 }
+                if task.writes.is_empty()
+                    && message.starts_with("verification_failed:")
+                    && git::patch(
+                        Path::new(&self.run.attempts[index].worktree),
+                        &self.run.attempts[index].base_commit,
+                    )?
+                    .is_empty()
+                {
+                    bail!(
+                        "needs_input: verification_plan_requires_revision: task {} has no declared repair scope; inspect the failed check and use run.revise before retrying",
+                        task.id
+                    );
+                }
             } else {
                 snapshot = provider::inspect(
                     &self.project(),
@@ -178,10 +191,18 @@ impl Coordinator<'_> {
             .collect();
         let mut issued = 0;
         for task in ready {
+            let epoch = self
+                .run
+                .host
+                .as_ref()
+                .and_then(|h| h.task_retry_epochs.get(&Run::key(&phase.id, &task.id)))
+                .copied()
+                .unwrap_or(0);
             let failures: Vec<_> = self
                 .run
                 .attempts
                 .iter()
+                .skip(epoch)
                 .filter(|a| {
                     a.phase_id == phase.id
                         && a.kind == "implement"

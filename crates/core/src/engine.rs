@@ -28,7 +28,8 @@ mod lifecycle;
 mod planning;
 mod recovery;
 pub use host::{
-    apply_result, claim, heartbeat, host_control, next, revoke, work_context, work_view,
+    ClaimRequest, apply_result, claim, claim_batch, heartbeat, host_control, next, revoke,
+    work_context, work_view,
 };
 
 pub type Observer<'a> = &'a mut dyn FnMut(&Run, &str);

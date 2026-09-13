@@ -14,7 +14,16 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         let s = provider::inspect(root, m.framework, &p.source.selector, &Config::load(root)?)?;
         let plan: crate::model::Plan = serde_json::from_value(args["plan"].clone())?;
         crate::plan::validate_plan(&plan, &s)?;
-        return Ok(json!({"valid":true,"phase_id":p.id,"source_hash":s.source_hash}));
+        let config = Config::load(root)?;
+        let readiness = crate::verification_preflight::inspect_plan_with_environment(
+            root,
+            &plan,
+            &config.verification,
+            &config.runner.environment,
+        );
+        return Ok(
+            json!({"valid":true,"phase_id":p.id,"source_hash":s.source_hash,"verification_readiness":readiness}),
+        );
     }
     if name == "verify.references" {
         let file = text(args, "file")?;

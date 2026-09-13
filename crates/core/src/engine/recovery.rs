@@ -284,12 +284,16 @@ impl Coordinator<'_> {
         )?;
         let candidate_project = candidate.join(&self.run.project_relative);
         if provider::milestone_path(&candidate_project, &self.run.milestone.id)?.exists() {
-            let m = provider::load_milestone(&candidate_project, &self.run.milestone.id)?;
+            let mut m = provider::load_milestone(&candidate_project, &self.run.milestone.id)?;
             if m.goal != self.run.milestone.goal || m.framework != self.run.milestone.framework {
                 bail!(
                     "needs_input: milestone goal or provider changed; start an explicitly selected new run"
                 );
             }
+            crate::run_revision::reconcile_milestone(
+                &mut m,
+                &mut self.run.host.as_mut().unwrap().verification_revisions,
+            )?;
             self.run.milestone = m;
         }
         let files: Vec<_> = changed.split('\0').filter(|s| !s.is_empty()).collect();

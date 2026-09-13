@@ -47,7 +47,7 @@ impl Store {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         db.busy_timeout(std::time::Duration::from_millis(250))?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version != 2 {
+        if !matches!(version, 2 | 3) {
             bail!("schema_unsupported: controls require current runtime schema");
         }
         Ok(Self {
@@ -73,7 +73,7 @@ impl Store {
         let db = Connection::open_with_flags(&file, flags)?;
         db.busy_timeout(std::time::Duration::from_millis(250))?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             bail!("schema_unsupported: runtime database is newer than this CLI");
         }
         if writable {
@@ -92,11 +92,11 @@ impl Store {
             }
             db.pragma_update(None, "journal_mode", "WAL")?;
             db.pragma_update(None, "synchronous", "FULL")?;
-            db.execute_batch("BEGIN IMMEDIATE;
+            db.execute_batch(&format!("BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS controls(run_id TEXT PRIMARY KEY,action TEXT NOT NULL);
-                PRAGMA user_version=2; COMMIT;")?;
+                PRAGMA user_version={}; COMMIT;", version.max(2)))?;
             let registry = toml::to_string(
                 &serde_json::json!({"schema_version":1,"repository_id":paths::hash(repo.common.to_string_lossy().as_bytes()),"ledger":"state.db"}),
             )?;
@@ -108,6 +108,15 @@ impl Store {
     }
     pub fn save(&mut self, run: &Run, kind: &str) -> Result<()> {
         let tx = self.db.transaction()?;
+        // A v2 writer would deserialize away run-local revisions and retry epochs.
+        // Upgrade atomically with the first revision, so older CLIs refuse writes.
+        if run
+            .host
+            .as_ref()
+            .is_some_and(|h| !h.verification_revisions.is_empty())
+        {
+            tx.pragma_update(None, "user_version", 3)?;
+        }
         let body = serde_json::to_string(run)?;
         tx.execute("INSERT INTO runs(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![run.id,body,run.updated_at])?;
         tx.execute("INSERT INTO events(run_id,kind,payload,created_at) VALUES(?1,?2,?3,?4)",params![run.id,kind,serde_json::to_string(&serde_json::json!({"stage":run.stage,"status":run.status,"accepted_head":run.accepted_head}))?,paths::now()])?;

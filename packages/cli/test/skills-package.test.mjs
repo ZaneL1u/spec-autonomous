@@ -25,7 +25,7 @@ test('all five public entry points ship as CLI-owned skill assets', () => {
 test('auto uses the same host-owned capability and receipt protocol as autonomous', () => {
   const canonical = readFileSync(join(source, 'skills/autonomous/SKILL.md'), 'utf8');
   const alias = readFileSync(join(source, 'skills/auto/SKILL.md'), 'utf8');
-  for (const entry of ['sa_prepare','sa_apply_result','work.claim','fresh','host']) {
+  for (const entry of ['sa_prepare','sa_apply_result','work.claim','work.claim-batch','run.revise','run.cleanup','fresh','host']) {
     assert.ok(canonical.includes(entry), `autonomous must describe ${entry}`);
     assert.ok(alias.includes(entry), `auto must describe ${entry}`);
   }

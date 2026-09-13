@@ -235,6 +235,7 @@ pub fn summary(run: &Run) -> Value {
 pub fn public_run(run: &Run) -> Value {
     let mut value = serde_json::to_value(run).unwrap();
     value.as_object_mut().unwrap().remove("host");
+    value["verification_revisions"] = json!(run.host.as_ref().map(|h| &h.verification_revisions));
     value["execution_model"] = json!(if run.host.is_some() {
         "host-driven"
     } else {

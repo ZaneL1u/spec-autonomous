@@ -357,3 +357,330 @@ fn a_prepared_plan_is_not_evidence_that_its_phase_is_complete() {
     assert!(work["completed_phases"].as_array().unwrap().is_empty());
     assert_eq!(work["work"][0]["kind"], "plan-tasks");
 }
+
+#[test]
+fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let request = &first["work"][0];
+    let input: WorkerInput = serde_json::from_value(
+        engine::work_context(
+            root.path(),
+            request["run_id"].as_str().unwrap(),
+            request["request_id"].as_str().unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let snapshot = input.snapshot.unwrap();
+    let mut result = receipt(root.path(), request);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![Task {
+            id: "value".into(),
+            description: "implement value and tests".into(),
+            source_ids: vec![snapshot.tasks[0].id.clone()],
+            depends_on: vec![],
+            reads: vec![],
+            writes: vec!["src/value.txt".into()],
+            verification: vec![Check {
+                argv: vec!["sa-missing-plan-check-118739".into()],
+                cwd: ".".into(),
+            }],
+        }],
+        milestone: input.milestone,
+    });
+    let rejected = submit(root.path(), request, result);
+    assert_eq!(rejected["status"], "needs_input", "{rejected}");
+    assert!(
+        rejected["blocker"]
+            .as_str()
+            .unwrap()
+            .contains("check_executable_missing")
+    );
+    assert!(rejected["completed_phases"].as_array().unwrap().is_empty());
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let store = Store::open(&repo, false).unwrap().unwrap();
+    let run = store.get(first["id"].as_str().unwrap()).unwrap();
+    assert_eq!(run.attempts[0].status, "failed");
+    assert!(run.plans.is_empty());
+    let resumed = api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id":first["id"],"view":"full"}),
+    )
+    .unwrap();
+    let retry = &resumed["work"][0];
+    assert_eq!(resumed["status"], "awaiting_host");
+    assert_ne!(retry["request_id"], request["request_id"]);
+    assert_eq!(retry["kind"], "plan-tasks");
+    let retry_input = engine::work_context(
+        root.path(),
+        first["id"].as_str().unwrap(),
+        retry["request_id"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert!(
+        retry_input["snapshot"]["metadata"]["previous_planning_failure"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("check_executable_missing")
+    );
+    let corrected = answer_plan(root.path(), retry);
+    assert_eq!(corrected["id"], first["id"]);
+    assert_eq!(corrected["work"][0]["kind"], "implement", "{corrected}");
+    assert_eq!(
+        fs::read_to_string(root.path().join("specs/feature/tasks.md"))
+            .unwrap()
+            .matches("[x]")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() {
+    let f = fixture();
+    let root = f.path();
+    put(
+        root,
+        "specs/feature/tasks.md",
+        "## Implementation\n- [ ] T001 Write value\n- [ ] T002 Verify value\n",
+    );
+    git::commit(root, "two native tasks").unwrap();
+    let initial = prepare(root);
+    let request = &initial["work"][0];
+    let input: WorkerInput = serde_json::from_value(
+        engine::work_context(
+            root,
+            request["run_id"].as_str().unwrap(),
+            request["request_id"].as_str().unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let snapshot = input.snapshot.unwrap();
+    let good = Check {
+        argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
+        cwd: ".".into(),
+    };
+    let mut result = receipt(root, request);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        milestone: input.milestone,
+        tasks: vec![
+            Task {
+                id: "value".into(),
+                description: "write and test value".into(),
+                source_ids: vec![snapshot.tasks[0].id.clone()],
+                depends_on: vec![],
+                reads: vec![],
+                writes: vec!["src/value.txt".into()],
+                verification: vec![good.clone()],
+            },
+            Task {
+                id: "check-value".into(),
+                description: "verify native acceptance".into(),
+                source_ids: vec![snapshot.tasks[1].id.clone()],
+                depends_on: vec!["value".into()],
+                reads: vec!["src/value.txt".into()],
+                writes: vec![],
+                verification: vec![Check {
+                    argv: vec![
+                        "node".into(),
+                        "-e".into(),
+                        "require('node:assert/strict').equal(24,27)".into(),
+                    ],
+                    cwd: ".".into(),
+                }],
+            },
+        ],
+    });
+    let work = submit(root, request, result);
+    let request = &work["work"][0];
+    put(
+        Path::new(request["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let work = submit(root, request, receipt(root, request));
+    let id = work["id"].as_str().unwrap();
+    let request = &work["work"][0];
+    let blocked = submit(root, request, receipt(root, request));
+    assert_eq!(blocked["status"], "needs_input");
+    assert_eq!(blocked["completed_tasks"].as_array().unwrap().len(), 1);
+    let before = blocked["accepted_head"].clone();
+    let mut patch = json!({"run_id":id,"reason":"Native requirement checks value 42; replace the mistaken fixture arithmetic with its executable test.","task_checks":[{"phase_id":"P001","task_id":"check-value","checks":[good]}]});
+    let preview = api::invoke(root, "run.revise", &patch).unwrap();
+    assert_eq!(
+        preview["retained_verified_tasks"].as_array().unwrap().len(),
+        1
+    );
+    patch["apply"] = json!(true);
+    patch["plan_hash"] = preview["plan_hash"].clone();
+    let revised = api::invoke(root, "run.revise", &patch).unwrap();
+    assert_eq!(revised["applied"], true);
+    assert_eq!(revised["accepted_head"], before);
+    assert_eq!(
+        api::invoke(root, "run.revise", &patch).unwrap()["replayed"],
+        true
+    );
+    let resumed = api::invoke(root, "prepare", &json!({"run_id":id,"view":"full"})).unwrap();
+    assert_eq!(resumed["id"], id);
+    assert_eq!(resumed["completed_tasks"].as_array().unwrap().len(), 1);
+    let request = &resumed["work"][0];
+    assert_eq!(request["task_id"], "check-value");
+    let done = submit(root, request, receipt(root, request));
+    assert_eq!(done["completed_tasks"].as_array().unwrap().len(), 2);
+    assert!(
+        done["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["task_id"] == "check-value" && a["status"] == "failed")
+    );
+    let bad = api::invoke(root, "prepare", &json!({"run_id":id,"plan":{}})).unwrap_err();
+    assert!(bad.to_string().contains("revision_required"));
+    let completed=api::invoke(root,"run.revise",&json!({"run_id":id,"reason":"cannot change accepted task","task_checks":[{"phase_id":"P001","task_id":"value","checks":[{"argv":["node","--version"],"cwd":"."}]}]})).unwrap_err();
+    assert!(completed.to_string().contains("revision_scope_violation"));
+}
+
+#[test]
+fn phase_revision_supersedes_only_obsolete_verification_repair() {
+    let f = fixture();
+    let root = f.path();
+    let snapshot = spec_autonomous_core::provider::inspect(
+        root,
+        spec_autonomous_core::Framework::Speckit,
+        "specs/feature",
+        &Config::load(root).unwrap(),
+    )
+    .unwrap();
+    let good = Check {
+        argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
+        cwd: ".".into(),
+    };
+    let mut milestone =
+        engine::source_milestone(spec_autonomous_core::Framework::Speckit, "specs/feature");
+    milestone.phases[0].verification = vec![Check {
+        argv: vec!["node".into(), "-e".into(), "process.exit(1)".into()],
+        cwd: ".".into(),
+    }];
+    let plan = Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        milestone: Some(milestone),
+        tasks: vec![Task {
+            id: "value".into(),
+            description: "write and verify value".into(),
+            source_ids: vec![snapshot.tasks[0].id.clone()],
+            depends_on: vec![],
+            reads: vec![],
+            writes: vec!["src/value.txt".into()],
+            verification: vec![good.clone()],
+        }],
+    };
+    let work = api::invoke(root, "prepare", &json!({"plan":plan,"view":"full"})).unwrap();
+    let req = &work["work"][0];
+    put(
+        Path::new(req["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let failed = submit(root, req, receipt(root, req));
+    let id = failed["id"].as_str().unwrap();
+    let req = &failed["work"][0];
+    assert_eq!(req["kind"], "converge");
+    let mut patch = json!({"run_id":id,"reason":"Phase check command was an invalid exit fixture; use native requirement's actual value test.","phase_checks":[{"phase_id":"P001","checks":[good]}]});
+    let busy = api::invoke(root, "run.revise", &patch).unwrap();
+    assert_eq!(busy["can_apply"], false);
+    patch["apply"] = json!(true);
+    patch["plan_hash"] = busy["plan_hash"].clone();
+    assert!(
+        api::invoke(root, "run.revise", &patch)
+            .unwrap_err()
+            .to_string()
+            .contains("revision_busy")
+    );
+    engine::revoke(
+        root,
+        id,
+        req["request_id"].as_str().unwrap(),
+        req["token"].as_str().unwrap(),
+        true,
+        "discard obsolete verification repair",
+    )
+    .unwrap();
+    assert!(
+        api::invoke(root, "run.revise", &patch)
+            .unwrap_err()
+            .to_string()
+            .contains("revision_conflict")
+    );
+    patch.as_object_mut().unwrap().remove("apply");
+    patch.as_object_mut().unwrap().remove("plan_hash");
+    let preview = api::invoke(root, "run.revise", &patch).unwrap();
+    patch["apply"] = json!(true);
+    patch["plan_hash"] = preview["plan_hash"].clone();
+    api::invoke(root, "run.revise", &patch).unwrap();
+    let next = api::invoke(root, "prepare", &json!({"run_id":id,"view":"full"})).unwrap();
+    assert_eq!(next["completed_tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(next["work"][0]["kind"], "audit");
+    let repo = git::Repository::discover(root).unwrap();
+    let store = Store::open(&repo, false).unwrap().unwrap();
+    let saved = store.get(id).unwrap();
+    assert!(saved.host.unwrap().pending_repair.is_none());
+    let connection = rusqlite::Connection::open(repo.runtime().unwrap().join("state.db")).unwrap();
+    let version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        version, 3,
+        "older v2 writers must not erase revision history"
+    );
+    let control = Store::for_control(&repo).unwrap();
+    control.control(id, "pause").unwrap();
+    assert_eq!(control.requested(id).unwrap(), "pause");
+}
+
+#[test]
+fn readiness_agent_view_is_bounded_without_losing_counts() {
+    let value = json!({"verification_readiness":{"ready":true,"status":"deferred","executed":false,"checks":vec![json!({"status":"deferred"});100],"diagnostics":vec![json!({"severity":"warning"});50]}});
+    let compact = spec_autonomous_core::capabilities::views::compact(value);
+    let report = &compact["verification_readiness"];
+    assert_eq!(report["checks"].as_array().unwrap().len(), 8);
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 16);
+    assert_eq!(report["counts"]["checks"], 100);
+    assert_eq!(report["counts"]["diagnostics"], 50);
+    assert_eq!(report["truncated"], true);
+    assert_eq!(report["executed"], false);
+}
+
+#[test]
+fn native_metadata_refresh_keeps_corrections_until_native_checks_change() {
+    let mut m = engine::source_milestone(spec_autonomous_core::Framework::Speckit, "specs/feature");
+    let check = |file: &str| Check {
+        argv: vec!["node".into(), "--test".into(), file.into()],
+        cwd: ".".into(),
+    };
+    let (old, corrected, native) = (
+        check("test/"),
+        check("test/value.mjs"),
+        check("test/new-contract.mjs"),
+    );
+    let mut history = vec![
+        json!({"diff":[{"scope":"phase","phase_id":"P001","before":[old],"after":[corrected]}]}),
+    ];
+    m.phases[0].verification = vec![old];
+    spec_autonomous_core::run_revision::reconcile_milestone(&mut m, &mut history).unwrap();
+    assert_eq!(m.phases[0].verification, vec![corrected]);
+    m.phases[0].verification = vec![native.clone()];
+    spec_autonomous_core::run_revision::reconcile_milestone(&mut m, &mut history).unwrap();
+    assert_eq!(m.phases[0].verification, vec![native]);
+    assert_eq!(history[0]["diff"][0]["superseded_by_native"], true);
+}
