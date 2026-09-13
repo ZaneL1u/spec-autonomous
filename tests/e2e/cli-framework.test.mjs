@@ -94,11 +94,52 @@ test('structured native input and init use parsed objects without rescanning arg
 test('Chinese environment and explicit English override localize only human text', t => {
   const f = setup(t);
   const run = args => spawnSync(process.execPath, [launcher, ...args], { cwd: f.root, env: { ...f.env, LC_ALL: 'zh_CN.UTF-8' }, encoding: 'utf8', timeout: 15_000 });
-  const zh = run(['--help']); assert.equal(zh.status, 0, zh.stderr); assert.match(zh.stdout, /准备完整工作包/); assert.doesNotMatch(zh.stdout, /Deterministic SDD capabilities/);
-  const en = run(['--lang', 'en-US', '--help']); assert.equal(en.status, 0, en.stderr); assert.match(en.stdout, /Prepare complete work packets/); assert.doesNotMatch(en.stdout, /准备完整工作包/);
+  const zh = run(['--help']); assert.equal(zh.status, 0, zh.stderr); assert.match(zh.stdout, /准备工作包/); assert.doesNotMatch(zh.stdout, /Deterministic SDD capabilities/);
+  const en = run(['--lang', 'en-US', '--help']); assert.equal(en.status, 0, en.stderr); assert.match(en.stdout, /Prepare work packets/); assert.doesNotMatch(en.stdout, /准备工作包/);
   const zhError = run(['--lang', 'zh-CN', '--path', join(f.root, 'missing'), 'detect', '--json']);
   const enError = run(['--lang', 'en-US', '--path', join(f.root, 'missing'), 'detect', '--json']);
   assert.equal(zhError.status, 2); assert.equal(enError.status, 2);
   const zhJson = JSON.parse(zhError.stdout), enJson = JSON.parse(enError.stdout);
   assert.equal(zhJson.error.code, enJson.error.code); assert.notEqual(zhJson.error.message, enJson.error.message);
+});
+
+test('Chinese init, parser failures and nested help have actionable localized text', t => {
+  const f = setup(t);
+  const zh = args => f.cli(['--lang', 'zh-CN', ...args]);
+  const init = zh(['init']);
+  assert.equal(init.status, 1, init.stdout + init.stderr);
+  assert.match(init.stderr, /请选择.*openspec.*speckit/);
+  assert.doesNotMatch(init.stderr, /choose|provider_selection_required/);
+  const structured = zh(['init', '--json']);
+  assert.equal(JSON.parse(structured.stdout).error.code, 'provider_selection_required');
+  for (const args of [['--typo'], ['providers', 'ensure', 'bad'], ['prepare', '--max-workers', 'oops']]) {
+    const error = zh(args);
+    assert.equal(error.status, 2, error.stdout + error.stderr);
+    assert.match(error.stderr, /参数|选项/);
+    assert.doesNotMatch(error.stderr, /error:|unknown option|invalid value|option argument/);
+  }
+  for (const args of [['-h'], ['init', '-h'], ['providers', 'exec', '-h']]) {
+    const help = zh(args); assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /用法：/); assert.match(help.stdout, /选项：/);
+    assert.doesNotMatch(help.stdout, /Usage:|Options:|Commands:|default:|choices:|never starts|never launches/);
+  }
+  assert.equal(existsSync(f.home), false);
+});
+
+test('native metadata preserves literal help payload and returns valid JSON', () => {
+  const result = spawnSync(binary, ['--lang', 'zh-CN', 'cli-metadata', 'parse', '--', '--help'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.exit_code, 0); assert.match(data.stdout, /用法：/);
+});
+
+test('every native command and argument has a Chinese help resource', () => {
+  const result = spawnSync(binary, ['--lang', 'zh-CN', 'cli-metadata', 'describe'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr);
+  function check(command) {
+    assert.match(command.description, /[\u4e00-\u9fff]/u, command.name);
+    for (const arg of command.arguments) assert.match(arg.help, /[\u4e00-\u9fff]/u, `${command.name}.${arg.id}`);
+    command.commands.forEach(check);
+  }
+  check(JSON.parse(result.stdout).data);
 });

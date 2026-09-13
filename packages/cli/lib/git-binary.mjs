@@ -1,3 +1,4 @@
+import { message } from './locale.mjs';
 import { readFile, mkdir, mkdtemp, chmod, rename, rm, lstat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -57,7 +58,7 @@ export async function ensureGitBinary(delivery, { env = process.env, platform = 
     await mkdir(directory, { recursive: true });
     const temporary = await mkdtemp(join(directory, '.download-'));
     try {
-      log(`Downloading ${delivery.tag} for ${platform.key} using your gh login`);
+      log(message('log.download', undefined, { version: delivery.tag, platform: platform.key }));
       const result = await run([gh, 'release', 'download', delivery.tag, '--repo', delivery.repository, '--pattern', asset.name, '--dir', temporary],
         { env, timeout: 180_000, output: 'log', onChild });
       if (result.code !== 0) throw new Error('github_download_failed: check gh auth status and access to the private repository/release, then retry');

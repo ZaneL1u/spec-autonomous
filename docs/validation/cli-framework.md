@@ -20,7 +20,7 @@ SHA256：`a795f9b97779014891d9e0ccfb43949f6286da6ff04030f32b4c588dfdef4eed`。
 
 ## 实现
 
-Rust 保留 Clap，新增无项目副作用的命令元数据与 parse-only 接口。JS 使用 Commander.js 14.0.3 注册命令、选项、参数、别名和帮助。删除 commandIndex / option / stripOption；provider context 接收结构化对象，原生操作经过 Clap 预检后才准备依赖。CLI 不启动 agent。
+Rust 保留 Clap，新增无项目副作用的命令元数据与 parse-only 接口。JS 使用 Commander.js 14.0.3 注册命令、选项、参数、别名和帮助。删除 commandIndex / option / stripOption；provider context 接收结构化对象，原生操作经过 Clap 预检后才准备依赖。
 
 ## 验证证据
 

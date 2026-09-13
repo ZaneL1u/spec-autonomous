@@ -1,6 +1,6 @@
 # 能力参考
 
-版本：`0.1.0-alpha.2`，接口 envelope schema 1。完整能力默认公开，细粒度工具通过目录访问；所有操作都不启动 agent。
+版本：`0.1.0-alpha.2`，接口 envelope schema 1。完整能力默认公开，细粒度工具通过目录访问。
 
 ```sh
 spec-autonomous tools list --all --json --limit 200
@@ -17,7 +17,7 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 | --- | --- | --- | --- | --- |
 | `inspect` | 完整 | 只读 | 按场景选择 | Read provider, native artifacts, provenance and repository state. |
 | `progress` | 完整 | 只读 | 按场景选择 | Read all Git worktrees and verified progress without mutation. |
-| `prepare` | 完整 | 写入/可写 | 按场景选择 | Advance deterministic work and return fresh-context packets for the host; never starts agents. |
+| `prepare` | 完整 | 写入/可写 | 按场景选择 | Prepare work packets and advance the selected milestone. |
 | `next` | 完整 | 只读 | 按场景选择 | Preview prepared work, blockers and next action without dispatching. |
 | `apply-result` | 完整 | 写入/可写 | `token`, `host`, `result` | Accept an owned host receipt, verify and integrate it, and prepare subsequent work. |
 | `archive` | 完整 | 写入/可写 | 按场景选择 | Preview a native archive; apply with its plan_hash using an isolated candidate. |
@@ -93,4 +93,4 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 - `spec-autonomous://runs/<run_id>`：只读状态。
 - `spec-autonomous://work/<run_id>/<request_id>`：带 hash 校验的不可变上下文。
 
-URI 只接受注册的形式和安全 ID，不提供任意文件路径读取。查询中的缺失字段、不支持能力和模糊选择均有明确错误；不会静默启动模型补全。
+URI 只接受注册的形式和安全 ID，不提供任意文件路径读取。查询中的缺失字段、不支持能力和模糊选择均有明确错误。

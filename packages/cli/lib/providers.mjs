@@ -1,3 +1,4 @@
+import { message } from './locale.mjs';
 import { mkdir, readFile, writeFile, rename, rm, stat, chmod } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -183,7 +184,7 @@ export function createProviderManager({ env = process.env, home = providerHome(e
       if (current.source !== 'missing') throw new Error(`provider_unusable: ${name} changed while waiting for installation`);
       const generation = randomUUID(), directory = join(home, name, generation);
       await mkdir(directory, { recursive: true });
-      log(`Installing ${name} ${versions[name]} in ${directory}`);
+      log(message('log.install', undefined, { provider: name, version: versions[name], directory }));
       if (name === 'openspec') {
         await writeFile(join(directory, 'package.json'), '{"private":true}\n');
         const argv = process.versions.bun

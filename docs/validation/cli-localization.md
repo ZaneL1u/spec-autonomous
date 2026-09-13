@@ -21,3 +21,18 @@
 ## 不变内容
 
 命令 identifier、JSON/MCP schema、error code、状态枚举、Markdown spec、TOML、Provider 原生输出不翻译。未知语言和缺失翻译回退 English，不联网。
+
+## alpha.7 修正验收（2026-09-12）
+
+用户反馈证实 alpha.6 的“完整本地化”范围不准确：缺少系统 UI 语言检测、Commander 标题及错误、初始化选项指引。本轮补齐这些内容，并删除当前产品介绍中的 Agent 启动免责声明。
+
+实际验收平台：macOS arm64。Node 24.21.0 完整仓库检查通过：136 项 Rust 测试（包含显式执行的真实 OpenSpec 合约）、52 项 JS/发布测试、73 项 E2E；OpenSpec strict 8 项通过。macOS/Windows 首选语言读取有隔离测试，Windows 实机未验收。
+
+最终共享目录包含 315 个消息键，其中 190 个产品错误键。发布二进制上的 16 项定向测试通过，覆盖全部原生命令/参数中文帮助、空仓库 init、JSON code、显式英文覆盖、参数错误和字面量 --help。进度测试证明 /tmp/completed/unknown 和任务 ID 不会被翻译。最后一次修改仅去掉参数错误的重复帮助提示，已用发布二进制重跑上述定向测试。
+
+安装包实际通过 Node 22.23.2 和 Bun 1.4.2 的帮助、init、错误与无写入验收；源码和打包资源都包含中英文目录。
+
+- macOS arm64 binary SHA256：`d13724579ee9a17ec496e8c10d6c56a8987d984b670cd8da8f2b9de12fd3df71`
+- npm tarball SHA256：`3c47b9d75ad8ad4a48e6539d81d42558829c458187959d0669e891f2145fea6d`
+
+上游 OpenSpec / Spec Kit、npm、gh 和操作系统自身诊断保留原文。结构化字段和用户内容保持原值。

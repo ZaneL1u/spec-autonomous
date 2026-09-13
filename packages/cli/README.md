@@ -1,6 +1,6 @@
 # Spec Autonomous
 
-Native deterministic capabilities for LLM hosts and Skills using OpenSpec or Spec Kit. **The CLI never launches agents or calls models.** The host owns fresh-context sessions; the CLI prepares work, verifies receipts, manages isolated worktrees and safely updates native state.
+Plan, track and deliver OpenSpec / Spec Kit milestones. Prepare work packets, verify results, manage worktrees and archive completed changes.
 
 This is the `0.1.0-alpha.6` private preview release. No npm registry publication has been performed.
 

@@ -1,6 +1,6 @@
 //! Read-only CLI grammar bridge for the Commander npm entry point.
 use super::{Cli, Format, locale};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Subcommand};
 use serde_json::{Value, json};
 
 #[derive(Subcommand, serde::Serialize)]
@@ -47,16 +47,20 @@ pub fn invoke(command: &MetadataCommand, current: locale::Locale) -> Value {
             json!({"schema_version":1,"locale":current.code(),"data":describe(&grammar)})
         }
         MetadataCommand::Parse { argv } => {
-            let current = locale::detect(locale::explicit_from_args(argv).as_deref());
-            match Cli::try_parse_from(
-                std::iter::once("spec-autonomous").chain(argv.iter().map(String::as_str)),
-            ) {
+            let current = locale::explicit_from_args(argv)
+                .map(|explicit| locale::detect(Some(&explicit)))
+                .unwrap_or(current);
+            match locale::parse(argv, current) {
                 Ok(cli) if cli.json && cli.format.is_some_and(|f| f != Format::Json) => {
                     json!({"ok":false,"exit_code":2,"stdout":"","stderr":"--json conflicts with --format\n"})
                 }
                 Ok(cli) => json!({"ok":true,"parsed":cli}),
                 Err(error) => {
-                    let text = locale::error(current, &error.to_string());
+                    let text = if error.exit_code() == 0 {
+                        error.to_string()
+                    } else {
+                        locale::clap_error(current, &error.to_string())
+                    };
                     json!({"ok":false,"exit_code":error.exit_code(),
                         "stdout":if error.use_stderr(){""}else{&text},
                         "stderr":if error.use_stderr(){&text}else{""}})

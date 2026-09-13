@@ -72,7 +72,7 @@ pub fn all() -> Vec<Capability> {
         ),
         entry(
             "prepare",
-            "Advance deterministic work and return fresh-context packets for the host; never starts agents.",
+            "Prepare work packets and advance the selected milestone.",
             true,
             true,
             &[],

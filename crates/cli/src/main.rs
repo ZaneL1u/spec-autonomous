@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use spec_autonomous_core::{
     capabilities as api, git::Repository, model::HostIdentity, progress, skills, state::Store,
@@ -14,7 +14,7 @@ mod locale;
 #[command(
     name = "spec-autonomous",
     version,
-    about = "Deterministic SDD capabilities for LLM hosts and Skills; never starts agents",
+    about = "Plan, track and deliver OpenSpec / Spec Kit milestones.",
     disable_help_subcommand = true
 )]
 struct Cli {
@@ -137,7 +137,7 @@ enum Command {
         #[arg(long)]
         all_worktrees: bool,
     },
-    /// Prepare complete work packets; the calling host owns agent execution.
+    /// Prepare work packets and advance the selected milestone.
     #[command(aliases=["run","autonomous","auto"])]
     Prepare {
         #[command(flatten)]
@@ -188,7 +188,7 @@ enum Command {
         #[arg(long)]
         plan_hash: Option<String>,
     },
-    /// Read configuration, state and repair diagnostics; never starts a model.
+    /// Read configuration, state and repair diagnostics.
     Doctor {
         #[arg(long, hide = true)]
         runner: Option<String>,
@@ -647,16 +647,7 @@ fn execute_cap(
 fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let preliminary = locale::detect(locale::explicit_from_args(&raw).as_deref());
-    if raw.iter().any(|arg| arg == "--help" || arg == "-h") {
-        let mut command = Cli::command();
-        command.build();
-        let mut command = locale::localize_command(command, preliminary);
-        let target = locale_command_for_help(&mut command, &raw);
-        let _ = target.print_help();
-        println!();
-        return;
-    }
-    let cli = match Cli::try_parse() {
+    let cli = match locale::parse(&raw, preliminary) {
         Ok(cli) => cli,
         Err(error) => {
             let current = locale::detect(locale::explicit_from_args(&raw).as_deref());
@@ -725,62 +716,4 @@ fn main() {
     } else {
         exit
     });
-}
-
-fn locale_command_for_help<'a>(
-    command: &'a mut clap::Command,
-    raw: &[String],
-) -> &'a mut clap::Command {
-    let value_flags = [
-        "--path",
-        "--framework",
-        "--format",
-        "--view",
-        "--fields",
-        "--limit",
-        "--offset",
-        "--lang",
-    ];
-    let mut path = Vec::new();
-    let mut skip = false;
-    for value in raw {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if value == "--" {
-            break;
-        }
-        if value_flags.contains(&value.as_str()) {
-            skip = true;
-            continue;
-        }
-        if value_flags
-            .iter()
-            .any(|flag| value.starts_with(&format!("{flag}=")))
-        {
-            continue;
-        }
-        if !value.starts_with('-') {
-            path.push(value.as_str());
-        }
-    }
-    fn descend<'a>(command: &'a mut clap::Command, path: &[&str]) -> &'a mut clap::Command {
-        let Some((head, tail)) = path.split_first() else {
-            return command;
-        };
-        let index = command
-            .get_subcommands()
-            .position(|sub| sub.get_name() == *head);
-        if let Some(index) = index {
-            let child = command
-                .get_subcommands_mut()
-                .nth(index)
-                .expect("subcommand index exists");
-            descend(child, tail)
-        } else {
-            command
-        }
-    }
-    descend(command, &path)
 }

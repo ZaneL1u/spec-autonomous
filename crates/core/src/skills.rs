@@ -154,7 +154,7 @@ fn init_selected(
         format!("{prefix}-")
     };
     Ok(
-        serde_json::json!({"framework":detected,"agent":agent,"installed":installed,"entry":format!("{sigil}{namespace}autonomous {sigil}{namespace}auto"),"next_action":"Configure host capacity and verification, then commit the project before prepare. The CLI never launches agents."}),
+        serde_json::json!({"framework":detected,"agent":agent,"installed":installed,"entry":format!("{sigil}{namespace}autonomous {sigil}{namespace}auto"),"next_action":"Configure host capacity and verification, then commit the project before prepare."}),
     )
 }
 

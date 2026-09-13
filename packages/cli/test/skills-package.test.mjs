@@ -30,7 +30,7 @@ test('auto uses the same host-owned capability and receipt protocol as autonomou
     assert.ok(alias.includes(entry), `auto must describe ${entry}`);
   }
   assert.match(alias, /Exact alias/);assert.match(alias, /from\/to\/only/);
-  assert.match(alias, /scope_completed/);assert.match(alias, /CLI never starts an agent/);
+  assert.match(alias, /scope_completed/);assert.match(alias, /The host allocates each fresh context/);
 });
 
 test('local npm tarball includes public skills when lifecycle scripts are disabled', (t) => {

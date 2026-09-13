@@ -11,12 +11,18 @@
 ## Decisions
 
 1. **消息 catalog + stable keys。** 使用随包分发的 `locales/en.json` 和 `locales/zh-CN.json`，key 为 `command.*`、`arg.*`、`error.*`。这是 gettext/Fluent 的同一条业界原则：稳定 message id、locale fallback、翻译资源与代码分离；选择 JSON 是因为 Rust 与 Node 共享且无需新增运行时依赖。未来可机械迁移为 FTL，不改变 key。
-2. **locale 协商。** 优先 `--lang`，再 `SPEC_AUTONOMOUS_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANGUAGE`、`LANG`，最后 Node `Intl.DateTimeFormat().resolvedOptions().locale`；只要语言子标签是 `zh` 就选择 zh-CN，其他语言选择 en。`C`/`POSIX` 为英文。Commander 在调用 metadata 前做一次轻量 bootstrap 读取 `--lang`，Rust 仍是最终解析权威。
+2. **locale 协商。** 优先 `--lang`，再 `SPEC_AUTONOMOUS_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANGUAGE`、操作系统首选界面语言、`LANG`，最后 Node `Intl.DateTimeFormat().resolvedOptions().locale`；只要语言子标签是 `zh` 就选择 zh-CN，其他语言选择 en。`C`/`POSIX` 为英文。Commander 在调用 metadata 前做一次轻量 bootstrap 读取 `--lang`，Rust 仍是最终解析权威。
 3. **Rust 为帮助 schema 权威。** Clap `Cli::command()` 经过 locale mutator 更新 command/arg about，再由 metadata 输出 `locale`。直接 native binary 的 `--help` 也用同一 mutator；native parse error 用稳定 code + locale generic message，保留 detail 时不泄漏协议字段。
 4. **Node 只本地化展示。** Commander 使用 metadata 的已本地化描述；provider/help 自己的新增文案从同一 JSON catalog 读取。语法错误显示本地化通用标题并保留可诊断 detail；执行的 Provider stdout/stderr 原样透传。
 5. **机器协议不翻译。** JSON/MCP 的 `schema_version`、`error.code`、状态值和命令 identifier 永远英文；`error.message` 和 human format 随 locale 改变。MCP initialize 可说明 supported locales，但工具 schema 不随语言变形。
 
 ## Risks / Trade-offs
+
+### alpha.7 correction
+
+User reports show that alpha.6 completion claims were too broad: terminal LANG could mask the macOS preferred UI language, Commander headings and errors remained English, and provider_selection_required had no translation. The correction uses explicit --lang / SPEC_AUTONOMOUS_LANG first, explicit LC_ALL / LC_MESSAGES and LANGUAGE next, OS preferred UI languages before LANG, then English fallback. C/POSIX in an explicit LC category forces English; a default LANG=C.UTF-8 still permits OS UI language selection. macOS preferences are read with defaults; Windows uses Get-UICulture. Both calls are bounded and read-only.
+
+Commander public configureHelp hooks own headings/formatting. Error catalog keys use stable codes and give actionable translated guidance; raw third-party diagnostics remain external output. Human rendering localizes only schema-owned fields, never entire serialized output. Native parsing returns to Clap's command tree, including help handling, so a literal --help argument cannot bypass validation. Product copy describes capabilities directly without agent-launch disclaimers.
 
 - [翻译 key 遗漏] → 启动时只允许 catalog fallback English；测试比较两份 key 集合并在 CI 失败。
 - [环境变量格式复杂] → 仅做 BCP 47/POSIX 语言前缀归一化，未知值安全回退英文，并提供 `--lang` 覆盖。

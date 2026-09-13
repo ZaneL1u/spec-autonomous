@@ -1,10 +1,10 @@
 # CLI 国际化
 
-CLI 支持 English 和简体中文 `zh-CN`。命令名、选项名、状态值、JSON 字段、错误 code、MCP tool 名和 Markdown/TOML 数据格式保持英文稳定；帮助描述、human 状态标签和常见错误 message 随语言切换。Provider 原生 stdout/stderr 原样透传。
+CLI 支持 English 和简体中文 `zh-CN`。命令名、选项名、状态值、JSON 字段、错误 code、MCP tool 名和 Markdown/TOML 数据格式保持英文稳定；帮助描述、human 状态标签和产品错误 message 随语言切换。Provider 原生 stdout/stderr 原样透传。
 
 ## 语言选择
 
-语言优先级为：显式 `--lang`、`SPEC_AUTONOMOUS_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANGUAGE`、`LANG`，最后是 Node `Intl` locale。`zh`、`zh-CN`、`zh_CN.UTF-8`、`cmn-Hans` 都选择简体中文；未知语言、`C` 和 `POSIX` 回退 English。`LC_ALL=C` 按 POSIX 优先级会覆盖后面的 `LANG`。
+语言优先级为：显式 `--lang`、`SPEC_AUTONOMOUS_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANGUAGE`、操作系统首选界面语言、`LANG`，最后是 Node `Intl` locale。`zh`、`zh-CN`、`zh_CN.UTF-8`、`cmn-Hans` 都选择简体中文；未知语言、`C` 和 `POSIX` 回退 English。`LC_ALL=C` 按显式覆盖处理，会强制英文。macOS 读取 `AppleLanguages`，Windows 读取 `Get-UICulture`，超时或不可用时继续回退；系统界面为中文、终端格式为 `LANG=en_US.UTF-8` 或 `LANG=C.UTF-8` 时仍显示中文。Linux 使用上述环境变量。
 
 ```sh
 # 跟随系统语言
@@ -49,3 +49,11 @@ LC_ALL=zh_CN.UTF-8 target/debug/spec-autonomous --help
 ```
 
 CI 检查两份 catalog 的 key 集合相同；Node、Bun、native 和安装后的 npm 包覆盖环境检测、显式覆盖、fallback、help、human output、JSON error 与无副作用行为。
+
+## alpha.7 修正
+
+alpha.6 的自动检测只覆盖终端 locale，且遗漏 Commander 标题、参数错误和初始化错误。alpha.7 增加系统界面语言检测，补齐帮助标题、默认值、可选值、原生错误目录、安装及下载提示。通过 Commander 的公开 `configureHelp` 接口和 Clap 命令定义渲染，不对最终输出做全局字符串替换。
+
+进度仅翻译已知状态字段；路径、任务名称、用户文本和结构化数据保持原值。上游 OpenSpec / Spec Kit、npm、gh 及操作系统自身的输出保留原文，以免丢失诊断细节。
+
+语言选择参考 [Apple 首选界面语言](https://developer.apple.com/documentation/foundation/locale/preferredlanguages) 与 [GNU gettext 环境变量](https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html)；本项目明确采用上述跨平台应用优先级。帮助扩展遵循 [Commander 公开帮助接口](https://github.com/tj/commander.js/blob/master/docs/help-in-depth.md)。

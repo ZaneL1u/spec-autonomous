@@ -77,7 +77,7 @@ impl Session {
                     "2025-11-25"
                 };
             return Some(
-                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"spec-autonomous","version":env!("CARGO_PKG_VERSION")},"instructions":"Seven complete capabilities are exposed by default. Use sa_tools to discover granular operations. The host owns every agent session; prepare returns work and apply-result accepts receipts. This server never launches agents or requests model sampling."}}),
+                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"spec-autonomous","version":env!("CARGO_PKG_VERSION")},"instructions":"Seven complete capabilities are exposed by default. Use sa_tools to discover granular operations. The host owns every agent session; prepare returns work and apply-result accepts receipts."}}),
             );
         }
         if method == "ping" {

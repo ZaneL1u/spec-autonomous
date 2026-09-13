@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProviderManager, providerName, providerNames } from './providers.mjs';
+import { detectLocale } from './locale.mjs';
 import { nodeCommand } from './provider-process.mjs';
 
 export function bridgeEnvironment(env = process.env) {
@@ -12,7 +13,7 @@ export function bridgeEnvironment(env = process.env) {
     nodeCommand(env), fileURLToPath(new URL('../bin/provider-bridge.mjs', import.meta.url)),
   ]) };
 }
-export function createProviderContext(binary, options = {}, manager = createProviderManager()) {
+export function createProviderContext(binary, options = {}, manager = createProviderManager({ env: { ...process.env, SPEC_AUTONOMOUS_LANG: detectLocale({ explicit: options.lang }) } })) {
   const path = resolve(options.path || process.cwd());
   const { provider, framework } = options;
   if (provider && framework && framework !== 'auto' && provider !== framework) throw new Error('provider_selection_conflict: --provider and --framework disagree');
@@ -154,7 +155,7 @@ export async function providerOperation(context, { operation = 'status', provide
 }
 
 export const providerTool = {
-  name: 'sa_providers', description: 'Inspect native OpenSpec / Spec Kit CLI readiness, or install missing selected tools and runtime prerequisites in a user-owned directory. Never starts agents.',
+  name: 'sa_providers', description: 'Inspect native OpenSpec / Spec Kit CLI readiness, or install missing selected tools and runtime prerequisites in a user-owned directory.',
   inputSchema: { type: 'object', additionalProperties: false, properties: {
     operation: { type: 'string', enum: ['status', 'ensure'], default: 'status' },
     provider: { type: 'string', enum: providerNames }, managed: { type: 'boolean', default: false },

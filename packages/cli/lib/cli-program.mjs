@@ -4,7 +4,7 @@ import { runProcess } from './provider-process.mjs';
 import { forwardProcess } from './cli-process.mjs';
 import { createProviderContext, bridgeEnvironment, initializeProvider, needsProvider, providerOperation, cliSource, nativeAction } from './provider-cli.mjs';
 import { serveProviderMcp } from './provider-mcp.mjs';
-import { detectLocale, languageArg, localizeError, message } from './locale.mjs';
+import { detectLocale, languageArg, localizeError, message, withLocale } from './locale.mjs';
 
 function syntax(message) { return new CommanderError(2, 'invalid_arguments', message); }
 
@@ -29,8 +29,8 @@ function selectedOptions(command) {
   return selected;
 }
 
-function addDefinition(command, definition) {
-  const description = (definition.help || '') + (definition.takes_value && definition.defaults?.length ? ` (default: ${definition.defaults.join(', ')})` : '');
+function addDefinition(command, definition, locale) {
+  const description = (definition.help || '') + (definition.takes_value && definition.defaults?.length ? ` (${message('help.default', locale)}: ${definition.defaults.join(', ')})` : '');
   if (!definition.long && !definition.short) {
     const name = definition.id + (definition.multiple ? '...' : '');
     const argument = new Argument(definition.required ? `<${name}>` : `[${name}]`, description);
@@ -52,16 +52,23 @@ export function createProgram(schema, { native, providers, locale = detectLocale
     return command.enablePositionalOptions().exitOverride()
       .helpOption('-h, --help', message('option.help', locale))
       .configureOutput({ writeOut: stdout, writeErr: stderr })
-      .showSuggestionAfterError().showHelpAfterError('(add --help for usage)');
+      .configureHelp(locale === 'zh-CN' ? {
+        styleTitle: title => ({ 'Usage:': '用法：', 'Options:': '选项：', 'Arguments:': '参数：', 'Commands:': '命令：', 'Global Options:': '全局选项：' })[title] || title,
+        styleOptionText: value => value === '[options]' ? '[选项]' : value,
+        styleSubcommandText: value => value === '[command]' ? '[命令]' : value,
+        optionDescription: option => option.description + (option.argChoices ? `（可选值：${option.argChoices.join(', ')}）` : ''),
+        argumentDescription: argument => argument.description + (argument.argChoices ? `（可选值：${argument.argChoices.join(', ')}）` : ''),
+      } : {})
+      .showSuggestionAfterError().showHelpAfterError(message('help.hint', locale));
   }
   const program = configure(new Command(schema.name)).description(schema.description)
     .version(schema.version, '-V, --version', message('option.version', locale));
-  for (const arg of schema.arguments) addDefinition(program, arg);
+  for (const arg of schema.arguments) addDefinition(program, arg, locale);
   function register(parent, definition) {
     const command = configure(new Command(definition.name)).description(definition.description || '');
     if (definition.aliases?.length) command.aliases(definition.aliases);
     for (const arg of definition.arguments) {
-      addDefinition(command, definition.name === 'init' && arg.id === 'agent' ? { ...arg, choices: ['codex', 'claude'] } : arg);
+      addDefinition(command, definition.name === 'init' && arg.id === 'agent' ? { ...arg, choices: ['codex', 'claude'] } : arg, locale);
     }
     if (definition.name === 'init') command.addOption(new Option('--provider <provider>', message('option.provider', locale)).choices(['openspec', 'speckit']));
     for (const subcommand of definition.commands) register(command, subcommand);
@@ -73,16 +80,16 @@ export function createProgram(schema, { native, providers, locale = detectLocale
   const providerGroup = configure(new Command('providers')).description(message('command.providers', locale));
   const globals = schema.arguments.filter(arg => ['path', 'framework', 'json', 'format', 'lang'].includes(arg.id));
   const providerGlobals = command => {
-    for (const arg of globals) addDefinition(command, arg.id === 'format' ? { ...arg, choices: ['json'] } : arg);
+    for (const arg of globals) addDefinition(command, arg.id === 'format' ? { ...arg, choices: ['json'] } : arg, locale);
     return command;
   };
   providerGlobals(providerGroup);
   for (const name of ['status', 'ensure', 'exec']) {
     const command = providerGlobals(configure(new Command(name)))
       .description({ status: message('command.providers_status', locale), ensure: message('command.providers_ensure', locale), exec: message('command.providers_exec', locale) }[name])
-      .addArgument(new Argument(name === 'exec' ? '<provider>' : '[provider]', 'Native SDD framework').choices(['openspec', 'speckit']))
+      .addArgument(new Argument(name === 'exec' ? '<provider>' : '[provider]', message('help.provider', locale)).choices(['openspec', 'speckit']))
       .option('--managed', message('option.managed', locale));
-    if (name === 'exec') command.argument('<args...>', 'Native arguments after --');
+    if (name === 'exec') command.argument('<args...>', message('help.native_args', locale));
     command.action(function (provider, ...rest) {
       return providers(name, selectedOptions(this), provider, name === 'exec' ? rest[0] : []);
     });
@@ -91,7 +98,7 @@ export function createProgram(schema, { native, providers, locale = detectLocale
   providerGroup.action(function () { return providers('status', selectedOptions(this)); });
   program.addCommand(providerGroup);
   program.addCommand(configure(new Command('help')).description(message('command.help', locale))
-    .argument('[commands...]', 'Command path, for example providers ensure')
+    .argument('[commands...]', message('help.command_path', locale))
       .action(names => {
       let selected = program;
       for (const name of names) {
@@ -121,10 +128,9 @@ function initArguments(schema, options) {
   return argv;
 }
 
-export async function runCli(argv, { binary: explicitBinary, run = runProcess, forward = forwardProcess,
+async function executeCli(argv, locale, { binary: explicitBinary, run = runProcess, forward = forwardProcess,
   context = createProviderContext, mcp = serveProviderMcp, initialize = initializeProvider,
   stdout = text => process.stdout.write(text), stderr = text => process.stderr.write(text) } = {}) {
-  const locale = detectLocale({ explicit: languageArg(argv) });
   const preferences = outputPreferences(argv);
   let diagnostic = '', exitCode = 0;
   try {
@@ -134,7 +140,7 @@ export async function runCli(argv, { binary: explicitBinary, run = runProcess, f
     const schema = JSON.parse(described.stdout).data;
     if (!schema?.commands || schema.name !== 'spec-autonomous') throw new Error('cli_metadata_invalid: install matching JS and native package versions');
     const preflight = async args => {
-      const result = await run([binary, 'cli-metadata', 'parse', '--', ...args], { timeout: 15_000 });
+      const result = await run([binary, '--lang', locale, 'cli-metadata', 'parse', '--', ...args], { timeout: 15_000 });
       if (result.code !== 0) throw new Error(`cli_preflight_failed: ${result.stderr}`);
       const checked = JSON.parse(result.stdout);
       if (!checked.ok) {
@@ -148,17 +154,17 @@ export async function runCli(argv, { binary: explicitBinary, run = runProcess, f
         const args = command.name() === 'init' ? initArguments(schema, options) : argv;
         const parsed = await preflight(args);
         if (!parsed) return;
-        const ctx = context(binary, { ...options, ...parsed, provider: options.provider, nativeArgs: args });
+        const ctx = context(binary, { ...options, ...parsed, provider: options.provider, lang: locale, nativeArgs: args });
         if (parsed.command.name === 'init') await initialize(ctx);
         else if (parsed.command.name === 'mcp') { exitCode = await mcp(ctx); return; }
         else if (needsProvider(parsed.command.name, nativeAction(parsed).arguments?.capability)) await ctx.ensureSource(await cliSource(parsed));
-        exitCode = await forward([binary, ...args], { env: bridgeEnvironment() });
+        exitCode = await forward([binary, ...args], { env: { ...bridgeEnvironment(), SPEC_AUTONOMOUS_LANG: locale } });
       },
       providers: async (operation, options, provider, nativeArgs = []) => {
         for (const key of Object.keys(options)) if (!['path', 'framework', 'json', 'format', 'lang', 'managed'].includes(key)) throw syntax(`option '${key}' is only available for native capabilities`);
         if (options.format && options.format !== 'json') throw syntax('providers supports --format json');
         if (provider && options.framework && options.framework !== 'auto' && provider !== options.framework) throw syntax('provider argument and --framework disagree');
-        const ctx = context(binary, options);
+        const ctx = context(binary, { ...options, lang: locale });
         if (operation === 'exec') {
           const ready = await ctx.ensureSelected(provider, { allowMissing: true, managed: Boolean(options.managed) });
           exitCode = await forward([...ready.command, ...nativeArgs], { cwd: ctx.path, env: ctx.manager.env });
@@ -177,7 +183,12 @@ export async function runCli(argv, { binary: explicitBinary, run = runProcess, f
     const code = syntaxError ? 'invalid_arguments' : /^[a-z_]+:/.test(error.message) ? error.message.split(':')[0] : 'operation_failed';
     const localized = localizeError(error, locale);
     if (preferences.json || preferences.format === 'json') stdout(JSON.stringify({ schema_version: 1, error: { code, message: localized } }) + '\n');
-    else stderr(diagnostic || `spec-autonomous: ${localized}\n`);
+    else stderr((locale === 'en' && diagnostic) || `spec-autonomous: ${localized}\n`);
     return syntaxError ? 2 : 1;
   }
+}
+
+export function runCli(argv, options) {
+  const locale = detectLocale({ explicit: languageArg(argv) });
+  return withLocale(locale, () => executeCli(argv, locale, options));
 }

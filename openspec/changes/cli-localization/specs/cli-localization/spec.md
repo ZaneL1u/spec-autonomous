@@ -30,8 +30,20 @@ JSON and MCP output SHALL keep field names, status values, error codes, tool nam
 - **THEN** the response is parseable with the same `schema_version` and `error.code` as English output, while `error.message` is Chinese
 
 ### Requirement: Runtime parity
-The Rust native binary, Node npm facade and Bun execution path SHALL negotiate the same locale and render equivalent help and errors without starting agents or changing project state.
+The Rust native binary, Node npm facade and Bun execution path SHALL negotiate the same locale and render equivalent help and errors without changing project state.
 
 #### Scenario: Node and native parity
-- **WHEN** the same help command runs under `LANG=zh_CN.UTF-8` through npm and the native binary
+- **WHEN** the same help command runs under `LC_ALL=zh_CN.UTF-8` through npm and the native binary
 - **THEN** both include the same localized command descriptions and neither installs providers or modifies the repository
+
+#### Scenario: Chinese system UI with English formatting locale
+- **WHEN** the operating system prefers Chinese but LANG is en_US.UTF-8 or C.UTF-8 and no explicit override is set
+- **THEN** the native and npm interfaces use Chinese; an explicit LC_ALL=C or --lang en still selects English
+
+#### Scenario: Empty repository initialization
+- **WHEN** init runs in a repository without an SDD provider under a Chinese locale
+- **THEN** it explains how to select openspec or speckit in Chinese, and JSON mode retains provider_selection_required
+
+#### Scenario: Literal payloads and user paths
+- **WHEN** a metadata parse payload includes --help or a worktree path contains an English status word
+- **THEN** Clap parses the payload in its command context and human localization preserves the path exactly

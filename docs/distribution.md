@@ -60,7 +60,7 @@ release-artifacts 的 assembler 根据实际 `GITHUB_REPOSITORY` 把同一个真
 
 ## alpha.2 host-driven 入口
 
-平台分包与 launcher 机制保留。Rust CLI 现在仅提供确定性能力与 stdio MCP，不启动 agent；同一包分发五个更新后的 Skills。独立测试宿主和语义 mock 不进入 npm files 白名单。root/CLI Cargo/npm 版本统一为 0.1.0-alpha.2；运行账本 schema 为 2，公开能力 envelope 与工作回执 schema 为 1。
+平台分包与 launcher 机制保留。Rust CLI 提供工作流能力与 stdio MCP；同一包分发五个更新后的 Skills。独立测试宿主和语义 mock 不进入 npm files 白名单。root/CLI Cargo/npm 版本统一为 0.1.0-alpha.2；运行账本 schema 为 2，公开能力 envelope 与工作回执 schema 为 1。
 
 ## alpha.3 原生工具准备
 

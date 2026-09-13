@@ -1,6 +1,6 @@
 # 测试与复现
 
-alpha.2 的核心边界是“CLI 不启动 agent”。产品 work_packet 模块只生成与校验数据；测试中的 `tests/mock-host.mjs` 是独立宿主，由它创建模拟语义进程并调用 CLI 回执接口。测试宿主与 mock-agent 不随 npm 包分发。
+alpha.2 采用工作包与回执协议。产品 work_packet 模块只生成与校验数据；测试中的 `tests/mock-host.mjs` 是独立宿主，由它创建模拟语义进程并调用 CLI 回执接口。测试宿主与 mock-agent 不随 npm 包分发。
 
 ## 完整入口
 
