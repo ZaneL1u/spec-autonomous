@@ -20,10 +20,10 @@
     "type": "git",
     "url": "git+ssh://git@github.com/ZaneL1u/spec-autonomous.git"
   },
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "packageManager": "bun@1.4.2",
   "engines": {
-    "node": ">=22"
+    "node": "^22.13.0 || >=23.5.0"
   },
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
@@ -42,7 +42,8 @@
     "mock:run": "node tests/mock-host.mjs"
   },
   "dependencies": {
-    "commander": "14.0.3"
+    "commander": "14.0.3",
+    "@inquirer/prompts": "8.7.2"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.0"

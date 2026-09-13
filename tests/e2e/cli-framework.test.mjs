@@ -82,7 +82,7 @@ test('structured native input and init use parsed objects without rescanning arg
   const f = setup(t); const file = join(f.root, 'input file.json'); writeFileSync(file, '{"framework":"speckit"}');
   let source, options;
   const common = { binary, stdout: () => {}, stderr: message => assert.fail(message), forward: async () => 0,
-    context: (_binary, parsed) => { options = parsed; return { ensureSource: async value => { source = value; } }; } };
+    context: (_binary, parsed) => { options = parsed; return { detection: async () => ({root:f.root,detected:[],warnings:[],selected:null}), ensureSource: async value => { source = value; } }; } };
   assert.equal(await runCli(['tools', 'call', 'native.instructions', '--input', `@${file}`], common), 0);
   assert.equal(source.framework, 'speckit');
   assert.equal(await runCli(['--framework', 'openspec', 'tools', 'call', 'native.instructions', '--input', `@${file}`], common), 0);

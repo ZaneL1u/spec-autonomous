@@ -470,3 +470,19 @@ fn a_symlinked_ownership_manifest_cannot_redirect_install_or_uninstall() {
         state
     );
 }
+
+#[test]
+fn init_preflight_is_readonly_and_rejects_declaration_path_conflicts() {
+    let dir = tempfile::tempdir().unwrap();
+    skills::preflight_init(dir.path(), "codex", "", true).unwrap();
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    fs::create_dir(dir.path().join(".spec-autonomous")).unwrap();
+    fs::write(dir.path().join(".spec-autonomous/plans"), "user file").unwrap();
+    let error = skills::preflight_init(dir.path(), "codex", "", false).unwrap_err();
+    assert!(error.to_string().contains("init_path_conflict"));
+    assert!(!dir.path().join(".agents").exists());
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".spec-autonomous/plans")).unwrap(),
+        "user file"
+    );
+}

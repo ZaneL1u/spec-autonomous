@@ -4,7 +4,7 @@
 
 用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-当前版本 `0.1.0-alpha.7`，通过私有 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
+当前版本 `0.1.0-alpha.8`，通过私有 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -12,6 +12,7 @@
 - [本轮验收](docs/validation/host-driven.md)
 - [从 alpha.1 迁移](docs/migration-alpha2.md)
 - [npm 分平台发行](docs/distribution.md)
+- [交互式与参数式初始化](docs/initialization.md)
 - [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
 - [CLI 框架与命令接口](docs/cli-interface.md)
 - [私有 GitHub 直装](docs/private-git-install.md)
@@ -28,17 +29,19 @@ spec-autonomous --version
 
 Git 入口没有安装脚本。第一次运行自动用 gh 下载并校验该版本的本机二进制，之后复用缓存；不需要 Rust 或 Bun。目前 Git 直装预编译产物为 macOS arm64。
 
-源码开发需要 Git、Rust 1.98.1、Node 22+；Bun 管理 workspace 依赖。安装后的 npm 包需要 Node 22+ 和 Git。JS 层自动补齐缺失的原生 SDD 工具及 Spec Kit 的 uv / Python，无需预装 Rust、Bun、Python。
+源码开发需要 Git、Rust 1.98.1、Node 22.13+（或 23.5+）；Bun 管理 workspace 依赖。安装后的 npm 包需要 Node 22.13+（或 23.5+） 和 Git。JS 层自动补齐缺失的原生 SDD 工具及 Spec Kit 的 uv / Python，无需预装 Rust、Bun、Python。
 
 ```sh
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 node scripts/pack-local.mjs
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.7.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.8.tgz
 
 # 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
 spec-autonomous init --agent codex
-# 空仓库：明确框架，调用其原生初始化后绑定 Skills
+# 新项目：交互选择框架、编程助手和 MCP
+spec-autonomous init
+# 参数式：调用原生初始化，生成项目结构并绑定 Skills
 spec-autonomous init --provider openspec --agent codex --mcp
 spec-autonomous init --provider speckit --agent codex --mcp
 # 同时写入受所有权保护的项目 MCP 配置
@@ -128,7 +131,7 @@ spec-autonomous tools call repair --input '{"kind":"legacy-config"}' --json
 
 ## 配置与测试
 
-新配置没有 agent launcher：
+项目配置示例：
 
 ```toml
 schema_version = 2

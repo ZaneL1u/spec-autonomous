@@ -278,6 +278,48 @@ pub fn localize_command(mut command: clap::Command, locale: Locale) -> clap::Com
 }
 
 pub fn human(value: &serde_json::Value, locale: Locale) -> String {
+    if let Some(data) = value.get("data")
+        && data.get("installed").is_some()
+        && data.get("config").is_some()
+    {
+        let mut output = format!("{}\n", text(locale, "init.complete"));
+        for (key, field) in [
+            ("init.root", "root"),
+            ("init.framework", "framework"),
+            ("init.agent", "agent"),
+            ("init.config", "config"),
+        ] {
+            output.push_str(&format!(
+                "{}: {}\n",
+                text(locale, key),
+                data[field].as_str().unwrap_or_default()
+            ));
+        }
+        for (key, field) in [
+            ("init.directories", "directories"),
+            ("init.skills", "installed"),
+        ] {
+            output.push_str(&format!("{}:\n", text(locale, key)));
+            if let Some(items) = data[field].as_array() {
+                for item in items {
+                    output.push_str(&format!("  {}\n", item.as_str().unwrap_or_default()));
+                }
+            }
+        }
+        if let Some(file) = data
+            .pointer("/mcp/file")
+            .and_then(serde_json::Value::as_str)
+        {
+            output.push_str(&format!("MCP: {file}\n"));
+        }
+        output.push_str(&format!(
+            "\n{}: {}\n{}",
+            text(locale, "init.entry"),
+            data["entry"].as_str().unwrap_or_default(),
+            text(locale, "init.next")
+        ));
+        return output;
+    }
     if !locale.is_zh() {
         return crate::progress::human(value);
     }

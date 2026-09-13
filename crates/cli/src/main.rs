@@ -209,6 +209,18 @@ enum Command {
         /// Add the project's owned MCP server entry.
         #[arg(long)]
         mcp: bool,
+        /// Ask for missing setup choices in the npm terminal interface.
+        #[arg(long, conflicts_with_all = ["non_interactive", "yes", "check"])]
+        interactive: bool,
+        /// Require parameters or detected settings without prompting.
+        #[arg(long)]
+        non_interactive: bool,
+        /// Use OpenSpec, Codex and MCP defaults for missing new-project settings.
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Validate owned initialization targets without writing files.
+        #[arg(long, hide = true)]
+        check: bool,
     },
     /// Serve the same capabilities as stdio MCP tools/resources.
     Mcp {
@@ -552,15 +564,30 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             direct = Some(data);
             ("", json!({}))
         }
-        Command::Init { agent, prefix, mcp } => {
+        Command::Init {
+            agent,
+            prefix,
+            mcp,
+            check,
+            ..
+        } => {
             let project = spec_autonomous_core::detect(&root, None)?.root;
             let framework = match selected {
                 Some("openspec") => Some(spec_autonomous_core::Framework::Openspec),
                 Some("speckit") => Some(spec_autonomous_core::Framework::Speckit),
                 _ => None,
             };
-            let data =
-                skills::init_with_provider(&project, agent.as_deref(), &prefix, mcp, framework)?;
+            let data = if check {
+                skills::preflight_init(
+                    &project,
+                    agent.as_deref().unwrap_or("codex"),
+                    &prefix,
+                    mcp,
+                )?;
+                json!({"ready":true})
+            } else {
+                skills::init_with_provider(&project, agent.as_deref(), &prefix, mcp, framework)?
+            };
             direct = Some(data);
             ("", json!({}))
         }

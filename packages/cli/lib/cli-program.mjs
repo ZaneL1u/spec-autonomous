@@ -4,6 +4,7 @@ import { runProcess } from './provider-process.mjs';
 import { forwardProcess } from './cli-process.mjs';
 import { createProviderContext, bridgeEnvironment, initializeProvider, needsProvider, providerOperation, cliSource, nativeAction } from './provider-cli.mjs';
 import { serveProviderMcp } from './provider-mcp.mjs';
+import { resolveInitOptions } from './init-options.mjs';
 import { detectLocale, languageArg, localizeError, message, withLocale } from './locale.mjs';
 
 function syntax(message) { return new CommanderError(2, 'invalid_arguments', message); }
@@ -70,7 +71,10 @@ export function createProgram(schema, { native, providers, locale = detectLocale
     for (const arg of definition.arguments) {
       addDefinition(command, definition.name === 'init' && arg.id === 'agent' ? { ...arg, choices: ['codex', 'claude'] } : arg, locale);
     }
-    if (definition.name === 'init') command.addOption(new Option('--provider <provider>', message('option.provider', locale)).choices(['openspec', 'speckit']));
+    if (definition.name === 'init') {
+      command.addOption(new Option('--provider <provider>', message('option.provider', locale)).choices(['openspec', 'speckit']));
+      command.option('--no-mcp', message('arg.no_mcp', locale));
+    }
     for (const subcommand of definition.commands) register(command, subcommand);
     command.action(function () { return native(this, selectedOptions(this)); });
     parent.addCommand(command, { hidden: definition.hidden });
@@ -130,6 +134,7 @@ function initArguments(schema, options) {
 
 async function executeCli(argv, locale, { binary: explicitBinary, run = runProcess, forward = forwardProcess,
   context = createProviderContext, mcp = serveProviderMcp, initialize = initializeProvider,
+  initOptions = resolveInitOptions, input = process.stdin, promptOutput = process.stderr,
   stdout = text => process.stdout.write(text), stderr = text => process.stderr.write(text) } = {}) {
   const preferences = outputPreferences(argv);
   let diagnostic = '', exitCode = 0;
@@ -151,11 +156,22 @@ async function executeCli(argv, locale, { binary: explicitBinary, run = runProce
     };
     const program = createProgram(schema, { locale, stdout, stderr: text => { diagnostic += text; },
       native: async (command, options) => {
-        const args = command.name() === 'init' ? initArguments(schema, options) : argv;
-        const parsed = await preflight(args);
+        let args = command.name() === 'init' ? initArguments(schema, options) : argv;
+        let parsed = await preflight(args);
         if (!parsed) return;
-        const ctx = context(binary, { ...options, ...parsed, provider: options.provider, lang: locale, nativeArgs: args });
-        if (parsed.command.name === 'init') await initialize(ctx);
+        let ctx = context(binary, { ...options, ...parsed, provider: options.provider, lang: locale, nativeArgs: args });
+        if (parsed.command.name === 'init' && !parsed.command.arguments.check) {
+          // Fully validate the original argv before prompting. Rebuild from the
+          // resolved values so inferred choices reach native initialization too.
+          options = await initOptions({ ...options, lang: locale }, { detection: () => ctx.detection(), input, output: promptOutput });
+          args = initArguments(schema, options);
+          parsed = await preflight(args);
+          ctx = context(binary, { ...options, ...parsed, provider: options.provider, lang: locale, nativeArgs: args });
+          const checked = await run([binary, '--path', options.path, 'init', '--agent', options.agent, '--prefix', options.prefix || '', ...(options.mcp ? ['--mcp'] : []), '--check', '--json'], { timeout: 15000 });
+          const result = JSON.parse(checked.stdout || '{}');
+          if (checked.code !== 0) throw new Error(`${result.error?.code || 'init_preflight_failed'}: ${result.error?.message || checked.stderr}`);
+          await initialize(ctx);
+        }
         else if (parsed.command.name === 'mcp') { exitCode = await mcp(ctx); return; }
         else if (needsProvider(parsed.command.name, nativeAction(parsed).arguments?.capability)) await ctx.ensureSource(await cliSource(parsed));
         exitCode = await forward([binary, ...args], { env: { ...bridgeEnvironment(), SPEC_AUTONOMOUS_LANG: locale } });
@@ -178,6 +194,10 @@ async function executeCli(argv, locale, { binary: explicitBinary, run = runProce
     await program.parseAsync(argv, { from: 'user' });
     return exitCode;
   } catch (error) {
+    if (['ExitPromptError', 'AbortPromptError'].includes(error?.name)) {
+      stderr(`spec-autonomous: ${message('init.cancelled', locale)}\n`);
+      return 130;
+    }
     if (error instanceof CommanderError && error.exitCode === 0) return 0;
     const syntaxError = error instanceof CommanderError;
     const code = syntaxError ? 'invalid_arguments' : /^[a-z_]+:/.test(error.message) ? error.message.split(':')[0] : 'operation_failed';

@@ -126,7 +126,16 @@ export async function initializeProvider(context) {
   if (!['codex', 'claude'].includes(agent)) throw new Error('host_selection_required: choose --agent codex|claude');
   if (!hasProvider && (selection.report.detected.length || selection.report.warnings.length)) throw new Error('provider_init_conflict: preserve existing or incomplete SDD setup; initialize the desired native framework explicitly');
   const ready = await manager.ensure(selection.provider, { root: selection.root, command: selection.report.provider_commands?.[selection.provider] });
-  if (hasProvider) return ready;
+  const ensureGit = async () => {
+    const env = { ...manager.env };
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+    const existing = await manager.run(['git', 'rev-parse', '--git-dir'], { cwd: selection.root, env });
+    if (existing.code === 0) return;
+    if (existsSync(join(selection.root, '.git'))) throw new Error('init_git_failed: existing Git metadata is unusable');
+    const initialized = await manager.run(['git', 'init', '-q'], { cwd: selection.root, env });
+    if (initialized.code !== 0) throw new Error('init_git_failed: cannot initialize Git repository');
+  };
+  if (hasProvider) { await ensureGit(); return ready; }
   const stage = await mkdtemp(join(tmpdir(), 'spec-autonomous-native-init-'));
   try {
     const initEnv = { ...manager.env };
@@ -141,6 +150,7 @@ export async function initializeProvider(context) {
     const result = await manager.run([...ready.command, ...argv], { cwd: stage, env: initEnv, output: 'log' });
     if (result.code !== 0) throw new Error(`provider_init_failed: native initializer exited ${result.code}`);
     await mergeScaffold(stage, selection.root);
+    await ensureGit();
     return ready;
   } finally { await rm(stage, { recursive: true, force: true }); }
 }

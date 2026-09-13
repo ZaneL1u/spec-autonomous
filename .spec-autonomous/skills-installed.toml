@@ -1,4 +1,4 @@
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 
 [files]
 ".agents/skills/auto/SKILL.md" = "1a857f8e66cd7fe2c35df8677c913e59e2e52d76e7b921feacccc4a5c33defe3"

@@ -10,7 +10,7 @@ spec-autonomous --version
 固定版本：
 
 ```sh
-npm install -g git+ssh://git@github.com/ZaneL1u/spec-autonomous.git#v0.1.0-alpha.7
+npm install -g git+ssh://git@github.com/ZaneL1u/spec-autonomous.git#v0.1.0-alpha.8
 ```
 
 源码通过 SSH 拉取；二进制通过 gh 的现有 GitHub 登录读取私有 Release。首次调用会自动下载，校验根 git-install.json 固定的 SHA256 和 --version 后才放入用户缓存。无须编译 Rust 或安装 Bun，不会把 token 写入项目。`--ignore-scripts` 安装同样可以首次启动恢复。

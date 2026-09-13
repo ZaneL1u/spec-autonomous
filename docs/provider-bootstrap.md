@@ -1,6 +1,6 @@
 # 原生 SDD 工具自动安装
 
-从 alpha.3 开始，npm 包的 Bun / Node 兼容 JS 层负责安装 OpenSpec、Spec Kit 和缺失的运行前置依赖。Rust 只接收原生命令 argv 并维护工作流；没有网络安装器或 agent launcher。
+从 alpha.3 开始，npm 包的 Bun / Node 兼容 JS 层负责安装 OpenSpec、Spec Kit 和缺失的运行前置依赖。Rust 只接收原生命令 argv 并维护工作流；安装由 JS 层完成。
 
 ## 使用
 
@@ -22,7 +22,7 @@ spec-autonomous providers exec openspec -- --version
 spec-autonomous providers exec speckit -- version
 ```
 
-两种框架共存时必须明确选择；不根据目录排序猜测。native init 在隔离临时目录中运行，随后预检目标文件：不同内容或符号链接冲突会报错，保留用户文件。现有框架只补齐 CLI，不重复生成或替换原生规范。
+从 alpha.8 起可直接 `spec-autonomous init` 交互选择；详见 [初始化项目](initialization.md)。两种框架共存时必须明确选择。native init 在隔离临时目录中运行，随后预检目标文件：不同内容或符号链接冲突会报错，保留用户文件。现有框架只补齐 CLI，不重复生成或替换原生规范。
 
 普通 CLI 的原生操作会先准备依赖。npm MCP transport 公开 `sa_providers`：
 
