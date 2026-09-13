@@ -36,3 +36,5 @@
 - npm tarball SHA256：`3c47b9d75ad8ad4a48e6539d81d42558829c458187959d0669e891f2145fea6d`
 
 上游 OpenSpec / Spec Kit、npm、gh 和操作系统自身诊断保留原文。结构化字段和用户内容保持原值。
+
+私有发布 `v0.1.0-alpha.7` 已完成。使用独立 npm cache、安装 prefix 和空二进制 cache，通过 Git SSH 标签安装；首次运行从私有 Release 下载并校验 SHA256。Node 22.23.2 与 Bun 1.4.2 均通过安装后的版本、中文根/嵌套帮助、英文覆盖、C locale、init 文案/JSON、参数错误及无项目写入验收。Git 标签指向实现提交 `ee3e4202f8a6417891eb06450d92c85db92cf8a5`，远端 Release 的资产 digest 与本地 manifest 一致。

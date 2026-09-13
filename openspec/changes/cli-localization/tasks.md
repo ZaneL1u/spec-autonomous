@@ -18,4 +18,4 @@
 - [x] 4.1 Read the OS preferred UI language before LANG defaults while honoring explicit overrides; verify Mac Chinese preferences with English LANG, C locale, missing preferences and CLI payload boundaries.
 - [x] 4.2 Translate all help headings, command/option descriptions, setup errors and installation messages; remove agent-launch disclaimers from current product text; verify catalog coverage and concrete init/help/error cases.
 - [x] 4.3 Render human fields without changing paths, IDs or user content; preserve stable machine protocols and normal Clap parsing; verify regression tests for metadata --help payload and translated status paths.
-- [ ] 4.4 Validate installed Node/Bun CLI and full repository checks, publish a new private alpha.7 with matching binaries, and verify Git installation.
+- [x] 4.4 Validate installed Node/Bun CLI and full repository checks, publish a new private alpha.7 with matching binaries, and verify Git installation.
