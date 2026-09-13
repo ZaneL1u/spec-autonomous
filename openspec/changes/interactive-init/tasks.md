@@ -4,4 +4,4 @@
 
 ## 2. Acceptance and delivery
 - [x] 2.1 Verify real terminal selection/cancellation and both native frameworks from empty directories, including repeated initialization and installed Node/Bun runs.
-- [ ] 2.2 Run full repository checks and strict specs, document usage, publish private alpha.8 and verify Git installation.
+- [x] 2.2 Run full repository checks and strict specs, document usage, publish private alpha.8 and verify Git installation.

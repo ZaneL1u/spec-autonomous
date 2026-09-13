@@ -20,3 +20,5 @@
 ```
 
 Windows/Linux 实机初始化未在本轮验收；实际终端和原生工具证据限 macOS arm64。
+
+私有 GitHub Release `v0.1.0-alpha.8` 已发布，实现提交 `de00e05efc87f18dcc2a403fc6d5d1143d3d7854`。使用独立 npm prefix/cache 和空二进制 cache，执行 Git SSH 标签安装；首次运行下载并校验远端二进制。Git 安装后的 Node 22.23.2 和 Bun 1.4.2 分别通过真实两种框架初始化，以及 7 项初始化 E2E（含 PTY 选择与取消）。
