@@ -7,4 +7,4 @@
 - [x] 2.2 Add terminal cleanup preview/apply and safe optional branch deletion; verify real Git protection and legacy CLI behavior.
 
 ## 3. Delivery
-- [ ] 3.1 Complete full regression, document contracts/limitations and publish a tested private alpha.9 package with Git installation acceptance.
+- [x] 3.1 Complete full regression, document contracts/limitations and publish a tested private alpha.9 package with Git installation acceptance.

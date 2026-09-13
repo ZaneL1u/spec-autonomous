@@ -22,4 +22,6 @@
 b542924f1b7e456e43d2f878277c1305bb0dc989ec2869094c159c0b89fd9f76  spec-autonomous-darwin-arm64
 ```
 
-Node 22.23.2 安装包通过 7 项实际进程修订、清理和 MCP 检查；Node 与 Bun 的安装后目录均包含 run.revise、run.cleanup、work.claim-batch。最后一版 Skills 增加拒绝规划与执行修订的分流说明，将在 Git 安装链路验证。
+Node 22.23.2 安装包通过 7 项实际进程修订、清理和 MCP 检查；Node 与 Bun 的安装后目录均包含 run.revise、run.cleanup、work.claim-batch。最后一版 Skills 增加拒绝规划与执行修订的分流说明，已在 Git 安装链路核对。
+
+私有 Release `v0.1.0-alpha.9` 已发布（实现提交 `49601e3`）。从 Git SSH 标签使用独立 npm prefix/cache 和空二进制 cache 安装，首次运行从 Release 拉取并校验资产；7 项实际进程修订/清理/MCP 回归通过。Node 22.23.2 与 Bun 的新能力发现通过，三份 Skills 的新恢复路由随包存在。
