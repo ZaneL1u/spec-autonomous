@@ -8,7 +8,7 @@ const put=(root,file,body)=>{mkdirSync(join(root,file,'..'),{recursive:true});wr
 const commit=root=>{git(root,['add','--all']);git(root,['commit','-qm','test: capabilities fixture']);};
 
 test('default catalog is limited while all granular tools have schemas and reject unknown fields',t=>{
- const root=fixture(t,'speckit');const primary=raw(root,['tools','list']);assert.equal(primary.status,0,primary.details);assert.equal(primary.data.capabilities.length,7);
+ const root=fixture(t,'speckit');const primary=raw(root,['tools','list']);assert.equal(primary.status,0,primary.details);assert.equal(primary.data.capabilities.length,8);
  const all=raw(root,['tools','list','--all','--limit','200']);assert.equal(all.status,0,all.details);const caps=all.data.capabilities;assert.ok(caps.length>=50);assert.equal(new Set(caps.map(c=>c.id)).size,caps.length);
  for(const cap of caps){assert.equal(cap.input_schema.additionalProperties,false);assert.ok(cap.output_schema);}
  const before=git(root,['status','--porcelain']);const bad=call(root,'document.scaffold',{file:'bad.md',kind:'summary',unexpected:true});assert.notEqual(bad.status,0);assert.equal(git(root,['status','--porcelain']),before);assert.ok(!existsSync(join(root,'bad.md')));

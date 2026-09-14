@@ -55,3 +55,9 @@ MCP 使用 `sa_tools`：`operation: call`、`capability: run.revise`、`argument
 原生 roadmap 的无关内容更新会保留有效验证覆盖；如果原生流程明确修改了对应检查，旧覆盖标记为 superseded_by_native 并进入审查历史，采用新的原生检查。
 
 命令选择参考 [Node 24 测试运行器文档](https://nodejs.org/download/release/v24.13.1/docs/api/test.html#running-tests-from-the-command-line)；本轮目录参数行为另以实际 Node 24.21.0 复现记录为准。
+
+## Smart discuss
+
+Before planning a phase, use `discussion.next` to render cards. Put the recommended option first and show alternatives; clicking an option calls `discussion.apply` with the source hash. `auto:true` applies only recommendations and leaves unresolved cards explicit. Decisions are written to a derived phase CONTEXT/DISCUSSION-LOG and the run ledger; native specs remain authoritative. This follows GSD discuss-phase's gray-area selection and context artifact pattern, adapted to deterministic host buttons.
+
+Smart discuss follows GSD's phase gray-area pattern: cards are deterministic, the recommended choice is first, alternatives remain visible, and host clicks are persisted as derived context decisions. It does not require conversational user answers.

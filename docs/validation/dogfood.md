@@ -12,3 +12,5 @@ alpha.10 macOS arm64 资产 SHA256：
 64ef113246b086f75d8625e16857e0af0eb82b2588603ea599f51f93f5bd5d63  spec-autonomous-0.1.0-alpha.10.tgz
 51e36c3cfcee0e332dd95b09e5cac8f2dd0cd8bfe2a05e8d359378d459bf0501  spec-autonomous-darwin-arm64
 ```
+
+alpha.11 dogfood additionally renders a discussion card before cleanup, applies its recommended option by source CAS, and confirms one persisted click decision.

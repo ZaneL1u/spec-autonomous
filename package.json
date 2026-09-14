@@ -20,7 +20,7 @@
     "type": "git",
     "url": "git+ssh://git@github.com/ZaneL1u/spec-autonomous.git"
   },
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "packageManager": "bun@1.4.2",
   "engines": {
     "node": "^22.13.0 || >=23.5.0"

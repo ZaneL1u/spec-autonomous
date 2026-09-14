@@ -1,0 +1,7 @@
+## Decisions
+
+1. `discussion.next` resolves a run and phase, reads native snapshot/tasks and prior decisions, and emits stable cards. Each card has `id`, `question`, `recommended` option, `alternatives`, `why`, `impact`, `multi_select:false`, and `status`.
+2. Recommendations are deterministic heuristics: existing explicit native instructions are recommended; otherwise preserve current framework/workflow conventions, then smallest-scope implementation. Cards never invent acceptance requirements. Unknown details are marked `needs_user_choice`.
+3. `discussion.apply` requires run_id, phase_id, source_hash, and selections `{card_id, option_id}`. It validates IDs/CAS, stores a decision event in HostState, and writes `.spec-autonomous/milestones/<id>/phases/<phase>-CONTEXT.md` plus `.spec-autonomous/...-DISCUSSION-LOG.md` only when the run owns a roadmap. Replaying the same selection is idempotent; conflicting locked choices are rejected.
+4. `--auto` applies only cards with a recommended option and reports unresolved cards. Auto does not claim that unresolved gray areas are decided. `discussion.next` remains read-only and never allocates work or providers.
+5. The next plan packet includes a bounded `discussion` object with decisions and unresolved cards; worker context does not receive coordinator history. Existing native Markdown remains authoritative; context is a derived decision artifact.

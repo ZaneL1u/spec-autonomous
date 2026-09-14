@@ -79,6 +79,22 @@ pub fn all() -> Vec<Capability> {
             json!({"plan":o,"run_id":s,"framework":f,"change":s,"feature":s,"selector":s,"milestone_id":s,"goal":s,"id":s,"mode":{"type":"string","enum":["native","autonomous","plan"]},"from":s,"to":s,"only":s,"max_workers":{"type":"integer","minimum":1,"maximum":32},"delivery":{"type":"string","enum":["ff-original","branch"]},"reload_config":b,"extend_seconds":{"type":"integer","minimum":0,"maximum":2592000},"max_attempts":{"type":"integer","minimum":1,"maximum":1000}}),
         ),
         entry(
+            "discussion.next",
+            "Preview phase gray areas with recommended and alternative choices.",
+            true,
+            false,
+            &["run_id"],
+            json!({"run_id":s,"phase_id":s}),
+        ),
+        entry(
+            "discussion.apply",
+            "Apply clicked or recommended phase discussion choices with source CAS.",
+            false,
+            true,
+            &["run_id", "source_hash", "selections"],
+            json!({"run_id":s,"phase_id":s,"source_hash":s,"selections":{"type":"array","items":{"type":"object"}},"auto":b}),
+        ),
+        entry(
             "next",
             "Preview prepared work, blockers and next action without dispatching.",
             true,

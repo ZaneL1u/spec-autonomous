@@ -42,9 +42,12 @@ try {
   const terminal = lines.at(-1)?.data ?? lines.at(-1);
   const runId = terminal.id;
   const todo = join(project, 'openspec/changes/todo-list');
+  const discussion = run(['tools', 'call', 'discussion.next', '--input', JSON.stringify({ run_id: runId, phase_id: 'P001' }), '--json']);
+  const firstCard = discussion.data.cards[0];
+  const appliedDiscussion = run(['tools', 'call', 'discussion.apply', '--input', JSON.stringify({ run_id: runId, phase_id: 'P001', source_hash: discussion.data.source_hash, selections: [{ card_id: firstCard.id, option_id: firstCard.recommended }] }), '--json']);
   const progress = run(['progress', '--all-worktrees', '--json']);
   const cleanup = run(['tools', 'call', 'run.cleanup', '--input', JSON.stringify({ run_id: runId, delete_branches: false, delete_integration: false }), '--json']);
-  const report = { project, run_id: runId, status: terminal.status, initialized: existsSync(join(project, '.spec-autonomous/config.toml')), framework: 'openspec', worktrees: progress.data.worktrees?.length ?? 0, cleanup_plan_hash: cleanup.data.plan_hash, native_change: existsSync(todo) };
+  const report = { project, run_id: runId, status: terminal.status, initialized: existsSync(join(project, '.spec-autonomous/config.toml')), framework: 'openspec', worktrees: progress.data.worktrees?.length ?? 0, cleanup_plan_hash: cleanup.data.plan_hash, discussion_cards: discussion.data.cards.length, discussion_applied: appliedDiscussion.data.applied.length, native_change: existsSync(todo) };
   await mkdir(join(root, '.artifacts'), { recursive: true });
   await writeFile(join(root, '.artifacts/dogfood-report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));

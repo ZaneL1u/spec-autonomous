@@ -124,6 +124,19 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         "inspect" => queries::inspect(&root, args)?,
         "progress" => crate::progress::snapshot(&root)?,
         "next" => engine::next(&root, args["run_id"].as_str())?,
+        "discussion.next" => {
+            crate::discussion::next(&root, text(args, "run_id")?, args["phase_id"].as_str())?
+        }
+        "discussion.apply" => crate::discussion::apply(
+            &root,
+            text(args, "run_id")?,
+            args["phase_id"].as_str(),
+            text(args, "source_hash")?,
+            args["selections"]
+                .as_array()
+                .context("invalid_arguments: selections")?,
+            args["auto"] == true,
+        )?,
         "doctor" => lifecycle::doctor(&root)?,
         "archive" => lifecycle::archive(&root, args)?,
         "repair" => lifecycle::repair(&root, args)?,

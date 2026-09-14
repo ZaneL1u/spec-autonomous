@@ -24,7 +24,7 @@ fn malformed_messages_and_unknown_notifications_cannot_invoke_tools() {
     let list = s
         .handle(json!({"jsonrpc":"2.0","id":3,"method":"tools/list"}))
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
     assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
 }
 #[test]
@@ -73,5 +73,5 @@ fn compact_views_keep_totals_and_paginate_without_exposing_run_credentials() {
     let all = catalog::all();
     let ids: std::collections::BTreeSet<_> = all.iter().map(|c| &c.id).collect();
     assert_eq!(ids.len(), all.len());
-    assert_eq!(all.iter().filter(|c| c.primary).count(), 7);
+    assert_eq!(all.iter().filter(|c| c.primary).count(), 8);
 }

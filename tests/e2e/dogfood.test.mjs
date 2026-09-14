@@ -13,5 +13,5 @@ test('checked-in OpenSpec playground dogfoods init, auto receipts, progress and 
   assert.equal(report.framework, 'openspec');
   assert.ok(report.worktrees >= 1);
   assert.match(report.cleanup_plan_hash, /^[a-f0-9]{64}$/);
-  assert.equal(report.native_change, true);
+  assert.equal(report.native_change, true); assert.ok(report.discussion_cards >= 1); assert.equal(report.discussion_applied, 1);
 });
