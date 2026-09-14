@@ -6,7 +6,7 @@
   "assets": {
     "darwin-arm64": {
       "name": "spec-autonomous-darwin-arm64",
-      "sha256": "b542924f1b7e456e43d2f878277c1305bb0dc989ec2869094c159c0b89fd9f76"
+      "sha256": "51e36c3cfcee0e332dd95b09e5cac8f2dd0cd8bfe2a05e8d359378d459bf0501"
     }
   }
 }
