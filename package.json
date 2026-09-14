@@ -20,7 +20,7 @@
     "type": "git",
     "url": "git+ssh://git@github.com/ZaneL1u/spec-autonomous.git"
   },
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "packageManager": "bun@1.4.2",
   "engines": {
     "node": "^22.13.0 || >=23.5.0"
@@ -39,7 +39,8 @@
     "test:e2e": "cargo build -p spec-autonomous-cli --locked && node --test --test-concurrency=2 tests/e2e/*.test.mjs",
     "test:all": "node scripts/test-all.mjs",
     "mock:create": "node scripts/create-mock-repo.mjs",
-    "mock:run": "node tests/mock-host.mjs"
+    "mock:run": "node tests/mock-host.mjs",
+    "dogfood": "node scripts/dogfood.mjs"
   },
   "dependencies": {
     "commander": "14.0.3",

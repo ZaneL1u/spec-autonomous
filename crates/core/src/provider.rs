@@ -167,14 +167,34 @@ pub fn check_audit(snapshot: &Snapshot, audit: &[AuditItem]) -> Result<()> {
     if required.is_empty() {
         bail!("acceptance_missing: no native acceptance references found");
     }
-    let actual: std::collections::BTreeSet<_> =
-        audit.iter().map(|a| a.requirement.as_str()).collect();
-    if actual != required
-        || actual.len() != audit.len()
-        || audit.iter().any(|a| a.evidence.trim().is_empty())
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for item in audit {
+        *counts.entry(item.requirement.as_str()).or_default() += 1;
+    }
+    let actual: std::collections::BTreeSet<_> = counts.keys().copied().collect();
+    let missing: Vec<_> = required.difference(&actual).copied().collect();
+    let unexpected: Vec<_> = actual.difference(&required).copied().collect();
+    let duplicate: Vec<_> = counts
+        .iter()
+        .filter(|(_, count)| **count > 1)
+        .map(|(id, _)| *id)
+        .collect();
+    let no_evidence: Vec<_> = audit
+        .iter()
+        .filter(|a| a.evidence.trim().is_empty())
+        .map(|a| a.requirement.as_str())
+        .collect();
+    if !missing.is_empty()
+        || !unexpected.is_empty()
+        || !duplicate.is_empty()
+        || !no_evidence.is_empty()
     {
         bail!(
-            "audit_contract_error: audit must cover every exact metadata.acceptance ID once with evidence"
+            "audit_contract_error: missing={:?}; unexpected={:?}; duplicate={:?}; no_evidence={:?}; expected each metadata.acceptance ID exactly once",
+            missing,
+            unexpected,
+            duplicate,
+            no_evidence
         );
     }
     Ok(())

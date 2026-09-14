@@ -222,14 +222,18 @@ impl Coordinator<'_> {
         if !git::clean(origin)? {
             bail!("dirty_checkout: commit native changes before resuming");
         }
-        if self
+        let outstanding: Vec<_> = self
             .run
             .attempts
             .iter()
-            .any(|a| matches!(a.status.as_str(), "issued" | "claimed" | "receiving"))
-        {
+            .filter(|a| matches!(a.status.as_str(), "issued" | "claimed" | "receiving"))
+            .map(|a| format!("{}({})", a.id, a.status))
+            .collect();
+        if !outstanding.is_empty() {
             bail!(
-                "source_drift: revoke outstanding host work after it stops before reconciling source changes"
+                "source_drift: outstanding host work blocks new source; stop the host and revoke [{}] with work.revoke before retrying run {}",
+                outstanding.join(", "),
+                self.run.id
             );
         }
         for attempt in &mut self.run.attempts {

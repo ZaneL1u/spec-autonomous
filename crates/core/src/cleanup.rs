@@ -11,7 +11,7 @@ use std::{collections::BTreeMap, path::Path};
 
 /// Historical CLI entry: remove safe worktrees immediately, preserving every branch.
 pub fn cleanup(root: &Path, id: &str) -> Result<Value> {
-    execute(root, id, true, false, None, false)
+    execute(root, id, true, false, false, None, false)
 }
 
 /// Capability entry: preview first, then apply the exact observed plan.
@@ -22,7 +22,25 @@ pub fn cleanup_with_options(
     delete_branches: bool,
     plan_hash: Option<&str>,
 ) -> Result<Value> {
-    execute(root, id, apply, delete_branches, plan_hash, true)
+    cleanup_with_scope(root, id, apply, delete_branches, false, plan_hash)
+}
+pub fn cleanup_with_scope(
+    root: &Path,
+    id: &str,
+    apply: bool,
+    delete_branches: bool,
+    delete_integration: bool,
+    plan_hash: Option<&str>,
+) -> Result<Value> {
+    execute(
+        root,
+        id,
+        apply,
+        delete_branches,
+        delete_integration,
+        plan_hash,
+        true,
+    )
 }
 
 #[derive(Clone)]
@@ -177,6 +195,7 @@ fn execute(
     id: &str,
     apply: bool,
     delete_branches: bool,
+    delete_integration: bool,
     expected: Option<&str>,
     reviewed: bool,
 ) -> Result<Value> {
@@ -192,9 +211,12 @@ fn execute(
         bail!("run_active: only terminal runs can be cleaned");
     }
     let mut result = plan(&repo, &run, &store.list()?, delete_branches)?;
+    result["delete_integration"] = json!(delete_integration);
     let hash = paths::hash(serde_json::to_vec(&result)?);
     if apply && reviewed && expected != Some(hash.as_str()) {
-        bail!("source_drift: cleanup requires the current preview plan_hash");
+        bail!(
+            "source_drift: cleanup preview scope changed (delete_branches={delete_branches}, delete_integration={delete_integration}); re-run run.cleanup with the same scope and apply its new plan_hash"
+        );
     }
     result["plan_hash"] = json!(hash);
     result["applied"] = json!(apply);
@@ -202,6 +224,25 @@ fn execute(
     let mut removed_branches = vec![];
     let mut retained = result["retained_details"].as_array().unwrap().clone();
     if apply {
+        if delete_integration {
+            let integration = Path::new(&run.integration);
+            if integration == repo.root
+                || !git::clean(integration)?
+                || git::head(integration)? != run.accepted_head
+            {
+                retained.push(json!({"path":run.integration,"branch":run.integration_branch,"reason":"integration_not_safe_to_remove"}));
+            } else if git::command(
+                &repo.root,
+                &["worktree", "remove", "--", &run.integration],
+                None,
+            )
+            .is_ok()
+            {
+                removed.push(run.integration.clone());
+            } else {
+                retained.push(json!({"path":run.integration,"branch":run.integration_branch,"reason":"integration_remove_failed"}));
+            }
+        }
         for item in result["worktrees"].as_array().unwrap() {
             let path = item["path"].as_str().unwrap();
             // Git repeats dirtiness/lock checks at mutation time; never force removal.

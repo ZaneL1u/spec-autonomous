@@ -473,7 +473,7 @@ pub fn all() -> Vec<Capability> {
             write,
             &["run_id"],
             if id == "run.cleanup" {
-                json!({"run_id":s,"apply":b,"delete_branches":b,"plan_hash":s})
+                json!({"run_id":s,"apply":b,"delete_branches":b,"delete_integration":b,"plan_hash":s})
             } else {
                 json!({"run_id":s,"phase_id":s})
             },

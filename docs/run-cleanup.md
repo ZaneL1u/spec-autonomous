@@ -16,3 +16,8 @@ MCP 对应 `sa_tools` 的 `operation: "call"`、`capability: "run.cleanup"`，�
 始终保留集成工作树及其分支、运行账本、验证日志与证据文件。清理不会改写已验证进度，也不会清理外部或未登记的工作树。工作树或计划在预览之后发生变化会拒绝旧哈希；执行时再次检查 Git 状态，无法安全移除的项留在结果中供下一次处理。
 
 历史命令 `spec-autonomous cleanup <run-id>` 保持兼容：立即移除符合条件的干净工作树并保留全部分支。需要审阅清单或删除安全分支时使用 `tools call run.cleanup`。
+
+
+`delete_integration:true` 是额外的显式范围：仅在 integration worktree 干净、HEAD 等于 accepted_head、不是当前 checkout、且分支可安全处理时删除。运行记录、验证证据和账本始终保留；默认值为 false。预览哈希包含两个删除选项，应用时必须保持完全相同的 scope。
+
+Dogfood 可执行 `node scripts/dogfood.mjs`，验证初始化、auto 回执、progress 和 cleanup preview；它复制 `playground/` 到临时目录并在结束后删除。
