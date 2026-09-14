@@ -126,6 +126,33 @@ impl Coordinator<'_> {
                 bail!("no_progress: phase revision limit");
             }
             self.run.current_phase = Some(phase.id.clone());
+            let discussion =
+                crate::discussion::next(&self.project(), &self.run.id, Some(&phase.id))?;
+            let unresolved = discussion["cards"].as_array().is_some_and(|cards| {
+                cards.iter().any(|card| {
+                    card["requires_user"] == true
+                        && !self
+                            .run
+                            .host
+                            .as_ref()
+                            .unwrap()
+                            .decisions
+                            .iter()
+                            .any(|d| d["card_id"] == card["id"])
+                })
+            });
+            if unresolved {
+                self.run.status = "needs_input".into();
+                self.run.blocker = Some(format!(
+                    "discussion_required: phase {} has gray-area cards; use discussion.next then discussion.apply before continuing",
+                    phase.id
+                ));
+                self.save("discussion_required")?;
+                bail!(
+                    "needs_input: discussion_required: phase {} has unresolved gray areas",
+                    phase.id
+                );
+            }
             self.native_planning(&phase)?;
             if self.run.milestone.framework == Framework::Speckit {
                 provider::check_hooks(&self.project(), &self.run.config)?;

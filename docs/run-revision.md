@@ -61,3 +61,5 @@ MCP 使用 `sa_tools`：`operation: call`、`capability: run.revise`、`argument
 Before planning a phase, use `discussion.next` to render cards. Put the recommended option first and show alternatives; clicking an option calls `discussion.apply` with the source hash. `auto:true` applies only recommendations and leaves unresolved cards explicit. Decisions are written to a derived phase CONTEXT/DISCUSSION-LOG and the run ledger; native specs remain authoritative. This follows GSD discuss-phase's gray-area selection and context artifact pattern, adapted to deterministic host buttons.
 
 Smart discuss follows GSD's phase gray-area pattern: cards are deterministic, the recommended choice is first, alternatives remain visible, and host clicks are persisted as derived context decisions. It does not require conversational user answers.
+
+`auto` performs this check by default. An empty `cards` array means no gray area requires the user; the host shows the current decision summary and continues. A non-empty `requires_user` card list pauses the phase before native planning.
