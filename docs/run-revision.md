@@ -63,3 +63,5 @@ Before planning a phase, use `discussion.next` to render cards. Put the recommen
 Smart discuss follows GSD's phase gray-area pattern: cards are deterministic, the recommended choice is first, alternatives remain visible, and host clicks are persisted as derived context decisions. It does not require conversational user answers.
 
 `auto` performs this check by default. An empty `cards` array means no gray area requires the user; the host shows the current decision summary and continues. A non-empty `requires_user` card list pauses the phase before native planning.
+
+Roadmap `revision` is an internal CAS epoch, not a product version. In a continuously evolving project, add or split work items/phases and let the system advance the epoch automatically; teams coordinate through stable IDs, dependencies, ownership, snapshots and leases.

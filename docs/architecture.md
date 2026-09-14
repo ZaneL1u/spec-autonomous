@@ -123,3 +123,44 @@ A milestone is a stable internal project objective, identified by a durable `id`
 A milestone is decomposed into phases. Each phase points to exactly one native OpenSpec change or Spec Kit feature selector and is the unit for research/context, planning, verification and delivery. The roadmap stage creates those phase/spec boundaries; the per-phase planning stage turns native tasks plus research into executable plans. Smart Discuss runs before a phase plan: if no user-owned gray area exists, Auto shows the current decision summary and continues; otherwise it pauses with recommended and alternative choices.
 
 Research is phase-scoped context, not a replacement for native specs. It may record code patterns, integration constraints, verification gaps and recommendations, but native Markdown requirements remain authoritative. A package/product version is independent from milestone revision and is only changed by release/distribution work.
+
+## 敏捷多团队协作模型
+
+Spec Autonomous 不把里程碑当产品版本。持续迭代项目使用以下稳定对象协作：
+
+| 对象 | 协作含义 | 是否需要团队维护版本 |
+| --- | --- | --- |
+| 工作项 / 需求 ID | 来自 issue、产品 backlog 或外部 tracker 的稳定需求身份 | 否 |
+| Milestone | 一组相关目标的协作视图，可持续追加需求、拆分和关闭 | 否 |
+| Phase / Spec | 一个可独立研究、规划、验证和交付的工作流单元，绑定一个 OpenSpec change 或 Spec Kit feature | 否 |
+| Workstream | 同一项目中按团队、领域或交付边界划分的并行流 | 否 |
+| Snapshot | 某次准备工作的 source hash、Git accepted head 和依赖快照 | 自动生成 |
+| Run / Attempt | 一次执行和宿主回执的生命周期 | 自动生成 |
+| Release | 只有需要对外发布时才产生的产品/npm/部署版本 | 可选 |
+
+`milestone.toml.revision` 仍保留，但它是数据库式的内部乐观锁 epoch：roadmap 结构变更时自动递增，用户界面不要求填写、命名或同步它。它只用于拒绝过期的 roadmap 编辑，不能作为 sprint、发布版本或团队进度编号。准备和执行继续使用 source hash、accepted head 与决策记录绑定精确快照。
+
+### 多团队并行方式
+
+1. 需求进入 backlog，保留外部工作项 ID；创建或追加到一个 milestone 视图。
+2. roadmap 将 milestone 拆成多个 phase/spec。每个 phase 绑定 `source.selector`，声明 `depends_on`、读写范围、verification 和 workstream/owner 元数据。
+3. 每个团队领取自己的 phase 或 task packet。claim lease、host session 和 worktree 是执行隔离；团队不需要共享一个版本号。
+4. 只在依赖边允许时并行。不同 workstream 的写集独立即可并行；未知写集保守串行；progress 聚合所有 worktree、run 和 team ownership。
+5. 新需求不创建新版本：追加工作项，新增或调整 phase，roadmap epoch 自动变化，旧 run 通过 source drift/CAS 停止，已验证工作保持不变。
+6. 需要发布时，发布流程自行决定版本号；它与 milestone、phase、run 完全独立。
+
+### 推荐状态流
+
+```text
+backlog item
+  -> milestone view
+  -> phase/spec + workstream + dependencies
+  -> research/context
+  -> plan/tasks
+  -> host packets / worktrees
+  -> verified receipt
+  -> integrated progress
+  -> optional release
+```
+
+同一项目可以同时存在多个 active milestone view、多个团队 workstream 和多个 run。协作冲突由 source hash、写集、依赖、lease、CAS 和决策记录解决，而不是由人为分配版本号解决。

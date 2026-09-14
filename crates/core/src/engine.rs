@@ -69,6 +69,9 @@ pub fn source_milestone(framework: Framework, selector: &str) -> Milestone {
             label: "1".into(),
             title: selector.into(),
             depends_on: vec![],
+            workstream: None,
+            owner: None,
+            external_ids: vec![],
             source: Source {
                 kind: if framework == Framework::Openspec {
                     "openspec-change"

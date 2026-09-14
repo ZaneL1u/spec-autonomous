@@ -75,6 +75,9 @@ fn roadmap() -> Milestone {
                 label: "1".into(),
                 title: "Foundation".into(),
                 depends_on: vec![],
+                workstream: None,
+                owner: None,
+                external_ids: vec![],
                 source: Source {
                     kind: "openspec-change".into(),
                     selector: "foundation-change".into(),
@@ -86,6 +89,9 @@ fn roadmap() -> Milestone {
                 label: "2".into(),
                 title: "Greeting".into(),
                 depends_on: vec!["foundation".into()],
+                workstream: None,
+                owner: None,
+                external_ids: vec![],
                 source: Source {
                     kind: "openspec-change".into(),
                     selector: "greeting-change".into(),
@@ -97,6 +103,9 @@ fn roadmap() -> Milestone {
                 label: "3".into(),
                 title: "Delivery".into(),
                 depends_on: vec!["greeting".into()],
+                workstream: None,
+                owner: None,
+                external_ids: vec![],
                 source: Source {
                     kind: "openspec-change".into(),
                     selector: "delivery-change".into(),

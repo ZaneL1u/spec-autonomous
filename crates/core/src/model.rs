@@ -31,6 +31,13 @@ pub struct Phase {
     #[serde(default)]
     pub depends_on: Vec<String>,
     pub source: Source,
+    /// Optional stable coordination metadata; it is not a release/version field.
+    #[serde(default)]
+    pub workstream: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub external_ids: Vec<String>,
     #[serde(default)]
     pub verification: Vec<Check>,
 }
