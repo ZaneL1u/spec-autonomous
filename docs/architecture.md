@@ -115,3 +115,11 @@ MCP 是本地 stdio JSON-RPC，支持初始化、工具列表/调用、资源列
 文档修改使用 expected_hash；frontmatter 修改保留 Markdown 正文字节和未知字段值。TOML 的结构化修改保留字段语义，不承诺保持原排版。roadmap 修改检查 DAG、源身份、范围和生成视图所有权。Git commit 只提交明确路径，保留其他已暂存内容。worktree 删除保护 dirty/locked/外部工作，分支和证据默认保留。
 
 Doctor 只读；repair 仅支持列出的操作，带预览、CAS 和备份。不会猜测修复损坏 ledger，也不会自动解除宿主的文件权限或信任限制。
+
+## Milestone, phase/spec and revision
+
+A milestone is a stable internal project objective, identified by a durable `id`; it is not a semver release. Its `revision` is an internal optimistic-concurrency number for roadmap structure. A revision changes when phase membership, dependencies, source selectors or roadmap decisions change. Prepared runs also bind the roadmap and native sources through source hashes and accepted Git heads.
+
+A milestone is decomposed into phases. Each phase points to exactly one native OpenSpec change or Spec Kit feature selector and is the unit for research/context, planning, verification and delivery. The roadmap stage creates those phase/spec boundaries; the per-phase planning stage turns native tasks plus research into executable plans. Smart Discuss runs before a phase plan: if no user-owned gray area exists, Auto shows the current decision summary and continues; otherwise it pauses with recommended and alternative choices.
+
+Research is phase-scoped context, not a replacement for native specs. It may record code patterns, integration constraints, verification gaps and recommendations, but native Markdown requirements remain authoritative. A package/product version is independent from milestone revision and is only changed by release/distribution work.
