@@ -4,19 +4,19 @@ Provide observable and verifiable agent execution behavior for Spec Autonomous u
 
 ## ADDED Requirements
 
-### Requirement: Start every attempt with a fresh session
-The system SHALL start each worker attempt in a fresh agent session without the full coordinator history or implicit resume identifier and SHALL reject runners that cannot provide this capability.
+### Requirement: Require a fresh host session for every attempt
+The system SHALL issue each worker attempt as an immutable host work request that requires a fresh agent context without the full coordinator history or an implicit resume identifier. The CLI SHALL validate the host-declared session identity and SHALL NOT start an agent or model session itself.
 
 #### Scenario: Retry a task
 - **WHEN** a new attempt is scheduled after failure
-- **THEN** it receives a new session with only task context and relevant failure evidence
+- **THEN** the host receives a new work request containing only task context and relevant failure evidence and claims it with a unique fresh session identity
 
 ### Requirement: Isolate writing workers
-The system SHALL give each writing worker an independent managed Git worktree and SHALL report the actual runner sandbox capabilities separately from worktree isolation.
+The system SHALL assign each writing request an independent managed Git worktree and SHALL report the host sandbox capabilities separately from worktree isolation.
 
 #### Scenario: Concurrent writers
-- **WHEN** two independent writing tasks run concurrently
-- **THEN** they use separate worktrees and neither owns shared source-task completion writes
+- **WHEN** a host runs two independent writing requests concurrently
+- **THEN** they use separate assigned worktrees and neither owns shared source-task completion writes
 
 ### Requirement: Bound context and validate results
 The system SHALL bound coordinator summaries and worker input/results, preserve mandatory constraints, and verify result identity, paths and actual changes before accepting a candidate.
@@ -25,19 +25,23 @@ The system SHALL bound coordinator summaries and worker input/results, preserve 
 - **WHEN** a worker returns an oversized result or the wrong attempt identity
 - **THEN** the result is rejected without marking the task complete
 
-### Requirement: Cancel the full process tree
-The system SHALL enforce attempt timeouts and cancellation across the runner process tree on each platform it claims to support.
+### Requirement: Coordinate cancellation across the ownership boundary
+The CLI SHALL stop and clean up complete process trees only for deterministic subprocesses that it started. For host-owned agent sessions, pause, cancel, timeout and stale leases SHALL return explicit host stop actions and SHALL require host confirmation before ownership is revoked or work is reassigned.
 
-#### Scenario: Worker exceeds timeout
-- **WHEN** the configured attempt timeout expires
-- **THEN** dispatch stops for that attempt, its process tree is terminated, and durable failure evidence is recorded
+#### Scenario: Host request exceeds its lease
+- **WHEN** a host-owned request has no recent heartbeat
+- **THEN** the CLI reports its state as stale or unknown, does not start a replacement agent, and returns the stop-and-revoke action required from the host
+
+#### Scenario: Verification subprocess exceeds timeout
+- **WHEN** a CLI-owned verification process exceeds its configured timeout
+- **THEN** the CLI terminates its complete process tree and records durable failure evidence on every platform currently claimed as supported
 
 ### Requirement: Provide skill entry points over the CLI
 The npm distribution SHALL include milestone, autonomous, progress and resume skill assets with autonomous as the primary short command and auto as its exact alias. Host-specific entry points SHALL invoke the same CLI contracts as terminal users rather than maintain a second orchestration state machine.
 
 #### Scenario: Invoke autonomous through a skill
 - **WHEN** a supported host invokes the autonomous skill with milestone and phase bounds
-- **THEN** the CLI receives equivalent selection and policy fields and owns subsequent runtime state
+- **THEN** the CLI receives equivalent selection and policy fields, owns deterministic runtime state, and returns semantic work to the host
 
 #### Scenario: Invoke the short alias
 - **WHEN** a supported host invokes auto instead of autonomous with the same arguments

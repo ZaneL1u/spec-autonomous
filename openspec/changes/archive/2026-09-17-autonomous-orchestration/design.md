@@ -1,4 +1,8 @@
-> 历史 alpha.1 方案：CLI agent launcher 的职责已由 [host-driven-capabilities](../host-driven-capabilities/design.md) 替代。保留此前验收和未完成发行项，不以旧模型运行记录证明新 host 协议。
+> 历史总蓝图：alpha.1 曾让 CLI 直接启动 agent；该职责已由
+> `host-driven-capabilities` 的 host-driven 协议替代。当前 CLI 只生成工作包、
+> 校验宿主回执并执行确定性的 Git、验证、集成和恢复操作，永不创建 agent 或模型会话。
+> 本文按当前协议完成最终对账；公开 npm 和未验证平台的发行工作由
+> `native-cli-distribution` 规范及后续独立发行变更承接。
 
 # Spec Autonomous：整里程碑自主开发技术方案
 
@@ -22,7 +26,7 @@ OpenSpec 有工件 DAG 和 JSON 指令；新版 Spec Kit 已有 workflow、fan-o
 
 ## 3. 用户流程与 CLI
 
-以下接口已在本地 alpha 实现，执行需现有 SDD、已配置 runner 和干净 Git 基线：
+以下接口已在本地 alpha 实现，执行需现有 SDD、具备 fresh-context 能力的宿主和干净 Git 基线：
 
 ```sh
 spec-autonomous detect --json
@@ -132,7 +136,7 @@ Spec Kit source 改为 `{ kind = "speckit-feature", path = "specs/002-team-invit
 
 native 用户可以直接使用安装好的 OpenSpec/Spec Kit 命令或 skills 操作同一批原生 artifacts，完全不依赖本项目 runtime 持续在线。我们的 native 模式只读取进度、生成原生下一步指令/上下文并交出控制权，不隐式启动自动执行。卸载本产品后，用户仍能按其 SDD 框架继续工作；TOML overlay 的存在不是原生使用前置条件。
 
-autonomous 模式消费同一 NativeWorkflowBridge.next_action，自动启动 fresh planning/execution agent、检查产物与门、推进下一阶段。OpenSpec 的 schema/template/context/rules，Spec Kit 的 constitution/templates/checklists/hooks 都保留；两种模式差别在推进与调度，不另写一套规划方法。
+autonomous 模式消费同一 NativeWorkflowBridge.next_action，生成 fresh planning/execution 工作包并等待宿主回执，再检查产物与门、推进下一阶段。OpenSpec 的 schema/template/context/rules，Spec Kit 的 constitution/templates/checklists/hooks 都保留；两种模式差别在推进与调度，不另写一套规划方法。
 
 原生→自主：锁定当前原生文件与 Git revision，导入已完成工件、重验来源任务，再从缺失步骤开始；不要求重写既有 plans。自主→原生：停止派发并协调在途 worker，输出一个可直接操作的 planning/integration checkout 与明确原生命令；先安全交付 accepted checkpoint 或给出该分支路径，不能把用户送回仍过期的原 checkout。交接后释放运行锁，不允许两个 coordinator 同时写。
 
@@ -144,7 +148,7 @@ autonomous 模式消费同一 NativeWorkflowBridge.next_action，自动启动 fr
 
 | 数据 | 权威来源 | CLI 读取结果 |
 | --- | --- | --- |
-| 项目策略、runner/skill profile | config.toml 和相关 TOML | 有效配置、来源和能力 |
+| 项目策略、host/skill profile | config.toml 和相关 TOML | 有效配置、来源和能力 |
 | milestone/phase 拓扑和 source refs | milestone.toml | roadmap/phase 依赖、阶段编号 |
 | 规范、设计、原生 tasks | 上游 Markdown 与其规定的元数据 | requirements、scenarios、task IDs、checkbox、phase/story/frontmatter |
 | attempts、leases、验证/集成事件 | 本地事务账本 | worker/task 状态与证据摘要 |
@@ -214,28 +218,30 @@ flowchart TD
   FLOW --> ADAPTER
   ADAPTER --> SNAP[Source snapshot + milestone scope]
   SNAP --> PLAN[Planner → validated task DAG]
-  PLAN --> HOST
-  HOST <--> DB[(Local SQLite ledger)]
-  HOST --> RUNNER[AgentRunner]
-  RUNNER --> W1[Fresh worker + worktree A]
-  RUNNER --> W2[Fresh worker + worktree B]
+  PLAN --> CORE[Deterministic capability core]
+  CORE <--> DB[(Local SQLite ledger)]
+  CORE --> PACKET[Immutable host work packets]
+  PACKET --> HOST[Host-owned fresh sessions]
+  HOST --> W1[Fresh worker + worktree A]
+  HOST --> W2[Fresh worker + worktree B]
   W1 --> VERIFY[Host checks + verifier]
   W2 --> VERIFY
-  VERIFY --> INTEGRATE[Serial integration + writeback]
-  INTEGRATE --> HOST
-  HOST --> DONE[Milestone acceptance + delivery]
+  VERIFY --> RECEIPT[Structured host receipts]
+  RECEIPT --> CORE
+  CORE --> INTEGRATE[Serial integration + writeback]
+  INTEGRATE --> DONE[Milestone acceptance + delivery]
 ```
 
 | 接口 | 职责 | 不承担 |
 | --- | --- | --- |
 | SpecAdapter | detect/select/inspect/snapshot/context/prepare_writeback | 模型运行、并发调度 |
 | NativeWorkflowBridge | 解析原生阶段/skill/template、next_action、规划缺失工件、检查 stage gate | 另造产品规范语言、跳过上游必需约束 |
-| AgentRunner | probe/start_fresh/events/cancel/collect_result | 决定任务或里程碑完成 |
-| Supervisor | DAG、状态机、预算、leases、验证、集成、恢复 | 复制上游模板系统、累积全量对话 |
+| Host work protocol | 工作包、claim、heartbeat、结构化回执、停止确认 | 创建或停止 agent、决定任务完成 |
+| Capability core | DAG、状态机、预算、leases、验证、集成、恢复 | 复制上游模板系统、调用模型、累积全量对话 |
 
-确定性 Rust 控制流拥有状态。语义分析交给短生命周期 planner/verifier/repair agent，它们返回结构化提议，host 校验后执行。无需一个永不结束、无限增长的主 LLM 会话；主线程由 milestone snapshot、decisions 和有界 summary 维护。
+确定性 Rust 控制流拥有状态。语义分析通过工作包交给宿主创建的短生命周期 planner/verifier/repair agent，它们返回结构化提议，能力核心校验后执行。无需一个永不结束、无限增长的主 LLM 会话；主线程由 milestone snapshot、decisions 和有界 summary 维护。
 
-core 实际分为 discovery、config/model、provider/markdown、plan、runner/process、git/state、progress/cleanup/skills 和 engine。engine 再按 lifecycle、planning、execution、recovery 拆分。CLI 使用 clap；本地有界并发使用标准线程和消息/取消状态，未引入 Tokio。rusqlite bundled 提供事务，serde/TOML 提供协议，SHA256 提供 provenance。DAG 使用纯函数校验和就绪队列；Git 通过 argv 调用。模块职责与测试注入点见 architecture.md。
+core 实际分为 discovery、config/model、provider/markdown、plan、work_packet、engine/host、git/state、process、progress/cleanup/skills 和 capabilities。engine 再按 lifecycle、planning、execution、recovery 拆分。CLI 使用 clap；rusqlite bundled 提供事务，serde/TOML 提供协议，SHA256 提供 provenance。DAG 使用纯函数校验和就绪队列；Git 与原生 provider/验证命令通过 argv 调用。模块职责与测试注入点见 architecture.md。
 
 采用独立 Rust 二进制，不使用 N-API，避免 Node ABI 和 Bun runtime 绑定。Node 只选择平台、转发参数/stdio/退出码/信号。npm 发行细节见 [distribution.md](../../../docs/distribution.md)。
 
@@ -318,7 +324,7 @@ host 验证 ID 唯一、引用存在、无环、所有待做来源 task 被覆�
 ## 7. 整里程碑自主循环
 
 ```text
-resolve goal or existing milestone + mode + runner + policy
+resolve goal or existing milestone + mode + host capacity + policy
 if roadmap is absent: derive roadmap and native phase references from goal
 resolve bounded phase selection and outside-range prerequisites
 while selected scope is not terminal:
@@ -326,14 +332,14 @@ while selected scope is not terminal:
     next = NativeWorkflowBridge.next_action(current_phase)
     if mode is native: return handoff path and original action
     if next requires a product decision: persist needs_input
-    if next is planning: dispatch fresh planning agent using native contracts
+    if next is planning: issue a fresh planning work request using native contracts
     if next is implementation: import/reconcile phase task graph
     reconcile completed attempts and unfinished integration intents
     validate candidate result; run host verification
     integrate valid work serially; verify combined revision
     write back satisfied source tasks in integration checkout
     classify failures; enqueue bounded in-scope repairs
-    dispatch ready tasks while worker capacity and budget permit
+    issue ready host requests while worker capacity and budget permit
     if current phase tasks satisfied: verify phase, refresh roadmap, advance within range
     if bounded selection satisfied: deliver checkpoint and return scope_completed
     if full milestone satisfied:
@@ -346,19 +352,17 @@ while selected scope is not terminal:
 
 首版将原生规划作为自主循环的一部分。inspect 报缺工件和 next_action，autonomous 根据原生 workflow 补齐，implementation_ready 仍是代码派发门。目标不明确到需要产品取舍时集中询问必要决定；已授权边界内的常规规划、拆分、交接与修复自动进行，不把每个 artifact 都变成新的确认点。
 
-初始默认：每 task 最多 3 attempts、每 attempt 墙钟 30 分钟、run 墙钟 8 小时、milestone repair rounds 最多 2，可在启动时一次配置。token/cost 预算只有 runner 能可靠计量时启用；未知显示 unavailable，不能记零。
+初始默认：每 task 最多 3 attempts、每 attempt 墙钟 30 分钟、run 墙钟 8 小时、milestone repair rounds 最多 2，可在启动时一次配置。token/cost 只有宿主在回执中可靠报告时记录；未知显示 unavailable，不能记零。
 
 编译/测试/契约差距 → fresh repair；集成冲突 → 范围受限 conflict task；短暂网络/限流 → 有限退避；鉴权/缺工具 → paused；新增需求/验收矛盾/新权限 → needs_input。同一 failure fingerprint 且无代码/证据进展达 2 次，或预算耗尽，停止重试并保存恢复点。
 
 如果原来的 checkbox 全勾但无账本证据，先审核当前代码与范围验收，成功才记录 observed-complete。尚未规划 tasks 时继续 native planning；原生流程确认规划结束却仍无可执行任务才报 no_executable_tasks。scope_completed 要求所选阶段与交付验收通过；milestone completed 还要求整个 roadmap 与原始范围全部覆盖、最终验收通过，不能用局部任务计数替代。
 
-## 8. Fresh context 与 runner 协议
+## 8. Fresh context 与 host work 协议
 
-首个 runner 为 command profile：调用用户已安装且已认证的非交互 agent launcher。具体 vendor profile 经真实 CLI 版本验证后支持；slash commands 不是可执行程序。profile 定义 executable、argv 模板、stdin/input file、result file、允许环境、fresh/headless/cancel/usage 能力。
+CLI 和 MCP 不包含 agent executable、模型 SDK、vendor launcher 或会话恢复入口。它们为语义工作生成 immutable request；宿主使用自身已认证能力创建 fresh context、领取 request、维持 heartbeat，并提交符合结果 schema 的回执。CLI 校验宿主声明的唯一 session identity，但不声称能观察宿主内部如何创建上下文。
 
-argv 只按参数替换，不经过 shell。显式项目验证脚本可包含必要 shell 逻辑，但不从模型文本拼接命令。doctor 检查工具版本、新会话、禁止隐式 resume、非交互和取消能力；不具备新会话语义的 runner 不宣称 fresh-context 支持。先用 deterministic fixture runner 验证状态机，再用真实 agent 的小仓库验证集成；两者证据分开。
-
-每 attempt 产生 immutable input.json/context.md，含 scope、单任务、验收、base commit、worktree、相关 spec/plan/规则、依赖摘要、写集和结果 schema。默认无主对话、旧 session ID 或其他 worker 完整报告。重试也是新会话，只接收必要失败摘要和证据路径。
+每个 attempt 产生 immutable input.json/prompt.md/result.schema.json，含 scope、单任务、验收、base commit、assigned worktree、相关 spec/plan/规则、依赖摘要、写集和结果 schema。默认无主对话、旧 session ID 或其他 worker 完整报告。重试生成新的 request，并要求新的宿主 session identity，只接收必要失败摘要和证据路径。
 
 建议输入预算 24k tokens，summary ≤8 KiB，result JSON ≤64 KiB，主摘要 ≤32 KiB；完整日志单独落盘并设配额。token 估计须标明；必需规则不能静默截断，超预算先拆任务，仍超出就报告 constraint。主线程持有决策索引，通过引用按需读取。
 
@@ -377,9 +381,9 @@ argv 只按参数替换，不经过 shell。显式项目验证脚本可包含必
 }
 ```
 
-worker 只能报 candidate/blocked/failed，不能宣布 verified/integrated。host 验证身份与 attempt nonce、结果大小/schema、路径边界、真实 diff；重跑必要命令，不信自报 exit 0。完整日志不回填主上下文。
+worker 只能报 candidate/blocked/failed，不能宣布 verified/integrated。能力核心验证 request/token/host/session identity、结果大小/schema、路径边界和真实 diff；重跑必要命令，不信自报 exit 0。完整日志不回填主上下文。
 
-Unix 使用进程组，Windows 使用 Job Object 等价机制清理子孙进程。SIGINT 停派、落盘、graceful cancel，超时 kill；未通过真实平台进程回收验证前不声称支持 unattended 执行。不能留后台 agent 继续改文件。
+CLI 只负责自己启动的 Git、provider、hook 和验证子进程：在已声明支持的平台上使用进程组或等价机制传播信号、限制超时并清理完整进程树。外部 agent 会话归宿主所有；pause/cancel/timeout/stale lease 返回明确的 host stop action，在宿主确认停止并 revoke 前不转移所有权、不创建替代 agent。stale 只表示 unknown。
 
 ## 9. Worktree、验证集成与交付
 
@@ -399,7 +403,7 @@ worker 验证通过后按确定顺序集成，并在组合后的 revision 重新
 
 首个本地执行 profile 将 push/PR/部署/publish/原生归档留在独立原生或发行流程，policy 的 archive/push/publish 必须为 false；设置 true 返回 policy_capability_unavailable，而不会静默忽略或擅自执行。最终交付包含已验证分支/fast-forward 和报告。远程生命周期 profile 尚不在本轮本地能力声明内；不得将本地实现完成等同 npm 已发布或原生变更应归档。
 
-worktree 不是 OS sandbox。runner 复用其权限/沙箱，autonomous 不自动设置 unrestricted/yolo。diff 检查能拒绝集成，不能追溯阻止无沙箱进程的系统越界写入；doctor 明确实际限制。
+worktree 不是 OS sandbox。worker 复用宿主权限/沙箱，autonomous 不自动设置 unrestricted/yolo。diff 检查能拒绝集成，不能追溯阻止无沙箱进程的系统越界写入；doctor 明确实际限制。
 
 ## 10. SQLite 账本与崩溃恢复
 
@@ -438,7 +442,7 @@ SQLite 无法与 Git 原子提交。副作用使用 durable intent + reconciliat
 
 若 2/3 后、4 前崩溃，resume 查询 trailer、祖先关系、tree hash 和源内容后补记，不盲目重做 cherry-pick 或回写。只有 intent 无副作用才重试；无法唯一判断时暂停保留证据。写文件使用同目录临时文件、flush、rename，并验证各平台持久性。
 
-恢复先核对 origin/source、runner 进程身份（PID+启动标识）、leases、Git HEAD 和 intents。lease 过期不代表进程已死，不能同时启动重复 attempt。checkbox 为 X 但无可核验提交/证据时必须重新审核，不能自动补记完成。
+恢复先核对 origin/source、host request 所有权与停止确认、CLI 自有子进程身份、leases、Git HEAD 和 intents。lease 过期不代表宿主 agent 已死，不能签发重复 attempt。checkbox 为 X 但无可核验提交/证据时必须重新审核，不能自动补记完成。
 
 ## 11. 验证、repair 与完成报告
 
@@ -450,7 +454,7 @@ SQLite 无法与 Git 原子提交。副作用使用 durable intent + reconciliat
 
 ## 12. 配置、自主授权与预算
 
-优先级：CLI > 项目配置 > 用户配置 > defaults。secret 不进仓库，使用已认证 agent 或显式环境来源；公开 run/progress 隐去 runner 环境与命令参数，credential 不进入 prompt；原始本机子进程日志可能包含工具输出，受本机访问权限保护，不承诺任意外部工具日志都能自动识别秘密。
+优先级：CLI > 项目配置 > 用户配置 > defaults。secret 不进仓库，agent 认证归宿主，确定性工具使用显式环境来源；公开 run/progress 隐去环境与敏感命令参数，credential 不进入 prompt；原始本机子进程日志可能包含工具输出，受本机访问权限保护，不承诺任意外部工具日志都能自动识别秘密。
 
 ```toml
 schema_version = 1
@@ -462,15 +466,16 @@ attempt_timeout_seconds = 1800
 run_timeout_seconds = 28800
 max_repair_rounds = 2
 delivery = "ff-original"
-[runner]
-profile = "command"
+[host]
+max_concurrency = 3
+lease_seconds = 1800
 [policy]
 archive = false
 push = false
 publish = false
 ```
 
-有效 policy 快照保存在 run，resume 默认继承。普通代码编辑、测试、已授权集成和修复不重复确认。范围外动作、必要新决策或预算增加才请求用户；允许的独立任务仍可推进。未提供可靠 usage 的 runner 禁止声称 dollar/token budget 已被强制执行。
+有效 policy 快照保存在 run，resume 默认继承。普通代码编辑、测试、已授权集成和修复不重复确认。范围外动作、必要新决策或预算增加才请求用户；允许的独立任务仍可推进。宿主未提供可靠 usage 时禁止声称 dollar/token budget 已被强制执行。
 
 ## 13. 版本路线与 OpenSpec 推进
 
@@ -480,13 +485,13 @@ publish = false
 | M1 OpenSpec milestone skills + CLI | 目标→TOML roadmap→多 phase 原生规划与自主开发；skills、范围与全 worktree progress | 两 phase fixture + 真实 agent；from/to 与 native 交接验证 |
 | M2 reliable parallel autonomy | 独立 worktree 并行、repair、完整恢复 | 冲突/源漂移/kill 窗口/组合验证/无进展测试 |
 | M3 Spec Kit parity | 相同 CLI/skills/roadmap 循环驱动原生 feature 规划和开发 | 模板/phase/story/[P]/路径/hook/交接能力测试 |
-| M4 public npm alpha | 平台包、安装 smoke、可复现发布 | 六平台原生 CI 与真实 npm 安装/registry 完整性 |
+| M4 distribution follow-up | 平台包、安装 smoke、可复现发布 | 由 `native-cli-distribution` 规范和独立发行变更承接，不阻塞本总蓝图归档 |
 
 M1 先证明“给目标，经 skill/CLI 自动形成 roadmap 并完成里程碑”，同时提供有界范围和所有 worktree 的可读状态；M2 增加可靠并行与查询并发一致性，M3 复用同一循环。具体任务见 [tasks.md](tasks.md)。本仓库保留官方 spec-driven，bootstrap 已归档；本变更保持开放，直到所有要求真正实现并验收。
 
 ## 14. 测试与验收矩阵
 
-单元测试覆盖检测/解析/source map/DAG/冲突/状态/预算；固定 upstream commit 的契约 fixtures；临时 Git 仓库 + deterministic runner 的集成测试；小型真实模型验收独立记录。fixture 成功不替代实际模型完成证据。
+单元测试覆盖检测/解析/source map/DAG/冲突/状态/预算；固定 upstream commit 的契约 fixtures；临时 Git 仓库 + 独立 mock host 的集成测试；小型真实宿主验收独立记录。fixture 成功不替代实际模型完成证据。
 
 | 场景 | 必须观察到 |
 | --- | --- |
@@ -522,10 +527,10 @@ M1 先证明“给目标，经 skill/CLI 自动形成 roadmap 并完成里程碑
 - 写集推断遗漏 → 保守串行、真实 diff 边界、重新规划，接受部分并发损失。
 - SQLite/Git 无跨系统事务 → intent/trailer/reconciliation，歧义暂停。
 - 测试不完备 → requirement-to-evidence 审核，不宣称数学正确性。
-- runner 权限和 session 语义不同 → doctor 明确 profile 能力，不假定普遍一致。
+- host 权限和 session 语义不同 → request/claim 协议要求 fresh-context 声明，并明确这不是对宿主内部实现的观察证明。
 - 平台发行成本 → 本机只证明 macOS arm64，其他需原生 CI。
 
-可后置：公开品牌/npm scope、首个官方 vendor runner、最低 OS/glibc 版本、跨 framework 混合 milestone、跨不相关仓库 progress。单框架多 phase roadmap、skills、from/to 和同仓所有 worktree progress 已进入首版范围，不再作为未来可选项。
+可后置：公开品牌/npm scope、最低 OS/glibc 版本、跨 framework 混合 milestone、跨不相关仓库 progress。跨平台和公开 npm 发行由 `native-cli-distribution` 规范继续约束；单框架多 phase roadmap、skills、from/to 和同仓所有 worktree progress 已进入首版范围，不再作为未来可选项。
 
 ## 15. 本地实现补充
 

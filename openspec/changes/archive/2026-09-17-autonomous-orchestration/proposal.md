@@ -1,4 +1,6 @@
-> 历史 alpha.1 方案：CLI agent launcher 的职责已由 [host-driven-capabilities](../host-driven-capabilities/design.md) 替代。保留此前验收和未完成发行项，不以旧模型运行记录证明新 host 协议。
+> 历史总蓝图：alpha.1 曾让 CLI 直接启动 agent；该职责已由
+> `host-driven-capabilities` 的 host-driven 协议替代。当前 CLI 只生成工作包、
+> 校验宿主回执并执行确定性的 Git、验证、集成和恢复操作，永不创建 agent 或模型会话。
 
 # Autonomous milestone execution
 
@@ -14,10 +16,10 @@
 - 从给定目标研究和规划 roadmap，再通过原生 workflow 补齐工件；已有原生工作可直接接续，保留必需约束和质量门。
 - 支持 from/to/only 阶段范围，范围完成与全里程碑完成分开；原生/自主模式可以明确交接。
 - progress 汇总同 Git 仓库的所有 worktree，包括并发 workers 与外部 worktrees；提供 human/JSON/TOML 输出，并从 MD 提取带来源的结构化字段。
-- Rust supervisor 自动推进执行闭环，常规任务交接和范围内修复无需用户反复“继续”。
-- 每任务使用 fresh-context worker 和独立 worktree，依赖及写集允许时并行；主线程维护决策、计划与简短摘要。
+- 确定性引擎跨宿主回合推进执行闭环，常规任务交接和范围内修复无需用户反复“继续”。
+- 每任务生成要求 fresh context 的工作包和独立 worktree；宿主创建 worker，会话身份、依赖及写集允许时并行，主线程维护决策、计划与简短摘要。
 - 增加稳定任务图、预算、无进展检查、持久化账本与暂停恢复。
-- 分离 spec adapter 和 agent runner，复用原生规范体系，通过 npm 分发 CLI。
+- 分离 spec adapter、host work protocol 与确定性能力核心，复用原生规范体系，通过私有 Git Release 分发当前已验证平台的 CLI。
 
 ## Capabilities
 
@@ -26,7 +28,7 @@
 - `spec-adapters`: 原生 workflow 桥接、MD 结构化读取、选择/导入/回写及能力边界。
 - `milestone-autonomy`: 目标到 roadmap、阶段范围、原生/自主交接、有界修复与最终验收。
 - `task-planning`: TOML roadmap 与执行图、稳定身份、依赖/拆分和并行约束。
-- `agent-execution`: npm skills、统一 CLI、新会话、隔离工作区、上下文与进程控制。
+- `agent-execution`: npm skills、统一 CLI、host-owned fresh context、隔离工作区、工作包与取消协调。
 - `run-recovery`: 全 worktree progress、持久化状态、租约、预算、交接恢复和崩溃协调。
 - `verified-integration`: 验证证据、受控集成、并发编辑检查和最终交付。
 
@@ -36,4 +38,4 @@
 
 ## Impact
 
-影响 Rust core/runtime/workflow/adapters/progress、CLI、npm skill assets/installer、TOML 契约与端到端测试。计划引入 Tokio、SQLite、TOML/Markdown parser；本次不提前安装 runtime 依赖。保留 OpenSpec spec-driven；可版本化编排 TOML 与运行 DB/logs 分开管理。本变更仍待实现，当前 binary 只有 bootstrap detect 能力。
+影响 Rust core/runtime/workflow/adapters/progress、CLI、npm skill assets/installer、TOML 契约与端到端测试。保留 OpenSpec spec-driven；可版本化编排 TOML 与运行 DB/logs 分开管理。当前实现使用 host-driven 工作包协议：宿主拥有 agent 生命周期，CLI/MCP 共享不调用模型的确定性能力核心。公开 npm 与未验证平台发行不属于本历史总蓝图的完成条件。

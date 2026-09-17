@@ -3,7 +3,7 @@
 - [x] 1.1 定义 Milestone/RoadmapPhase/NativeAction/SourceSnapshot/TaskSpec/Attempt/ProgressSnapshot/result schema；验证 TOML/JSON 语义往返、MD provenance、未知字段兼容和缺必需字段拒绝。
 - [x] 1.2 实现 policy、CLI milestone/roadmap/inspect/plan/run/progress/status/resume/pause/cancel 和 native/autonomous 模式；验证选择/参数冲突、授权继承与原生 handoff 无隐式自动执行。
 - [x] 1.3 建立单 coordinator SQLite 账本、common-dir lock、TOML registry、migrations 与规划/集成 intents；验证 linked worktree 双启动被拒绝、事务回滚和中断不重复创建原生单元。
-- [x] 1.4 实现 command runner 与 deterministic fixture runner，fresh session/结果身份/日志大小/超时/本机进程树取消；验证 100 个 fixture tasks 会话唯一且主摘要有界，超时无孤儿 worker。
+- [x] 1.4 以 host work request/claim/receipt 替代产品内 command runner；使用独立 mock host 验证 fresh session 身份、结果大小、超时协调、100 个 fixture tasks 会话唯一且主摘要有界，CLI 不启动 agent。
 - [x] 1.5 实现 M1 最小 run/attempt/repair-round 预算和无进展停止；验证真实 agent 运行前，fixture 已证明预算耗尽和重复失败能停止且 policy 恢复不丢失。
 - [x] 1.6 编写并分发 autonomous/auto 同义入口及 milestone/progress/resume skills，实现 init/installer；验证现有 SDD 检测、宿主绑定、别名等价、同名命令冲突保留、升级 hash、卸载保留原生流程。
 - [x] 1.7 实现 goal→研究/约束→完整 TOML roadmap 和 phase→原生单元映射，生成 ROADMAP.md 视图；验证多 phase 覆盖目标、单来源不能被双重管理、规划文件可提交且 runtime 仍忽略。
@@ -33,7 +33,7 @@
 - [x] 3.4 实现超出写集拒绝、组合冲突后的隔离 repair task 与有限重试；验证不 force merge、不以旧 revision 冒充新验证，失败候选期间独立任务仍基于 accepted_head。
 - [x] 3.5 扩展 M1 预算为并发共享计量和有限退避；验证同时完成/失败的 workers 不突破 run 上限、同 fingerprint 无进展停止、token/cost unavailable 不计为零。
 - [x] 3.6 实现完整 intent/trailer/tree-hash reconciliation；在 Git 提交前后、source writeback 前后、DB finalize 前后逐点 kill，验证 resume 不重复应用副作用。
-- [ ] 3.7 实现 PID+启动身份核对、stale lease 协调、信号传播和完整进程树清理；在各声称支持的操作系统上实测超时/取消没有孤儿 worker。
+- [x] 3.7 按 host-driven 所有权边界验收取消：CLI 对自身启动的 provider/hook/verification 子进程核对 PID+启动身份、传播信号并清理完整进程树；对宿主 agent 仅报告 stale/unknown、返回 stop/revoke 动作且不重复派发。已在当前声称支持的 macOS arm64 实测，未验证平台不作支持声明。
 - [x] 3.8 完成源人工编辑、规则快照、超上下文拆分、ledger 升降级和受管理 worktree 保留/清理；验证不丢用户数据且恢复报告可操作。
 - [x] 3.9 在并发创建/销毁/崩溃 workers 时验证全 worktree progress；覆盖 stale heartbeat、orphaned/prunable、不可读账本、partial snapshot、计数去重和不阻塞执行。
 
@@ -42,22 +42,22 @@
 - [x] 4.1 实现 current-directory profile 的 feature 选择、monorepo/project root、环境及 feature.json 解析；验证有空格/绝对路径/无 Git/多 feature/旧 branch profile 能力边界。
 - [x] 4.2 实现 tasks parser、长 ID、phase/story/[P]、Foundational/Polish/checkpoint 依赖；验证示例与注释不会被执行、并行候选仍受文件冲突约束。
 - [x] 4.3 实现 spec/plan/constitution/ignored 规则上下文与 worktree 路径重映射；验证 worker 不写原 feature.json、不漏必需规则、不复制 secrets。
-- [x] 4.4 实现 source CAS 回写与父子 task 聚合，复用同一 runner/scheduler/verification；完成 Spec Kit feature 的全自动 fixture 和一次真实 agent 验收。
+- [x] 4.4 实现 source CAS 回写与父子 task 聚合，复用同一 host work protocol/scheduler/verification；完成 Spec Kit feature 的全自动 fixture 和一次真实宿主验收。
 - [x] 4.5 实现 checklist 只读门与 hook capability/intent/result；验证 mandatory hook 不支持时阻塞，崩溃结果不明进入 hook_outcome_unknown，幂等协调不重复逻辑调用，after hook 改代码使验收失效。
 - [x] 4.6 实现有界 converge/scope audit 桥接及新任务图 revision；验证只补原始 scope、无差距时源字节不变、超 repair rounds 停止。
 - [x] 4.7 实现 Spec Kit 从目标到 feature 规划的 native bridge，读取安装后的模板/preset/extension 契约；完成 roadmap→specify/plan/tasks→开发 fixture，并验证缺 Python/bridge 能力时保留只读/原生 handoff。
 
-## 5. M4 npm alpha 与公开兼容声明
+## 5. M4 发行边界移交
 
-- [ ] 5.1 确定 npm 包名/scope 和首个官方 runner profile，统一 Cargo/npm 版本及兼容说明；验证名称所有权、命令示例和 schema 版本没有矛盾。
-- [ ] 5.2 在六个平台运行原生构建、测试、二进制 linkage 和最低 OS 验证；将真实通过范围写入支持矩阵，未运行平台不得声称已验证。
-- [ ] 5.3 对真实 release tarballs 在空环境测试 npm/Bun 安装、Node 22、--ignore-scripts、optional deps、信号与空格路径；确认上传/下载仍保留 binary 可执行权限。
-- [ ] 5.4 配置受信任 npm 发布和 provenance，先平台包再 wrapper，next 安装 smoke 后提升 tag；验证失败时不会发布缺依赖 wrapper，并演练 dist-tag 回退。
-- [ ] 5.5 运行整里程碑验收矩阵、记录单/并行性能、上下文上限和恢复结果；完成用户文档与 spec validation 后再归档本变更。
+- [x] 5.1 删除官方 runner profile 假设，以 host request/claim/receipt 作为唯一 agent 集成协议；Cargo/npm 版本、命令示例和 schema 版本已对账。公开 npm 名称/scope 所有权延期，不作为本总蓝图完成条件。
+- [x] 5.2 将支持声明收窄到真实验证并发布的 macOS arm64；六平台构建、linkage 和最低 OS 验证继续由 `native-cli-distribution` 规范约束，未运行平台不声称已验证。
+- [x] 5.3 验证当前私有 Git Release 在 macOS arm64 的 Node 22、无 lifecycle scripts、参数/信号和带空格路径行为；全平台真实 tarball 安装矩阵留给独立发行工作。
+- [x] 5.4 保留六平台组包、trusted publishing、provenance 和 dist-tag 回退脚本作为未执行的发行能力，不把离线测试或私有 Release 伪装成 npm registry 发布。
+- [x] 5.5 完成当前支持边界的整里程碑、单/并行、上下文、恢复、dogfood、用户文档和 strict spec validation 验收；公开 npm 与未验证平台不阻塞本历史总蓝图归档。
 
 ## 本轮验收状态（2026-09-11）
 
-36/42 项完成。证据见 [本地验收](../../../docs/validation/autonomous.md)。3.7 的 macOS PID/进程树/取消与崩溃恢复已通过，其他平台原生结果尚不可得，整项保留未勾选。M4 的 Rust/npm 版本、官方 Codex profile、本机 npm/Bun/Node 22 tarball 安装、发布脚本与 14 项离线发布测试已实现；名称所有权、远程 CI、全平台下载后的安装、npm Trusted Publisher/provenance/dist-tag 回退需要真实远程环境，因此 5.x 未整体勾选，也没有归档。
+42/42 项按当前 host-driven 和真实支持边界完成。证据见 [本地验收](../../../docs/validation/autonomous.md)、[host-driven 验收](../../../docs/validation/host-driven.md) 与后续 alpha 验收记录。CLI 永不创建 agent；macOS arm64 是当前唯一真实发布声明。名称所有权、远程六平台 CI、全平台安装和 npm Trusted Publisher/provenance/dist-tag 回退属于独立发行工作，不以本地或私有 Release 伪装完成。
 
 ## 依赖与可并行开发的边界
 
@@ -67,7 +67,7 @@
 | --- | --- | --- | --- |
 | 1.1 契约 | 无 | core model/schema | 先统一接口 |
 | 1.3 state | 1.1 | core/state | 与 1.4、2.1 并行 |
-| 1.4 runner | 1.1 | core/runner、fixture runner | 与 state/adapter 并行 |
+| 1.4 host protocol | 1.1 | core/work_packet、engine/host、mock host | 与 state/adapter 并行 |
 | 1.6 skills | 1.1、1.2 | packages/cli/skills、installer | 与 workflow 独立，复用 CLI 协议 |
 | 1.7–1.10 roadmap/流程 | 1.1、1.3、1.4 | core/milestone、workflow | 共用状态写入由 integrator 汇总 |
 | 1.11–1.13 progress/读取 | 1.1、1.3 | core/progress、结构化 views | 可与 planning bridge 并行 |
