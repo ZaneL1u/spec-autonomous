@@ -1,7 +1,7 @@
 # dogfood-rough-edges Specification
 
 ## Purpose
-TBD - created by archiving change dogfood-rough-edges. Update Purpose after archive.
+定义 dogfood 流程中审计、清理、恢复与事件分页的可诊断行为，确保失败信息可操作且状态观测完整。
 ## Requirements
 ### Requirement: Explain audit contract differences
 The audit contract error SHALL identify missing, unexpected, duplicate and evidence-less requirement IDs when validation fails.

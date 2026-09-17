@@ -1,7 +1,7 @@
 # recoverable-autonomy Specification
 
 ## Purpose
-TBD - created by archiving change recoverable-autonomy. Update Purpose after archive.
+定义自治执行在验证修订、进程中断与持久化意图场景下的安全恢复行为，确保恢复过程核对实际 Git 和进程状态，避免丢失已验收工作、重复语义劳动或盲目重放副作用。
 ## Requirements
 ### Requirement: Revise pending verification without losing accepted work
 The system SHALL preview and apply reasoned verification changes to pending work with a compare-and-swap hash. Accepted tasks, native requirements, run identity, scope and Git history SHALL remain unchanged. Revised checks SHALL still execute before completion.

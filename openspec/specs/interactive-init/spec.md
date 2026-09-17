@@ -1,7 +1,7 @@
 # interactive-init Specification
 
 ## Purpose
-TBD - created by archiving change interactive-init. Update Purpose after archive.
+定义交互式与非交互式初始化的选项解析、原生 provider 引导和项目基础结构创建行为，确保自动化调用不会等待输入，既有框架和用户配置不会被静默替换。
 ## Requirements
 ### Requirement: Select initialization options interactively or by arguments
 The npm CLI SHALL offer localized framework and host choices for missing init options in an interactive terminal. Explicit options SHALL take precedence. Complete parameter invocations SHALL remain non-interactive.

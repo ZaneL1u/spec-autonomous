@@ -1,7 +1,7 @@
 # smart-discuss Specification
 
 ## Purpose
-TBD - created by archiving change smart-discuss. Update Purpose after archive.
+定义阶段规划前灰区问题的确定性呈现、选择持久化与受限自动决策协议，使宿主能够通过稳定卡片明确验证和排序策略，并在来源变化或选择冲突时安全停止。
 ## Requirements
 ### Requirement: Offer clickable discussion cards
 The system SHALL expose deterministic phase gray areas as cards with one recommended option, alternatives, rationale and impact, using stable IDs.
