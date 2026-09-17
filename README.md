@@ -4,7 +4,9 @@
 
 用户继续使用 OpenSpec / Spec Kit 的原生规范与工作流。CLI 封装结构化读取、上下文准备、就绪判断、worktree、验证、集成、回写和归档；宿主创建 fresh-context agent 并返回结果。
 
-当前版本 `0.1.0-alpha.13`，通过私有 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
+[中文文档站](https://zanel1u.github.io/spec-autonomous/) · [快速开始](https://zanel1u.github.io/spec-autonomous/guide/quick-start)
+
+当前版本 `0.1.0-alpha.13`，通过公开 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -18,15 +20,15 @@
 - [交互式与参数式初始化](docs/initialization.md)
 - [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
 - [CLI 框架与命令接口](docs/cli-interface.md)
-- [私有 GitHub 直装](docs/private-git-install.md)
+- [GitHub 直装](docs/private-git-install.md)
 - [CLI 国际化](docs/localization.md)
 
 ## 安装和绑定
 
-另一台已登录同一 GitHub 账号的 gh、且有仓库 SSH 访问权限的 Mac，可以直接安装：
+已安装并登录 `gh` 的 Mac 可以直接安装：
 
 ```sh
-npm install -g git+ssh://git@github.com/ZaneL1u/spec-autonomous.git
+npm install -g git+https://github.com/ZaneL1u/spec-autonomous.git
 spec-autonomous --version
 ```
 

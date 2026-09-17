@@ -3,6 +3,8 @@
 .spec-autonomous/
 target/
 node_modules/
+website/.vitepress/cache/
+website/.vitepress/dist/
 packages/cli/native/
 *.tgz
 .DS_Store

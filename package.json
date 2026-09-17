@@ -38,6 +38,9 @@
     "test:provider": "cargo test -p spec-autonomous-core --locked --test provider_contracts real_openspec_plans_then_accepts_skipped_specs_and_custom_tracking_artifact -- --ignored --exact",
     "test:e2e": "cargo build -p spec-autonomous-cli --locked && node --test --test-concurrency=2 tests/e2e/*.test.mjs",
     "test:all": "node scripts/test-all.mjs",
+    "docs:dev": "vitepress dev website",
+    "docs:build": "vitepress build website",
+    "docs:preview": "vitepress preview website",
     "mock:create": "node scripts/create-mock-repo.mjs",
     "mock:run": "node tests/mock-host.mjs",
     "dogfood": "node scripts/dogfood.mjs"
@@ -47,6 +50,7 @@
     "@inquirer/prompts": "8.7.2"
   },
   "devDependencies": {
-    "@fission-ai/openspec": "1.13.0"
+    "@fission-ai/openspec": "1.13.0",
+    "vitepress": "1.6.4"
   }
 }
