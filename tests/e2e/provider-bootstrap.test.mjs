@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { binary, workspace, fixture, git, cleanEnv } from './helpers.mjs';
 const launcher = process.env.SPEC_AUTONOMOUS_TEST_LAUNCHER || join(workspace, 'packages/cli/bin/spec-autonomous.mjs');
 
@@ -24,7 +24,10 @@ if (${Boolean(options.fail)}) process.exit(23);
 const target=path.join(process.cwd(),'node_modules/@fission-ai/openspec/bin');fs.mkdirSync(target,{recursive:true});
 fs.writeFileSync(path.join(target,'openspec.js'),${JSON.stringify(installedEntry)});`);
   const home = join(parent, 'providers');
-  const env = cleanEnv({ SPEC_AUTONOMOUS_BINARY: binary, SPEC_AUTONOMOUS_PROVIDER_HOME: home, npm_execpath: npm, SPEC_AUTONOMOUS_OFFLINE: '0' });
+  const path = (process.env.PATH || '').split(delimiter).filter(directory =>
+    !['openspec', 'openspec.cmd', 'openspec.exe'].some(name => existsSync(join(directory, name)))
+  ).join(delimiter);
+  const env = cleanEnv({ PATH: path, SPEC_AUTONOMOUS_BINARY: binary, SPEC_AUTONOMOUS_PROVIDER_HOME: home, npm_execpath: npm, SPEC_AUTONOMOUS_OFFLINE: '0' });
   return { root, parent, home, marker, env };
 }
 function cli(f, args) {
@@ -89,7 +92,7 @@ test('MCP adds provider tools without stdout pollution and lazily installs befor
   assert.equal((await mcp.call('sa_providers', { operation: 'ensure', provider: 'openspec' })).error.code, -32002);
   assert.equal(existsSync(f.marker), false);
   await mcp.init();
-  const tools = await mcp.request('tools/list'); assert.equal(tools.result.tools.length, 9);
+  const tools = await mcp.request('tools/list'); assert.equal(tools.result.tools.length, 10);
   assert.ok(tools.result.tools.some(tool => tool.name === 'sa_providers'));
   await mcp.call('sa_progress', {}); await mcp.call('sa_doctor', {});
   const status = await mcp.call('sa_providers', { operation: 'status' });

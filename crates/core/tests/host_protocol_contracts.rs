@@ -48,6 +48,10 @@ fn fixture() -> tempfile::TempDir {
     config.runner.profile = "command".into();
     config.runner.command = vec!["must-never-start-this-agent".into()];
     config.runner.fresh_session = true;
+    config.verification = vec![Check {
+        argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
+        cwd: ".".into(),
+    }];
     put(
         root.path(),
         ".spec-autonomous/config.toml",

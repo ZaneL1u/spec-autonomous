@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {fixture, edit, git, join, workspace} from './helpers.mjs';
-import {raw, drive, cleanEnv} from '../mock-host.mjs';
+import {raw, drive, cleanEnv, resolveDiscussion} from '../mock-host.mjs';
 
 function execute(root, request, changeResult = () => {}) {
   const owner = {host_id: 'revision-e2e', session_id: request.request_id, fresh_context: true};
@@ -19,8 +19,9 @@ function execute(root, request, changeResult = () => {}) {
   const result = JSON.parse(readFileSync(request.result_path, 'utf8'));
   changeResult(result);
   writeFileSync(request.result_path, JSON.stringify(result));
-  return raw(root, ['apply-result', '--result', request.result_path, '--token', request.token,
+  const applied = raw(root, ['apply-result', '--result', request.result_path, '--token', request.token,
     '--host-id', owner.host_id, '--session-id', owner.session_id, '--fresh-context', '--view', 'full']);
+  return resolveDiscussion(root, applied);
 }
 
 test('a failed verification command can be revised and delivered in the same run without redoing accepted work', {timeout: 120000}, async t => {

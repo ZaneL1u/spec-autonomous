@@ -165,7 +165,7 @@ test('an unsupported mandatory after hook is rejected before any implementation 
 `);
   commit(root);
   const origin = git(root, ['rev-parse', 'HEAD']);
-  const result = cli(root, ['run', '--milestone', 'M001', '--only', 'P001']);
+  const result = cli(root, ['run', '--milestone', 'M001', '--only', 'P001'], { env: { SPEC_AUTONOMOUS_LANG: 'en' } });
   assert.notEqual(result.status, 0, result.details);
   assert.match(failure(result), /hook_unsupported|mandatory.*hook|hook.*capability/);
   assert.match(failure(result), /speckit\.missing\.verify/);

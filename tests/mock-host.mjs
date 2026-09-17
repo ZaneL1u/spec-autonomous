@@ -15,6 +15,15 @@ export function raw(root,args,env={}){
  if(r.error)throw r.error;let output;try{output=parseOutput(r.stdout)}catch{}
  return {...r,output,data:output?.data,details:`exit=${r.status}\n${r.stderr}\n${r.stdout.slice(-6000)}`};
 }
+export function resolveDiscussion(root,current,env={}){
+ if(current.data?.status!=='needs_input'||!current.data?.blocker?.includes('discussion_required'))return current;
+ const run_id=current.data.id,phase_id=current.data.current_phase;
+ const preview=raw(root,['tools','call','discussion.next','--input',JSON.stringify({run_id,phase_id})],env);
+ if(preview.status!==0)throw Error(preview.details);
+ const applied=raw(root,['tools','call','discussion.apply','--input',JSON.stringify({run_id,phase_id,source_hash:preview.data.source_hash,selections:[],auto:true})],env);
+ if(applied.status!==0)throw Error(applied.details);
+ return applied.data.unresolved?.length?current:raw(root,['resume',run_id],env);
+}
 export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={}){
  let current=raw(root,args,env);const jobs=new Map();let abort=false;
  const kill=child=>{if(!child?.pid)return;try{if(process.platform==='win32')spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});else process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL')}};
@@ -23,6 +32,11 @@ export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={
  try{
   for(let round=0;round<maxRounds;round++){
    onSnapshot(current);
+   if(current.data?.status==='needs_input'&&current.data?.blocker?.includes('discussion_required')){
+    current=resolveDiscussion(root,current,env);
+    if(current.data?.status==='needs_input')return current;
+    continue;
+   }
    if(current.status!==0||current.data?.status!=='awaiting_host'){if(current.data?.id){const full=raw(root,['status',current.data.id],env);if(full.data){current.output={schema_version:1,data:full.data};current.data=full.data;current.stdout=JSON.stringify(current.output);}}return current;}
    for(const request of current.data.work??[]){
     if(jobs.has(request.request_id))continue;

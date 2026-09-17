@@ -14,10 +14,10 @@ function connect(t,root){
  const notify=(method,params={})=>child.stdin.write(JSON.stringify({jsonrpc:'2.0',method,params})+'\n');
  return {child,request,notify,call:async(name,arguments_={})=>{const r=await request('tools/call',{name,arguments:arguments_});if(r.error)throw Error(JSON.stringify(r.error));return r.result;},init:async()=>{const r=await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test-host',version:'1'}});assert.equal(r.result.protocolVersion,'2025-11-25');notify('notifications/initialized');return r.result;},close:async()=>{child.stdin.end();await new Promise(resolve=>child.once('exit',resolve));assert.equal(child.exitCode,0,stderr);}};
 }
-test('MCP exposes seven complete tools and one granular dispatcher, with explicit protocol errors',{timeout:30000},async t=>{
+test('MCP exposes eight complete tools and one granular dispatcher, with explicit protocol errors',{timeout:30000},async t=>{
  const root=fixture(t,'speckit');const client=connect(t,root);
  assert.equal((await client.request('tools/list')).error.code,-32002);const init=await client.init();assert.ok(!init.capabilities.sampling);
- const list=await client.request('tools/list');assert.equal(list.result.tools.length,8);assert.ok(list.result.tools.some(t=>t.name==='sa_tools'));assert.ok(!list.result.tools.some(t=>t.name==='sa_frontmatter_patch'));
+ const list=await client.request('tools/list');assert.equal(list.result.tools.length,9);assert.ok(list.result.tools.some(t=>t.name==='sa_tools'));assert.ok(!list.result.tools.some(t=>t.name==='sa_frontmatter_patch'));
  const catalog=await client.call('sa_tools',{operation:'list'});assert.ok(catalog.structuredContent.data.capabilities.length>=50);
  const before=git(root,['status','--porcelain']);const progress=await client.call('sa_progress');assert.equal(progress.isError,false);const direct=raw(root,['progress']);assert.equal(progress.structuredContent.data.repository_id,direct.data.repository_id);assert.equal(git(root,['status','--porcelain']),before);
  assert.equal((await client.call('sa_progress',{typo:true})).isError,true);assert.equal((await client.request('tools/call',{name:'unknown_tool'})).error.code,-32602);

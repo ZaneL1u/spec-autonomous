@@ -44,6 +44,10 @@ fn fixture() -> (tempfile::TempDir, Value) {
     let mut config = Config::default();
     config.execution.max_workers = 2;
     config.host.max_concurrency = 2;
+    config.verification = vec![Check {
+        argv: vec!["git".into(), "status".into(), "--porcelain".into()],
+        cwd: ".".into(),
+    }];
     put(
         root.path(),
         ".spec-autonomous/config.toml",
@@ -51,13 +55,49 @@ fn fixture() -> (tempfile::TempDir, Value) {
     );
     git::command(root.path(), &["init", "-q", "-b", "main"], None).unwrap();
     git::commit(root.path(), "fixture").unwrap();
-    let prepared = api::invoke(
+    let mut prepared = api::invoke(
         root.path(),
         "prepare",
         &json!({"feature":"specs/feature", "view":"full"}),
     )
     .unwrap();
-    let request = &prepared["work"][0];
+    if prepared["work"].as_array().is_some_and(Vec::is_empty) {
+        assert!(
+            prepared["blocker"]
+                .as_str()
+                .is_some_and(|blocker| blocker.contains("discussion_required")),
+            "{prepared}"
+        );
+        let preview = api::invoke(
+            root.path(),
+            "discussion.next",
+            &json!({"run_id":prepared["id"],"phase_id":"P001"}),
+        )
+        .unwrap();
+        let applied = api::invoke(
+            root.path(),
+            "discussion.apply",
+            &json!({
+                "run_id": prepared["id"],
+                "phase_id": "P001",
+                "source_hash": preview["source_hash"],
+                "selections": [],
+                "auto": true
+            }),
+        )
+        .unwrap();
+        assert_eq!(applied["unresolved"], json!([]), "{applied}");
+        prepared = api::invoke(
+            root.path(),
+            "prepare",
+            &json!({"run_id":prepared["id"], "view":"full"}),
+        )
+        .unwrap();
+    }
+    let request = prepared["work"]
+        .as_array()
+        .and_then(|work| work.first())
+        .unwrap_or_else(|| panic!("prepare returned no work request: {prepared}"));
     let input: WorkerInput = serde_json::from_value(
         engine::work_context(
             root.path(),
