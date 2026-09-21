@@ -26,24 +26,26 @@
     "node": "^22.13.0 || >=23.5.0"
   },
   "scripts": {
-    "build:native": "node scripts/build-native.mjs",
-    "test": "cargo test --workspace --locked && node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs",
+    "build:cli": "tsdown",
+    "build:native": "node scripts/build-native.mts",
+    "typecheck": "tsc --noEmit",
+    "test": "cargo test --workspace --locked && node --test packages/cli/test/*.test.mts scripts/test/*.test.mts",
     "check": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "spec:validate": "openspec validate --all --strict --no-interactive",
-    "pack:local": "node scripts/pack-local.mjs",
-    "package:release": "node scripts/package-release.mjs",
-    "references:clone": "node scripts/clone-references.mjs",
+    "pack:local": "node scripts/pack-local.mts",
+    "package:release": "node scripts/package-release.mts",
+    "references:clone": "node scripts/clone-references.mts",
     "test:unit": "cargo test --workspace --locked",
-    "test:package": "node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs",
+    "test:package": "node --test packages/cli/test/*.test.mts scripts/test/*.test.mts",
     "test:provider": "cargo test -p spec-autonomous-core --locked --test provider_contracts real_openspec_plans_then_accepts_skipped_specs_and_custom_tracking_artifact -- --ignored --exact",
-    "test:e2e": "cargo build -p spec-autonomous-cli --locked && node --test --test-concurrency=2 tests/e2e/*.test.mjs",
-    "test:all": "node scripts/test-all.mjs",
+    "test:e2e": "cargo build -p spec-autonomous-cli --locked && node --test --test-concurrency=2 tests/e2e/*.test.mts",
+    "test:all": "node scripts/test-all.mts",
     "docs:dev": "vitepress dev website",
     "docs:build": "vitepress build website",
     "docs:preview": "vitepress preview website",
-    "mock:create": "node scripts/create-mock-repo.mjs",
-    "mock:run": "node tests/mock-host.mjs",
-    "dogfood": "node scripts/dogfood.mjs"
+    "mock:create": "node scripts/create-mock-repo.mts",
+    "mock:run": "node tests/mock-host.mts",
+    "dogfood": "node scripts/dogfood.mts"
   },
   "dependencies": {
     "commander": "14.0.3",
@@ -51,6 +53,9 @@
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.0",
+    "@types/node": "^26.6.2",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
     "vitepress": "1.6.4"
   }
 }

@@ -1,31 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { TestContext } from 'node:test';
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createProviderManager, downloadVerified, withInstallLock } from '../lib/providers.mjs';
+import { createProviderManager, downloadVerified, withInstallLock, type ProviderManager } from '../lib/providers.mjs';
 import { versions, uvHashes } from '../lib/provider-versions.mjs';
 import { mergeScaffold, mcpNeedsProvider, needsProvider, createProviderContext, cliSource } from '../lib/provider-cli.mjs';
-import { runProcess } from '../lib/provider-process.mjs';
+import { runProcess, type RunOptions } from '../lib/provider-process.mjs';
 
-async function setup(t, options = {}) {
+interface SetupOptions { fail?: boolean; badProbe?: boolean; uv?: boolean; env?: NodeJS.ProcessEnv }
+interface Call { argv: string[]; opts: RunOptions }
+
+async function setup(t: TestContext, options: SetupOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), 'sa providers unit '));
   t.after(() => rm(home, { recursive: true, force: true }));
-  const calls = [];
-  const run = async (argv, opts = {}) => {
+  const calls: Call[] = [];
+  const run = async (argv: string[], opts: RunOptions = {}) => {
     calls.push({ argv, opts });
     if (argv.includes('install') && argv.some(a => a.startsWith('@fission-ai/openspec@'))) {
-      const file = join(opts.cwd, 'node_modules/@fission-ai/openspec/bin/openspec.js');
+      const file = join(opts.cwd!, 'node_modules/@fission-ai/openspec/bin/openspec.js');
       await mkdir(dirname(file), { recursive: true }); await writeFile(file, '// installed');
       if (options.fail) return { code: 1, stdout: '', stderr: 'mock installation failed' };
     }
     if (argv.includes('tool') && argv.includes('install')) {
-      const file = join(opts.env.UV_TOOL_BIN_DIR, process.platform === 'win32' ? 'specify.exe' : 'specify');
+      const file = join(opts.env!.UV_TOOL_BIN_DIR!, process.platform === 'win32' ? 'specify.exe' : 'specify');
       await mkdir(dirname(file), { recursive: true }); await writeFile(file, 'specify fixture');
     }
-    return { code: options.badProbe && ['--version', 'version'].includes(argv.at(-1)) ? 1 : 0,
+    return { code: options.badProbe && ['--version', 'version'].includes(argv.at(-1)!) ? 1 : 0,
       stdout: argv.at(-1) === 'version' ? `Spec Kit CLI: ${versions.speckit}` : argv[0].includes('uv') ? `uv ${versions.uv}` : versions.openspec, stderr: '' };
   };
   const env = { ...process.env, PATH: '', ...options.env };
@@ -47,7 +51,7 @@ test('missing OpenSpec installs once, validates and reuses an isolated receipt',
 test('parallel worktree requests converge on one verified installation', async t => {
   const { manager, home, calls } = await setup(t);
   const results = await Promise.all(Array.from({ length: 6 }, () => manager.ensure('openspec', { root: home })));
-  assert.equal(new Set(results.map(r => r.command.at(-1))).size, 1);
+  assert.equal(new Set(results.map(r => r.command!.at(-1))).size, 1);
   assert.equal(calls.filter(c => c.argv.includes('install')).length, 1);
 });
 test('failed install leaves no receipt and retry uses a fresh generation', async t => {
@@ -77,10 +81,10 @@ test('Spec Kit installs with dedicated tool, binary, Python and cache directorie
   const { manager, home, calls } = await setup(t, { uv: true });
   const result = await manager.ensure('speckit', { root: home });
   assert.equal(result.ready, true);
-  const install = calls.find(c => c.argv.includes('tool'));
+  const install = calls.find(c => c.argv.includes('tool'))!;
   assert.ok(install.argv.includes(`specify-cli==${versions.speckit}`));
-  for (const key of ['UV_TOOL_DIR', 'UV_TOOL_BIN_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_CACHE_DIR']) assert.ok(install.opts.env[key].startsWith(home));
-  assert.equal(install.opts.env.UV_PYTHON_DOWNLOADS, 'automatic');
+  for (const key of ['UV_TOOL_DIR', 'UV_TOOL_BIN_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_CACHE_DIR']) assert.ok(install.opts.env![key]!.startsWith(home));
+  assert.equal(install.opts.env!.UV_PYTHON_DOWNLOADS, 'automatic');
 });
 test('uv download rejects mismatched bytes before writing any archive', async t => {
   const { home } = await setup(t), file = join(home, 'uv.tar.gz'), bytes = Buffer.from('fake archive');
@@ -119,11 +123,11 @@ test('passive operations stay offline', () => {
   assert.equal(mcpNeedsProvider({ method: 'tools/call', params: { name: 'sa_tools', arguments: { operation: 'call', capability: 'native.instructions' } } }), true);
 });
 test('structured source and continuation retain their explicit or ledger provider', async t => {
-  const { home } = await setup(t); const ensured = [];
-  const manager = { env: {}, ensure: async name => { ensured.push(name); return { provider: name, ready: true }; },
-    run: async argv => ({ code: 0, stdout: JSON.stringify(argv.includes('status')
+  const { home } = await setup(t); const ensured: string[] = [];
+  const manager = { env: {}, ensure: async (name: string) => { ensured.push(name); return { provider: name, ready: true }; },
+    run: async (argv: string[]) => ({ code: 0, stdout: JSON.stringify(argv.includes('status')
       ? { data: { milestone: { framework: 'speckit' } } }
-      : { root: home, selected: null, detected: [{ framework: 'speckit' }, { framework: 'openspec' }] }) }) };
+      : { root: home, selected: null, detected: [{ framework: 'speckit' }, { framework: 'openspec' }] }) }) } as unknown as ProviderManager;
   const context = createProviderContext('/mock/native', { path: home }, manager);
   await context.ensureSource({ run_id: 'run-1' });
   await context.ensureSource(await cliSource({ command: { name: 'tools', arguments: { command: { name: 'call', arguments: { input: '{"framework":"openspec"}' } } } } }));

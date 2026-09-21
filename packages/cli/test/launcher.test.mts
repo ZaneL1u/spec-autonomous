@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { platformFor } from '../lib/platform.mjs';
+
+// These two paths stay `.mjs`: they are the committed build output that users
+// actually execute, so the launcher contract is verified against the artifact.
 const launcher = fileURLToPath(new URL('../bin/spec-autonomous.mjs', import.meta.url));
 const forwardModule = new URL('../lib/cli-process.mjs', import.meta.url).href;
 const forwardScript = `import {forwardProcess} from ${JSON.stringify(forwardModule)}; process.exitCode = await forwardProcess([process.execPath, ...process.argv.slice(1)]);`;
@@ -42,7 +45,7 @@ test('forwards SIGTERM to the native child', { skip: process.platform === 'win32
   const child = spawn(process.execPath, ['--input-type=module', '-e', forwardScript, fixture], { stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const exit = once(child, 'exit');
-  await once(child.stdout, 'data');
+  await once(child.stdout!, 'data');
   child.kill('SIGTERM');
   assert.equal((await exit)[0], 42);
 });

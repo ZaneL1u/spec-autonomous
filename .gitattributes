@@ -1,0 +1,16 @@
+# Spec Autonomous is authored in Rust (crates/) and TypeScript (*.mts).
+# The entries below keep generated and fixture files out of GitHub's language
+# statistics and collapse them in diffs, so reviews stay on the real sources.
+
+# Committed build output. The Git facade executes these straight from a clone,
+# so they stay tracked, but they are produced by tsdown from packages/cli/src.
+packages/cli/bin/*.mjs linguist-generated=true
+packages/cli/lib/*.mjs linguist-generated=true
+packages/cli/lib/*.d.mts linguist-generated=true
+
+# A simulated end-user repository, used only by the dogfood scenario.
+playground/** linguist-detectable=false
+
+# Machine-managed lockfiles.
+bun.lock linguist-generated=true
+Cargo.lock linguist-generated=true

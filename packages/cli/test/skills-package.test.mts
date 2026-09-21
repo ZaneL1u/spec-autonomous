@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { npmCommand } from '../../../scripts/npm-command.mjs';
+import { npmCommand } from '../../../scripts/npm-command.mts';
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const names = ['auto', 'autonomous', 'milestone', 'progress', 'resume'];
@@ -33,18 +33,29 @@ test('auto uses the same host-owned capability and receipt protocol as autonomou
   assert.match(alias, /scope_completed/);assert.match(alias, /The host allocates each fresh context/);
 });
 
+test('the root Git facade declares no script that pacote treats as install preparation', () => {
+  // pacote clones a Git dependency and prepares it when any of these scripts
+  // exist, which would run in a tree that has no node_modules. Keep build
+  // scripts under a namespaced name such as build:cli or build:native.
+  const manifest = JSON.parse(readFileSync(join(source, '../../package.json'), 'utf8'));
+  for (const name of ['preinstall', 'install', 'postinstall', 'prepack', 'prepare', 'build']) {
+    assert.equal(manifest.scripts[name], undefined, `root package.json must not declare a ${name} script`);
+  }
+  assert.equal(manifest.workspaces, undefined, 'a workspaces field also triggers pacote preparation');
+});
+
 test('local npm tarball includes public skills when lifecycle scripts are disabled', (t) => {
   const output = mkdtempSync(join(tmpdir(), 'spec autonomous local skills '));
   t.after(() => rmSync(output, { recursive: true, force: true }));
   const result = npmCommand(['pack', '--ignore-scripts', '--json', '--workspaces=false', '--pack-destination', output], { cwd: source, encoding: 'utf8' });
   const [packed] = JSON.parse(result.stdout);
   assert.ok(existsSync(join(output, packed.filename)));
-  const paths = new Set(packed.files.map((entry) => entry.path));
+  const paths = new Set(packed.files.map((entry: { path: string }) => entry.path));
   for (const name of names) assert.ok(paths.has(`skills/${name}/SKILL.md`), `missing packed skill: ${name}`);
   assert.ok(paths.has('locales/en.json')); assert.ok(paths.has('locales/zh-CN.json'));
   assert.ok(paths.has('bin/spec-autonomous.mjs'));
   for (const path of ['bin/provider-bridge.mjs', 'lib/providers.mjs', 'lib/provider-cli.mjs', 'lib/provider-mcp.mjs', 'lib/provider-process.mjs', 'lib/provider-versions.mjs']) assert.ok(paths.has(path), `missing provider runtime: ${path}`);
-  assert.equal([...paths].some((path) => path.includes('.references/') || path.includes('.spec-autonomous/')), false);
+  assert.equal([...paths].some((path) => String(path).includes('.references/') || String(path).includes('.spec-autonomous/')), false);
   const installed = join(output, 'installed');
   npmCommand(['install', '--prefix', installed, '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', join(output, packed.filename)], { encoding: 'utf8' });
   for (const name of names) {

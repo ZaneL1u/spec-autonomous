@@ -38,7 +38,7 @@ test('system preference readers are bounded and do not use a shell', () => {
 });
 
 test('async language contexts stay isolated and preserve internal English errors', async () => {
-  assert.deepEqual(await Promise.all(['zh-CN', 'en'].map(locale => withLocale(locale, async () => {
+  assert.deepEqual(await Promise.all((['zh-CN', 'en'] as const).map(locale => withLocale(locale, async () => {
     await Promise.resolve(); return detectLocale();
   }))), ['zh-CN', 'en']);
   assert.equal(localizeError(new Error('provider_selection_required: choose openspec or speckit'), 'en'), 'provider_selection_required: choose openspec or speckit');

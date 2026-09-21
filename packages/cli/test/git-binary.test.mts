@@ -1,21 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
+import type { TestContext } from 'node:test';
+import { mkdtemp, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ensureGitBinary, gitDelivery } from '../lib/git-binary.mjs';
+import { ensureGitBinary, gitDelivery, type EnsureGitBinaryOptions, type GitDelivery } from '../lib/git-binary.mjs';
+import type { Platform } from '../lib/platform.mjs';
+
+interface DownloadState { downloads: number; wrongHash: boolean; wrongVersion: boolean; fail: boolean }
+type FailureKey = 'wrongHash' | 'wrongVersion' | 'fail';
 
 const bytes = Buffer.from('native binary fixture');
 const sha256 = createHash('sha256').update(bytes).digest('hex');
-const platform = { key: 'darwin-arm64', executable: 'spec-autonomous' };
-function manifest() { return { schema_version: 1, repository: 'owner/repo', version: '0.1.0-alpha.5', tag: 'v0.1.0-alpha.5', assets: { 'darwin-arm64': { name: 'spec-autonomous-darwin-arm64', sha256 } } }; }
-async function setup(t) {
+// Only the fields `ensureGitBinary` reads; the rest of the descriptor is unused.
+const platform = { key: 'darwin-arm64', executable: 'spec-autonomous' } as Platform;
+function manifest(): GitDelivery { return { schema_version: 1, repository: 'owner/repo', version: '0.1.0-alpha.5', tag: 'v0.1.0-alpha.5', assets: { 'darwin-arm64': { name: 'spec-autonomous-darwin-arm64', sha256 } } }; }
+async function setup(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'sa git binary '));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const state = { downloads: 0, wrongHash: false, wrongVersion: false, fail: false };
-  const run = async argv => {
+  const state: DownloadState = { downloads: 0, wrongHash: false, wrongVersion: false, fail: false };
+  const run = async (argv: string[]) => {
     if (argv[1] === 'release') {
       state.downloads++;
       if (state.fail) return { code: 4, stdout: '', stderr: 'not authenticated' };
@@ -25,7 +31,8 @@ async function setup(t) {
     }
     return { code: 0, stdout: `spec-autonomous ${state.wrongVersion ? '0.0.0' : '0.1.0-alpha.5'}\n`, stderr: '' };
   };
-  return { root, state, options: { cache: join(root, 'cache'), env: {}, platform, run, find: () => '/mock/gh', log: () => {} } };
+  const options: EnsureGitBinaryOptions & { cache: string } = { cache: join(root, 'cache'), env: {}, platform, run, find: () => '/mock/gh', log: () => {} };
+  return { root, state, options };
 }
 
 test('concurrent private downloads converge on a verified binary and reuse cache offline', async t => {
@@ -35,7 +42,7 @@ test('concurrent private downloads converge on a verified binary and reuse cache
   assert.deepEqual(await readFile(paths[0]), bytes);
   assert.equal(await ensureGitBinary(manifest(), { ...options, env: { SPEC_AUTONOMOUS_OFFLINE: '1' }, find: () => null }), paths[0]);
 });
-for (const [key, message] of [['wrongHash', /integrity_mismatch/], ['wrongVersion', /version_mismatch/], ['fail', /github_download_failed/]]) {
+for (const [key, message] of [['wrongHash', /integrity_mismatch/], ['wrongVersion', /version_mismatch/], ['fail', /github_download_failed/]] as [FailureKey, RegExp][]) {
   test(`${key} never leaves a runnable cache entry and a later request retries`, async t => {
     const { options, state } = await setup(t); state[key] = true;
     await assert.rejects(ensureGitBinary(manifest(), options), message);
@@ -49,7 +56,7 @@ test('missing gh, offline and unavailable platform fail before any downloads', a
   const { options, state } = await setup(t);
   await assert.rejects(ensureGitBinary(manifest(), { ...options, find: () => null }), /github_cli_missing/);
   await assert.rejects(ensureGitBinary(manifest(), { ...options, env: { SPEC_AUTONOMOUS_OFFLINE: '1' } }), /git_binary_offline/);
-  await assert.rejects(ensureGitBinary(manifest(), { ...options, platform: { key: 'linux-x64' } }), /git_binary_unavailable/);
+  await assert.rejects(ensureGitBinary(manifest(), { ...options, platform: { key: 'linux-x64' } as Platform }), /git_binary_unavailable/);
   assert.equal(state.downloads, 0);
 });
 test('only the root Git facade opts in; reading delivery metadata never downloads', async t => {
@@ -59,9 +66,9 @@ test('only the root Git facade opts in; reading delivery metadata never download
   await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'spec-autonomous', private: true, version: '0.1.0-alpha.5', bin: { 'spec-autonomous': 'packages/cli/bin/spec-autonomous.mjs' } }));
   await assert.rejects(gitDelivery(root), /manifest_missing/);
   await writeFile(join(root, 'git-install.json'), JSON.stringify(manifest()));
-  assert.equal((await gitDelivery(root)).repository, 'owner/repo');
+  assert.equal((await gitDelivery(root))!.repository, 'owner/repo');
   assert.equal(state.downloads, 0);
-  assert.ok(await ensureGitBinary(await gitDelivery(root), options)); assert.equal(state.downloads, 1);
+  assert.ok(await ensureGitBinary((await gitDelivery(root))!, options)); assert.equal(state.downloads, 1);
 });
 test('manifest versions and asset paths are validated before use', async t => {
   const { root, options } = await setup(t);
