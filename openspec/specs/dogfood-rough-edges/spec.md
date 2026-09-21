@@ -28,5 +28,5 @@ Source drift caused by outstanding host work SHALL identify the run and outstand
 The repository SHALL include a runnable OpenSpec playground that initializes, plans, executes host receipts, reports progress and previews cleanup in an isolated copy.
 
 #### Scenario: Local dogfood
-- **WHEN** `node scripts/dogfood.mjs` runs
+- **WHEN** `node scripts/dogfood.mts` runs
 - **THEN** it reports a completed run without modifying the checked-in playground.

@@ -6,7 +6,7 @@
 
 [中文文档站](https://zanel1u.github.io/spec-autonomous/) · [快速开始](https://zanel1u.github.io/spec-autonomous/guide/quick-start)
 
-当前版本 `0.1.0-alpha.13`，通过公开 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，JS 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
+当前版本 `0.1.0-alpha.13`，通过公开 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，TypeScript 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -34,12 +34,14 @@ spec-autonomous --version
 
 Git 入口没有安装脚本。第一次运行自动用 gh 下载并校验该版本的本机二进制，之后复用缓存；不需要 Rust 或 Bun。目前 Git 直装预编译产物为 macOS arm64。
 
-源码开发需要 Git、Rust 1.98.1、Node 22.13+（或 23.5+）；Bun 管理 workspace 依赖。安装后的 npm 包需要 Node 22.13+（或 23.5+） 和 Git。JS 层自动补齐缺失的原生 SDD 工具及 Spec Kit 的 uv / Python，无需预装 Rust、Bun、Python。
+源码开发需要 Git、Rust 1.98.1、Node 22.13+（或 23.5+）；Bun 管理 workspace 依赖。安装后的 npm 包需要 Node 22.13+（或 23.5+） 和 Git。启动层自动补齐缺失的原生 SDD 工具及 Spec Kit 的 uv / Python，无需预装 Rust、Bun、Python。
+
+源码语言只有 Rust 与 TypeScript。启动层写在 `packages/cli/src/*.mts`，由 tsdown 构建成 `packages/cli/{bin,lib}/*.mjs`；这些产物需要提交，因为 Git 安装会直接从 clone 执行它们。改完源码请运行 `bun run build:cli` 并提交产物，CI 会校验二者一致。
 
 ```sh
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
-node scripts/pack-local.mjs
+node scripts/pack-local.mts
 npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.13.tgz
 
 # 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
@@ -71,7 +73,7 @@ MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规�
 
 ## 常用完整能力
 
-工作流核心提供七项完整能力；MCP 对应 `sa_inspect`、`sa_progress`、`sa_prepare`、`sa_next`、`sa_apply_result`、`sa_archive`、`sa_doctor`，以及一个高级目录/调用入口 `sa_tools`。npm JS 层另提供 `sa_providers` 安装管理工具。
+工作流核心提供七项完整能力；MCP 对应 `sa_inspect`、`sa_progress`、`sa_prepare`、`sa_next`、`sa_apply_result`、`sa_archive`、`sa_doctor`，以及一个高级目录/调用入口 `sa_tools`。npm 启动层另提供 `sa_providers` 安装管理工具。
 
 ```sh
 spec-autonomous inspect --json
@@ -157,11 +159,11 @@ lease_seconds = 1800
 
 ```sh
 # 不调用真实模型、不发布 npm
-node scripts/test-all.mjs
+node scripts/test-all.mts
 
 # 创建本地仓库，由独立测试宿主模拟语义工作
-node scripts/create-mock-repo.mjs --framework openspec --output .artifacts/my-mock --fail-once add
-node tests/mock-host.mjs --path .artifacts/my-mock prepare --milestone M001 --max-workers 2
+node scripts/create-mock-repo.mts --framework openspec --output .artifacts/my-mock --fail-once add
+node tests/mock-host.mts --path .artifacts/my-mock prepare --milestone M001 --max-workers 2
 spec-autonomous progress --path .artifacts/my-mock --all-worktrees
 ```
 

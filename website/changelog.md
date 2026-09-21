@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- 启动层、脚本与测试全部改用 TypeScript 编写，发行产物仍是 JavaScript：`packages/cli/src/*.mts` 经 tsdown 构建为提交在仓库中的 `packages/cli/{bin,lib}/*.mjs`，CI 校验产物与源码一致。
 - 新增 VitePress 中文文档站和 GitHub Pages 自动发布。
 - 归档已完成的 OpenSpec changes，并把 host-driven 边界同步到主规范。
 - 对齐 Smart Discuss 后的 batch claim、host protocol 和 E2E fixture。

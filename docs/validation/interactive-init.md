@@ -8,7 +8,7 @@
 - Python 标准库 PTY 驱动真实 Inquirer 选择器：方向键选择 Spec Kit / Claude / MCP，检查生成结果；Ctrl-C 与 Ctrl-D 取消均退出 130，目录保持为空。
 - 真实 OpenSpec 1.13.0 / Codex 和 Spec Kit 1.0.6 / Claude 初始化成功；使用已有经版本探测的隔离工具缓存，原生初始化与后续重复运行均非 mock。下载与缺失运行时安装由既有 provider bootstrap 单元及 E2E 覆盖。
 
-复现：`node --test packages/cli/test/init-options.test.mjs tests/e2e/init.test.mjs`；真实工具验收使用 `node scripts/test-init-real.mjs --run`。日志与真实测试仓库路径记录于本机 `.artifacts/interactive-init-*`。
+复现：`node --test packages/cli/test/init-options.test.mts tests/e2e/init.test.mts`；真实工具验收使用 `node scripts/test-init-real.mts --run`。日志与真实测试仓库路径记录于本机 `.artifacts/interactive-init-*`。
 
 完整仓库门禁通过：137 项 Rust 测试（含真实 OpenSpec 合约）、56 项 JS/发布测试、80 项 E2E；strict specs 9 项。安装包使用 Node 22.23.2 与 Bun 1.4.2 分别完成真实 OpenSpec/Spec Kit 参数式初始化，并各通过 7 项安装后初始化 E2E，包含真实终端选择和 Ctrl-C/Ctrl-D 取消。
 

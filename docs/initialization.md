@@ -61,9 +61,9 @@ Spec Kit 使用其原生 `.specify/` 结构；Claude Code 的命令写入 `.clau
 交互采用 [Inquirer 的公开 prompt 接口](https://github.com/SBoudrias/Inquirer.js/tree/main/packages/prompts)，选择器、取消处理和输入输出与业务初始化分离。Clap 维护原生命令定义，Commander 消费元数据；终端提示走 stderr，JSON 保持独立。
 
 ```sh
-node --test packages/cli/test/init-options.test.mjs tests/e2e/init.test.mjs
+node --test packages/cli/test/init-options.test.mts tests/e2e/init.test.mts
 # 显式运行真实原生工具；可能下载工具
-node scripts/test-init-real.mjs --run
+node scripts/test-init-real.mts --run
 ```
 
 POSIX 键盘 E2E 使用 Python 标准库 PTY 测试夹具；测试夹具不随 npm 包分发。实际平台验收见 [初始化验收](validation/interactive-init.md)。

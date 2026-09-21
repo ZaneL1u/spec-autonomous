@@ -22,7 +22,7 @@ SHA256：`7d3b517c2b1d9b1c6cc1633bfa0db2c4b3ec3bf55bb975006f9ad92d1699f891`。
 
 ## 真实上游安装
 
-`node scripts/test-providers-real.mjs --run` 强制禁用已有 PATH 工具的复用，在独立临时 provider home 安装：
+`node scripts/test-providers-real.mts --run` 强制禁用已有 PATH 工具的复用，在独立临时 provider home 安装：
 
 - OpenSpec 1.13.0：npm 安装、版本探测、原生 init、框架检测和 Skills 绑定通过。
 - uv 0.12.13：官方 macOS arm64 archive 下载、内置 SHA256 校验、解包与版本探测通过。
@@ -45,11 +45,11 @@ Node 实测记录为 `.artifacts/provider-bootstrap-real.json` / `.log`。同一
 运行命令和日志：
 
 ```sh
-node scripts/test-all.mjs
+node scripts/test-all.mts
 # .artifacts/provider-bootstrap-full-final.log
-node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs
+node --test packages/cli/test/*.test.mts scripts/test/*.test.mts
 # Node 22: .artifacts/provider-bootstrap-node22-package-final.log
-node scripts/pack-local.mjs
+node scripts/pack-local.mts
 # .artifacts/provider-bootstrap-pack-final.log
 ```
 

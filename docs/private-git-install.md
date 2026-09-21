@@ -44,7 +44,7 @@ spec-autonomous init --provider openspec --agent codex --mcp
 
 ```sh
 bun run build:native
-node scripts/pack-local.mjs
+node scripts/pack-local.mts
 ```
 
 先构建并验证各平台 native binary，再更新 git-install.json 中对应版本、asset 名称和 SHA256。源代码提交到 main 后，在同一私有仓库发布相同 tag / commit 的 Release，上传 native asset、普通 tgz 和 checksum。不要把 native outputs 放进 Git 历史，也不要修改已发布版本的二进制。

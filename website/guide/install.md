@@ -30,7 +30,7 @@ cd spec-autonomous
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 bun run build:native
-node scripts/test-all.mjs
+node scripts/test-all.mts
 ```
 
 本地打包：
@@ -42,7 +42,7 @@ npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.13.tgz
 
 ## OpenSpec / Spec Kit 要提前装吗
 
-通常不用。JS 启动层会在需要执行原生流程时检查 provider：
+通常不用。启动层会在需要执行原生流程时检查 provider：
 
 ```sh
 spec-autonomous providers status --json

@@ -1,18 +1,26 @@
 # 测试与复现
 
-alpha.2 采用工作包与回执协议。产品 work_packet 模块只生成与校验数据；测试中的 `tests/mock-host.mjs` 是独立宿主，由它创建模拟语义进程并调用 CLI 回执接口。测试宿主与 mock-agent 不随 npm 包分发。
+alpha.2 采用工作包与回执协议。产品 work_packet 模块只生成与校验数据；测试中的 `tests/mock-host.mts` 是独立宿主，由它创建模拟语义进程并调用 CLI 回执接口。测试宿主与 mock-agent 不随 npm 包分发。
+
+## TypeScript 源码与构建产物
+
+除 Rust 外的源码全部是 TypeScript（`.mts`）。发行运行时写在 `packages/cli/src/`，由 tsdown 构建到 `packages/cli/bin/*.mjs` 与 `packages/cli/lib/*.mjs`。这些 `.mjs` 是**提交进仓库的构建产物**，因为 Git 安装会直接从 clone 执行它们；不要手改，改完源码后运行 `bun run build:cli` 并提交产物，CI 会用 `git diff --exit-code` 校验二者是否一致。
+
+`scripts/` 与 `tests/` 不构建，由 Node 的类型擦除直接运行 `.mts`。它们 import 的是 `packages/cli/lib/*.mjs` 产物而非 `src/`，因为 `../locales` 和 `../bin/provider-bridge.mjs` 等运行时资源路径是相对产物布局解析的；构建同时生成 `.d.mts`，这些 import 仍然受类型检查覆盖。
+
+类型检查单独入口为 `bun run typecheck`（`tsc --noEmit`），已包含在 `test:all` 与 CI 中。
 
 ## 完整入口
 
 ```sh
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
-node scripts/test-all.mjs
+node scripts/test-all.mts
 ```
 
 等价命令为 `bun run test:all` / `npm run test:all`。Node 驱动执行 fmt、clippy、Rust unit/contracts、显式真实 OpenSpec 契约、Node launcher/package/publisher tests、debug CLI e2e 和 strict OpenSpec validation。它不调用真实模型，不发布 npm。
 
-`test:all` 不包含 release build 与安装 smoke，CI 另行执行；本地用 `node scripts/pack-local.mjs` 生成本机 tarball。
+`test:all` 不包含 release build 与安装 smoke，CI 另行执行；本地用 `node scripts/pack-local.mts` 生成本机 tarball。
 
 ## 测试层与可注入边界
 
@@ -48,8 +56,8 @@ Rust runtime 的 external_test_host 仅在测试中执行子进程，生产模�
 ## 保留一个可检查的 mock 仓库
 
 ```sh
-node scripts/create-mock-repo.mjs --framework openspec --output .artifacts/my-mock --fail-once add
-node tests/mock-host.mjs --path .artifacts/my-mock prepare --milestone M001 --max-workers 2
+node scripts/create-mock-repo.mts --framework openspec --output .artifacts/my-mock --fail-once add
+node tests/mock-host.mts --path .artifacts/my-mock prepare --milestone M001 --max-workers 2
 node packages/cli/bin/spec-autonomous.mjs progress --path .artifacts/my-mock --all-worktrees --json
 ```
 
@@ -62,9 +70,9 @@ cargo test --workspace --locked
 cargo test -p spec-autonomous-core --test host_protocol_contracts --locked
 cargo test -p spec-autonomous-core --test provider_contracts \
   real_openspec_plans_then_accepts_skipped_specs_and_custom_tracking_artifact -- --ignored --exact
-node --test packages/cli/test/*.test.mjs scripts/test/*.test.mjs
+node --test packages/cli/test/*.test.mts scripts/test/*.test.mts
 cargo build -p spec-autonomous-cli --locked
-node --test --test-concurrency=2 tests/e2e/*.test.mjs
+node --test --test-concurrency=2 tests/e2e/*.test.mts
 ```
 
 不要使用宽泛 `--ignored` 启动 subprocess 辅助入口。Debug failpoints 通过 SPEC_AUTONOMOUS_TEST_FAILPOINT 选择，release binary 不启用它们。

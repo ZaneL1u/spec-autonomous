@@ -29,7 +29,7 @@
 | 安装包 MCP | 真实 stdio 握手、工具调用、外部回执与安装/卸载所有权测试通过 |
 | Node 22 / Bun | Node 22 包测试通过；Bun 1.4.2 在临时目录以 ignore-scripts 安装真实 alpha.2 tarball 并运行 version 通过 |
 
-完整入口为 `node scripts/test-all.mjs`；等价于 npm/Bun 的 test:all。最终原始日志保留在 `.artifacts/alpha2-final-checks.log`、`.artifacts/alpha2-installed-mcp.log`、`.artifacts/alpha2-node22.log`。早一轮完整 e2e 为 53 项，随后加入 2 项信号清理和 1 项安装冲突预检；最终入口包含全部 56 项。
+完整入口为 `node scripts/test-all.mts`；等价于 npm/Bun 的 test:all。最终原始日志保留在 `.artifacts/alpha2-final-checks.log`、`.artifacts/alpha2-installed-mcp.log`、`.artifacts/alpha2-node22.log`。早一轮完整 e2e 为 53 项，随后加入 2 项信号清理和 1 项安装冲突预检；最终入口包含全部 56 项。
 
 ## 本轮实际发现与修复
 
@@ -44,7 +44,7 @@
 
 生产 work_packet 只生成 input/prompt/schema 和校验结果，不存在 agent 执行方法。依赖中没有模型 SDK；prepare、doctor、MCP 即使面对配置的 trap runner，也不执行它。
 
-外部宿主测试程序是 `tests/mock-host.mjs`，不是 CLI 的子模块或依赖。它负责启动测试 worker、分配会话标识、超时/停止/撤销，并向 CLI 提交结果。部分回归夹具沿用旧 runner 字段选择特殊测试脚本，仅被这个外部测试宿主读取；产品忽略该字段并给出诊断。
+外部宿主测试程序是 `tests/mock-host.mts`，不是 CLI 的子模块或依赖。它负责启动测试 worker、分配会话标识、超时/停止/撤销，并向 CLI 提交结果。部分回归夹具沿用旧 runner 字段选择特殊测试脚本，仅被这个外部测试宿主读取；产品忽略该字段并给出诊断。
 
 新的 host session 证据是宿主声明和回执一致性，不能宣传为 CLI 已观察真实模型内部会话。旧 alpha.1 的真实 Codex 测试保留在 [历史验收](autonomous.md)，不算本轮新协议的模型验收。本轮没有自动调用真实模型账户。
 

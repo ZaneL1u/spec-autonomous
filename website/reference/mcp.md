@@ -32,7 +32,7 @@ Rust MCP 默认公开 8 个完整能力和一个高级 dispatcher：
 | `sa_doctor` | 检查配置、账本与恢复诊断 |
 | `sa_tools` | 发现或调用细粒度能力 |
 
-npm JS 层还会加入 `sa_providers`，用于查询或安装 OpenSpec / Spec Kit，因此通过正式 launcher 启动时默认共 10 个工具。
+npm 启动层还会加入 `sa_providers`，用于查询或安装 OpenSpec / Spec Kit，因此通过正式 launcher 启动时默认共 10 个工具。
 
 ## `sa_tools`
 

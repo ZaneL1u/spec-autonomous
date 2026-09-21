@@ -26,7 +26,7 @@ Node.js launcher 负责平台选择、argv/stdio/退出码与 SIGINT/SIGTERM 转
 runner 标签依据 [GitHub 官方清单](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)；实际额度和可用性需在目标远程仓库验证。
 Linux 先支持 glibc，目标构建基线 Ubuntu 22.04；musl/Alpine 返回明确错误。最终最低 glibc/macOS/Windows 版本以对应平台运行结果和 binary linkage 检查确定，不用一次编译成功推断。
 
-`scripts/package-release.mjs` 要求 `.artifacts/binaries/<target>/<binary>` 六项全部存在且非空，再生成 `.artifacts/release/`：平台包带 `os`、`cpu`（Linux 带 `libc`）约束，wrapper 指定所有 optionalDependencies 的**完全相同精确版本**，并附原生文件 SHA256SUMS。
+`scripts/package-release.mts` 要求 `.artifacts/binaries/<target>/<binary>` 六项全部存在且非空，再生成 `.artifacts/release/`：平台包带 `os`、`cpu`（Linux 带 `libc`）约束，wrapper 指定所有 optionalDependencies 的**完全相同精确版本**，并附原生文件 SHA256SUMS。
 输出目录必须不存在，避免把旧版本二进制混入新包。脚本不会执行 publish；它校验结构和缺失文件，不能证明输入二进制的架构、来源或可运行性，这些由构建/安装 CI 验证。
 
 不使用安装脚本临时从 GitHub 下载二进制：npm 自带包完整性校验和平台依赖选择，禁用 lifecycle scripts 的安装也应工作。参考 [npm package.json 的 bin、os、cpu、libc 与 optionalDependencies](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/)。Bun workspace 的选择依据 [Bun 官方文档](https://bun.sh/docs/pm/workspaces)。
@@ -50,7 +50,7 @@ wrapper 已包含 milestone/autonomous/auto/progress/resume 五个 SKILL.md。np
 
 ## 发布前校验与受信任发布
 
-`node scripts/publish-release.mjs --input .artifacts/npm` 默认为离线 dry-run：检查七个真实 tarball、SHA256SUMS、版本一致、精确 optionalDependencies、无 lifecycle scripts、二进制格式/架构和 SHA512。文本平台 fixture 会被拒绝；header 检查仍不能取代真实原生运行。
+`node scripts/publish-release.mts --input .artifacts/npm` 默认为离线 dry-run：检查七个真实 tarball、SHA256SUMS、版本一致、精确 optionalDependencies、无 lifecycle scripts、二进制格式/架构和 SHA512。文本平台 fixture 会被拒绝；header 检查仍不能取代真实原生运行。
 
 只有显式 `--publish --tag next` 才接触 registry：先检查全部既存版本，只有 integrity 相同才复用；逐一发布六个平台并等待 registry 可见，重新核对六包后才发布 wrapper。任一错误阻止 wrapper，部分已发布平台版本保留并可在相同 bytes 下续接，不自动回滚已发布的不可变版本。
 

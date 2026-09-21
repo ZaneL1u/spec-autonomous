@@ -44,7 +44,7 @@ SPEC_AUTONOMOUS_LANG=zh-CN spec-autonomous progress
 
 ```sh
 cargo test -p spec-autonomous-cli --locked
-node --test packages/cli/test/locale.test.mjs tests/e2e/cli-framework.test.mjs
+node --test packages/cli/test/locale.test.mts tests/e2e/cli-framework.test.mts
 LC_ALL=zh_CN.UTF-8 target/debug/spec-autonomous --help
 ```
 

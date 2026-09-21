@@ -20,4 +20,4 @@ MCP 对应 `sa_tools` 的 `operation: "call"`、`capability: "run.cleanup"`，�
 
 `delete_integration:true` 是额外的显式范围：仅在 integration worktree 干净、HEAD 等于 accepted_head、不是当前 checkout、且分支可安全处理时删除。运行记录、验证证据和账本始终保留；默认值为 false。预览哈希包含两个删除选项，应用时必须保持完全相同的 scope。
 
-Dogfood 可执行 `node scripts/dogfood.mjs`，验证初始化、auto 回执、progress 和 cleanup preview；它复制 `playground/` 到临时目录并在结束后删除。
+Dogfood 可执行 `node scripts/dogfood.mts`，验证初始化、auto 回执、progress 和 cleanup preview；它复制 `playground/` 到临时目录并在结束后删除。

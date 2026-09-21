@@ -20,7 +20,7 @@ macOS 26.6.2 arm64；Rust 1.98.1；Git 2.50.1；Node 24.21.0 / 22.23.2；npm 11.
 | Bun 与 Node 22 | Bun 在临时目录 `add --ignore-scripts` 后 CLI 可用；Node 22 launcher/包契约与安装包 version 通过 |
 | 远程 CI / npm registry | 未执行；工作流存在不等于平台或发布验收通过 |
 
-完整测试入口为 `node scripts/test-all.mjs`，等价于 `bun run test:all` 或 `npm run test:all`。记录分别位于 `.artifacts/final-checks.log`、`.artifacts/acceptance-final.log`、`.artifacts/provider-final.log`、`.artifacts/e2e-decomposition.log`、`.artifacts/e2e-provenance.log`、`.artifacts/node22-final.log`。最终完整套件记录 118 个 Rust tests、1 个显式真实 OpenSpec 契约、24 个 Node tests 和 36 个 e2e 全部通过；忽略的 subprocess 辅助入口不计入通过数。
+完整测试入口为 `node scripts/test-all.mts`，等价于 `bun run test:all` 或 `npm run test:all`。记录分别位于 `.artifacts/final-checks.log`、`.artifacts/acceptance-final.log`、`.artifacts/provider-final.log`、`.artifacts/e2e-decomposition.log`、`.artifacts/e2e-provenance.log`、`.artifacts/node22-final.log`。最终完整套件记录 118 个 Rust tests、1 个显式真实 OpenSpec 契约、24 个 Node tests 和 36 个 e2e 全部通过；忽略的 subprocess 辅助入口不计入通过数。
 
 本机曾观察到直接打开 `/Users/zaneliu/Documents` 目录阻塞：Bun 向上查找项目时卡在 `openat`；Node 仅打开该目录也会阻塞，但直接访问仓库、执行 Node 测试驱动正常。TCC preflight 是相关日志，系统根因尚未确认。没有修改系统权限，挂起探针已清理。Bun tarball 安装在独立临时目录完成。
 
@@ -58,7 +58,7 @@ macOS 26.6.2 arm64；Rust 1.98.1；Git 2.50.1；Node 24.21.0 / 22.23.2；npm 11.
 创建自己的全新 mock（目标目录须不存在）：
 
 ```sh
-node scripts/create-mock-repo.mjs --framework openspec --output .artifacts/my-mock --fail-once add
+node scripts/create-mock-repo.mts --framework openspec --output .artifacts/my-mock --fail-once add
 node packages/cli/bin/spec-autonomous.mjs run --path .artifacts/my-mock --milestone M001 --json
 node packages/cli/bin/spec-autonomous.mjs progress --path .artifacts/my-mock --all-worktrees
 ```

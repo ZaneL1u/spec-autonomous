@@ -29,10 +29,11 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 
 ## Structure and tools
 
-- Rust owns passive workflow capabilities, work packets, native argv bridges and verified transitions. Bun / Node compatible JS owns npm launching and provider installation; no Rust network installer. Only the independent tests/mock-host.mjs fixture dispatches semantic test workers.
+- Rust owns passive workflow capabilities, work packets, native argv bridges and verified transitions. TypeScript owns npm launching and provider installation; no Rust network installer. Only the independent tests/mock-host.mts fixture dispatches semantic test workers.
+- Every non-Rust source file is TypeScript (.mts). Author the shipped runtime in packages/cli/src/**; tsdown builds it to packages/cli/{bin,lib}/*.mjs. Those .mjs files are committed build output, because Git installs execute them straight from a clone. Never hand-edit them: run bun run build:cli and commit the result, or CI fails the drift check. Scripts and tests stay unbuilt and run through Node's type stripping.
 - Bun 1.4.2 owns workspace dependencies and scripts; commit bun.lock and Cargo.lock.
 - Source ~/.cargo/env if cargo is not on PATH. Use the pinned rust-toolchain.toml.
-- Verify with bun run test:all (equivalent: node scripts/test-all.mjs). The suite includes lint, unit/contracts, real OpenSpec, npm assets, Git/process e2e and strict specs.
+- Verify with bun run test:all (equivalent: node scripts/test-all.mts). The suite includes lint, unit/contracts, real OpenSpec, npm assets, Git/process e2e and strict specs.
 - Check npm packaging with bun run pack:local. Only claim platforms actually tested.
 - .references contains locked upstream research copies. Do not modify them or ship them.
 - Never check secrets, runtime logs, native build outputs or node_modules into Git.

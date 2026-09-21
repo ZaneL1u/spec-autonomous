@@ -68,11 +68,11 @@ spec-autonomous providers exec openspec --managed -- --version
 离线 mock 检查包含安装失败、并发、版本探测、checksum、原生文件冲突、CLI 参数边界、MCP 首次准备及只读查询。真实网络验收单独运行，不混入常规测试：
 
 ```sh
-node --test packages/cli/test/providers.test.mjs
-node --test tests/e2e/provider-bootstrap.test.mjs
-node scripts/test-providers-real.mjs --run
+node --test packages/cli/test/providers.test.mts
+node --test tests/e2e/provider-bootstrap.test.mts
+node scripts/test-providers-real.mts --run
 # 同一 JS 脚本也可由 Bun 执行
-bun scripts/test-providers-real.mjs --run
+bun scripts/test-providers-real.mts --run
 ```
 
 真实测试强制不复用 PATH 上的工具，使用独立 provider home，并要求受管理的 Python，覆盖没有 uv / Python 的首次安装链路。实际平台证据见 [验收记录](validation/provider-bootstrap.md)。

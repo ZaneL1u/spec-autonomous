@@ -41,7 +41,7 @@ bun install --frozen-lockfile
 
 ```sh
 # 完整套件
-node scripts/test-all.mjs
+node scripts/test-all.mts
 
 # 文档站
 bun run docs:build
@@ -52,13 +52,25 @@ bun run pack:local
 
 完整测试包括：
 
+- TypeScript 类型检查与运行时构建；
 - Rust format、Clippy 和 contract tests；
 - 真实锁定版本 OpenSpec contract；
-- JS launcher / package tests；
+- launcher / package tests；
 - Git、进程、恢复和 host-driven E2E；
 - OpenSpec strict validation。
 
-测试中的 `tests/mock-host.mjs` 是独立宿主 fixture。产品 CLI 不导入、不启动也不分发它。
+测试中的 `tests/mock-host.mts` 是独立宿主 fixture。产品 CLI 不导入、不启动也不分发它。
+
+## TypeScript 与构建产物
+
+Rust 之外的源码全部是 TypeScript（`.mts`）。发行运行时写在 `packages/cli/src/`，由 tsdown 构建成 `packages/cli/bin/*.mjs` 与 `packages/cli/lib/*.mjs`：
+
+```sh
+bun run typecheck
+bun run build:cli
+```
+
+这些 `.mjs` 产物**需要提交**，因为 Git 安装会直接从 clone 执行它们。改完 `src/` 请重新构建并把产物一起提交，CI 会校验二者一致。`scripts/` 与 `tests/` 不构建，由 Node 的类型擦除直接运行。
 
 ## 文档贡献
 
