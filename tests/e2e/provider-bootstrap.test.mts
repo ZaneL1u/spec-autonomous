@@ -4,10 +4,10 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { binary, workspace, fixture, git, cleanEnv } from './helpers.mjs';
+import { binary, workspace, fixture, git, cleanEnv } from './helpers.mts';
 const launcher = process.env.SPEC_AUTONOMOUS_TEST_LAUNCHER || join(workspace, 'packages/cli/bin/spec-autonomous.mjs');
 
-function setup(t, options = {}) {
+function setup(t: any, options: {fail?:boolean} = {}) {
   const root = fixture(t, 'openspec');
   const parent = mkdtempSync(join(tmpdir(), 'sa npm provider fixture '));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
@@ -30,12 +30,12 @@ fs.writeFileSync(path.join(target,'openspec.js'),${JSON.stringify(installedEntry
   const env = cleanEnv({ PATH: path, SPEC_AUTONOMOUS_BINARY: binary, SPEC_AUTONOMOUS_PROVIDER_HOME: home, npm_execpath: npm, SPEC_AUTONOMOUS_OFFLINE: '0' });
   return { root, parent, home, marker, env };
 }
-function cli(f, args) {
+function cli(f: any, args: any) {
   const r = spawnSync(process.execPath, [launcher, '--path', f.root, ...args], { env: f.env, encoding: 'utf8', timeout: 30_000 });
   if (r.error) throw r.error;
   return r;
 }
-function connect(t, f) {
+function connect(t: any, f: any) {
   const child = spawn(process.execPath, [launcher, '--path', f.root, 'mcp'], { env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
   let id = 0, buffer = '', stderr = ''; const pending = new Map();
   child.stderr.on('data', b => stderr += b);
@@ -49,10 +49,10 @@ function connect(t, f) {
   });
   child.on('exit', code => { for (const p of pending.values()) p.reject(new Error(`MCP exited ${code}: ${stderr}`)); pending.clear(); });
   t.after(() => child.kill('SIGTERM'));
-  const request = (method, params = {}) => new Promise((resolve, reject) => {
+  const request = (method: any, params = {}) => new Promise<any>((resolve, reject) => {
     const sequence = ++id; pending.set(sequence, { resolve, reject }); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: sequence, method, params }) + '\n');
   });
-  return { request, child, call: (name, args) => request('tools/call', { name, arguments: args }), init: async () => {
+  return { request, child, call: (name: any, args: any) => request('tools/call', { name, arguments: args }), init: async () => {
     await request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'provider-test', version: '1' } });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   } };
@@ -93,10 +93,10 @@ test('MCP adds provider tools without stdout pollution and lazily installs befor
   assert.equal(existsSync(f.marker), false);
   await mcp.init();
   const tools = await mcp.request('tools/list'); assert.equal(tools.result.tools.length, 10);
-  assert.ok(tools.result.tools.some(tool => tool.name === 'sa_providers'));
+  assert.ok(tools.result.tools.some((tool: any) => tool.name === 'sa_providers'));
   await mcp.call('sa_progress', {}); await mcp.call('sa_doctor', {});
   const status = await mcp.call('sa_providers', { operation: 'status' });
-  assert.equal(status.result.structuredContent.data.providers.find(p => p.provider === 'openspec').source, 'missing');
+  assert.equal(status.result.structuredContent.data.providers.find((p: any) => p.provider === 'openspec').source, 'missing');
   assert.equal(existsSync(f.marker), false);
   const prepared = await mcp.call('sa_prepare', { milestone_id: 'M001' });
   assert.equal(prepared.result.isError, false, JSON.stringify(prepared));

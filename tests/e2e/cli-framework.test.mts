@@ -4,16 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { binary, workspace, cleanEnv } from './helpers.mjs';
+import { binary, workspace, cleanEnv } from './helpers.mts';
 import { runCli } from '../../packages/cli/lib/cli-program.mjs';
 const launcher = process.env.SPEC_AUTONOMOUS_TEST_LAUNCHER || join(workspace, 'packages/cli/bin/spec-autonomous.mjs');
 
-function setup(t) {
+function setup(t: any) {
   const root = mkdtempSync(join(tmpdir(), 'sa cli grammar '));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'provider-home');
   const env = cleanEnv({ SPEC_AUTONOMOUS_BINARY: binary, SPEC_AUTONOMOUS_PROVIDER_HOME: home, SPEC_AUTONOMOUS_OFFLINE: '1' });
-  return { root, home, env, cli: args => {
+  return { root, home, env, cli: (args: any) => {
     const result = spawnSync(process.execPath, [launcher, ...args], { cwd: root, env, encoding: 'utf8', timeout: 15_000 });
     if (result.error) throw result.error;
     return result;
@@ -64,25 +64,25 @@ test('global values work before and after nested provider commands, including eq
 });
 test('native aliases and argv are forwarded unchanged after Clap preflight', async () => {
   const argv = ['--path', 'path with spaces', 'auto', '--goal', 'a b $(literal) `text`', '--framework', 'openspec', '--json'];
-  let forwarded, source;
-  const code = await runCli(argv, { binary, context: () => ({ ensureSource: async value => { source = value; } }),
-    forward: async args => { forwarded = args; return 7; }, stdout: () => assert.fail('no wrapper stdout'), stderr: message => assert.fail(message) });
+  let forwarded:any, source:any;
+  const code = await runCli(argv, { binary, context: () => ({ ensureSource: async (value:any) => { source = value; } }),
+    forward: async (args:any) => { forwarded = args; return 7; }, stdout: () => assert.fail('no wrapper stdout'), stderr: (message:any) => assert.fail(message) } as any);
   assert.equal(code, 7); assert.deepEqual(forwarded, [binary, ...argv]); assert.equal(source.framework, 'openspec');
 });
 test('provider exec preserves delimiter payload flags and shell text', async () => {
   let forwarded;
   const payload = ['--help', '--json', 'a b', '$(literal)', '--path', 'native path'];
   const code = await runCli(['providers', 'exec', 'openspec', '--managed', '--', ...payload], { binary,
-    context: () => ({ path: workspace, manager: { env: {} }, ensureSelected: async (provider, options) => {
+    context: () => ({ path: workspace, manager: { env: {} }, ensureSelected: async (provider:any, options:any) => {
       assert.equal(provider, 'openspec'); assert.equal(options.managed, true); return { command: ['/mock/native-provider'] };
-    } }), forward: async argv => { forwarded = argv; return 23; }, stdout: () => assert.fail('payload --help must not print wrapper help'), stderr: message => assert.fail(message) });
+    } }), forward: async (argv:any) => { forwarded = argv; return 23; }, stdout: () => assert.fail('payload --help must not print wrapper help'), stderr: (message:any) => assert.fail(message) } as any);
   assert.equal(code, 23); assert.deepEqual(forwarded, ['/mock/native-provider', ...payload]);
 });
 test('structured native input and init use parsed objects without rescanning argv', async t => {
   const f = setup(t); const file = join(f.root, 'input file.json'); writeFileSync(file, '{"framework":"speckit"}');
-  let source, options;
-  const common = { binary, stdout: () => {}, stderr: message => assert.fail(message), forward: async () => 0,
-    context: (_binary, parsed) => { options = parsed; return { detection: async () => ({root:f.root,detected:[],warnings:[],selected:null}), ensureSource: async value => { source = value; } }; } };
+  let source:any, options:any;
+  const common:any = { binary, stdout: () => {}, stderr: (message: any) => assert.fail(message), forward: async () => 0,
+    context: (_binary: any, parsed: any) => { options = parsed; return { detection: async () => ({root:f.root,detected:[],warnings:[],selected:null}), ensureSource: async (value: any) => { source = value; } }; } };
   assert.equal(await runCli(['tools', 'call', 'native.instructions', '--input', `@${file}`], common), 0);
   assert.equal(source.framework, 'speckit');
   assert.equal(await runCli(['--framework', 'openspec', 'tools', 'call', 'native.instructions', '--input', `@${file}`], common), 0);
@@ -93,7 +93,7 @@ test('structured native input and init use parsed objects without rescanning arg
 });
 test('Chinese environment and explicit English override localize only human text', t => {
   const f = setup(t);
-  const run = args => spawnSync(process.execPath, [launcher, ...args], { cwd: f.root, env: { ...f.env, LC_ALL: 'zh_CN.UTF-8' }, encoding: 'utf8', timeout: 15_000 });
+  const run = (args: any) => spawnSync(process.execPath, [launcher, ...args], { cwd: f.root, env: { ...f.env, LC_ALL: 'zh_CN.UTF-8' }, encoding: 'utf8', timeout: 15_000 });
   const zh = run(['--help']); assert.equal(zh.status, 0, zh.stderr); assert.match(zh.stdout, /准备工作包/); assert.doesNotMatch(zh.stdout, /Deterministic SDD capabilities/);
   const en = run(['--lang', 'en-US', '--help']); assert.equal(en.status, 0, en.stderr); assert.match(en.stdout, /Prepare work packets/); assert.doesNotMatch(en.stdout, /准备工作包/);
   const zhError = run(['--lang', 'zh-CN', '--path', join(f.root, 'missing'), 'detect', '--json']);
@@ -105,7 +105,7 @@ test('Chinese environment and explicit English override localize only human text
 
 test('Chinese init, parser failures and nested help have actionable localized text', t => {
   const f = setup(t);
-  const zh = args => f.cli(['--lang', 'zh-CN', ...args]);
+  const zh = (args: any) => f.cli(['--lang', 'zh-CN', ...args]);
   const init = zh(['init']);
   assert.equal(init.status, 1, init.stdout + init.stderr);
   assert.match(init.stderr, /请选择.*openspec.*speckit/);
@@ -136,7 +136,7 @@ test('native metadata preserves literal help payload and returns valid JSON', ()
 test('every native command and argument has a Chinese help resource', () => {
   const result = spawnSync(binary, ['--lang', 'zh-CN', 'cli-metadata', 'describe'], { encoding: 'utf8', timeout: 15000 });
   assert.equal(result.status, 0, result.stderr);
-  function check(command) {
+  function check(command: any) {
     assert.match(command.description, /[\u4e00-\u9fff]/u, command.name);
     for (const arg of command.arguments) assert.match(arg.help, /[\u4e00-\u9fff]/u, `${command.name}.${arg.id}`);
     command.commands.forEach(check);

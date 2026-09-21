@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {fixture,cli,edit,git,join,start,until} from './helpers.mjs';
+import {fixture,cli,edit,git,join,start,until} from './helpers.mts';
 
 test('large native context is referenced intact while worker packets remain bounded',{timeout:120000},t=>{
   const root=fixture(t,'speckit');const first=cli(root,['plan','--milestone','M001']);assert.equal(first.status,0,first.details);
@@ -10,16 +10,16 @@ test('large native context is referenced intact while worker packets remain boun
   edit(root,'.spec-autonomous/config.toml',text=>text.replace('max_workers = 2','max_context_bytes = 16384\nmax_workers = 2'));
   git(root,['add','--all']);git(root,['commit','-qm','test: large native specification']);
   const planned=cli(root,['plan','--milestone','M001']);assert.equal(planned.status,0,planned.details);
-  const attempt=planned.data.attempts.find(a=>a.kind==='plan-tasks');
+  const attempt=planned.data.attempts.find((a: any)=>a.kind==='plan-tasks');
   const directory=join(root,'.git/spec-autonomous/runs',planned.data.id,'attempts',attempt.id);
   const input=readFileSync(join(directory,'input.json'));const prompt=readFileSync(join(directory,'prompt.md'));
   assert.ok(input.length<=16384);assert.ok(prompt.length<=16384);
-  const ref=JSON.parse(input).snapshot.metadata.context_reference;
+  const ref=JSON.parse(input.toString('utf8')).snapshot.metadata.context_reference;
   const full=readFileSync(ref.path);assert.ok(full.length>16384);
   assert.equal(createHash('sha256').update(full).digest('hex'),ref.sha256);
   assert.ok(full.toString().includes('critical-end-rule:never_modify_tests'));
-  const progress=cli(root,['progress']);const run=progress.data.runs.find(r=>r.run_id===planned.data.id);
-  assert.equal(run.native_progress.find(p=>p.phase_id==='P001').native_total,2);
+  const progress=cli(root,['progress']);const run=progress.data.runs.find((r: any)=>r.run_id===planned.data.id);
+  assert.equal(run.native_progress.find((p: any)=>p.phase_id==='P001').native_total,2);
 });
 
 test('large task lists use fresh bounded planner batches with complete global coverage',{timeout:120000},t=>{
@@ -34,19 +34,19 @@ test('large task lists use fresh bounded planner batches with complete global co
   git(root,['add','--all']);git(root,['commit','-qm','test: forty native tasks']);
   const planned=cli(root,['plan','--milestone','M001']);assert.equal(planned.status,0,planned.details);
   const plan=planned.data.plans.P001;assert.equal(plan.tasks.length,40);
-  assert.equal(new Set(plan.tasks.map(t=>t.id)).size,40);
-  assert.equal(new Set(plan.tasks.flatMap(t=>t.source_ids)).size,40);
-  const calls=planned.data.attempts.filter(a=>a.kind==='plan-tasks');assert.equal(calls.length,5);
-  for(const a of calls){const input=JSON.parse(readFileSync(join(root,'.git/spec-autonomous/runs',planned.data.id,'attempts',a.id,'input.json')));assert.ok(input.snapshot.tasks.length<=8);}
-  assert.ok(plan.tasks.slice(8).every(t=>t.depends_on.length>0));
-  const progress=cli(root,['progress']);const run=progress.data.runs.find(r=>r.run_id===planned.data.id);
-  assert.equal(run.native_progress.find(p=>p.phase_id==='P001').native_total,40);
-  assert.equal(run.native_progress.find(p=>p.phase_id==='P001').native_checked,0);
+  assert.equal(new Set(plan.tasks.map((t: any)=>t.id)).size,40);
+  assert.equal(new Set(plan.tasks.flatMap((t: any)=>t.source_ids)).size,40);
+  const calls=planned.data.attempts.filter((a: any)=>a.kind==='plan-tasks');assert.equal(calls.length,5);
+  for(const a of calls){const input=JSON.parse(readFileSync(join(root,'.git/spec-autonomous/runs',planned.data.id,'attempts',a.id,'input.json'),'utf8'));assert.ok(input.snapshot.tasks.length<=8);}
+  assert.ok(plan.tasks.slice(8).every((t: any)=>t.depends_on.length>0));
+  const progress=cli(root,['progress']);const run=progress.data.runs.find((r: any)=>r.run_id===planned.data.id);
+  assert.equal(run.native_progress.find((p: any)=>p.phase_id==='P001').native_total,40);
+  assert.equal(run.native_progress.find((p: any)=>p.phase_id==='P001').native_checked,0);
 });
 
 test('explicit cleanup preserves dirty worktrees, integration, external worktrees and branch refs',{timeout:120000},t=>{
   const root=fixture(t,'speckit');const done=cli(root,['run','--milestone','M001','--only','1']);assert.equal(done.status,0,done.details);
-  const dirty=done.data.attempts.find(a=>a.kind==='implement');writeFileSync(join(dirty.worktree,'keep-uncommitted.txt'),'keep me');
+  const dirty=done.data.attempts.find((a: any)=>a.kind==='implement');writeFileSync(join(dirty.worktree,'keep-uncommitted.txt'),'keep me');
   const external=join(root,'..','external');git(root,['worktree','add','-b','user-work',external,'HEAD']);
   const refs=git(root,['show-ref']);
   const cleaned=cli(root,['cleanup',done.data.id]);assert.equal(cleaned.status,0,cleaned.details);
@@ -89,13 +89,13 @@ test('audits receive immutable execution provenance bound to the actual accepted
   edit(root,'.spec-autonomous/config.toml',text=>text+'\n[runner.environment]\nMOCK_REQUIRE_PROVENANCE="1"\nPRIVATE_CONFIG_VALUE="must-not-enter-evidence"\n');
   git(root,['add','--all']);git(root,['commit','-qm','test: require execution provenance']);
   const done=cli(root,['run','--milestone','M001']);assert.equal(done.status,0,done.details);
-  for(const attempt of done.data.attempts.filter(a=>a.kind==='audit')){
+  for(const attempt of done.data.attempts.filter((a: any)=>a.kind==='audit')){
     const dir=join(root,'.git/spec-autonomous/runs',done.data.id,'attempts',attempt.id);
-    const input=JSON.parse(readFileSync(join(dir,'input.json')));const ref=input.snapshot.metadata.execution_evidence;
+    const input=JSON.parse(readFileSync(join(dir,'input.json'),'utf8'));const ref=input.snapshot.metadata.execution_evidence;
     const bytes=readFileSync(ref.path);assert.equal(createHash('sha256').update(bytes).digest('hex'),ref.sha256);
-    const evidence=JSON.parse(bytes);assert.equal(evidence.accepted_head,attempt.base_commit);
+    const evidence=JSON.parse(bytes.toString('utf8'));assert.equal(evidence.accepted_head,attempt.base_commit);
     assert.equal(evidence.runner_profile,'command');assert.equal(evidence.native_session_ids_observed,0);
     assert.ok(!bytes.toString().includes('must-not-enter-evidence'));
-    assert.equal(new Set(evidence.attempts.map(a=>a.attempt_id)).size,evidence.attempts.length);
+    assert.equal(new Set(evidence.attempts.map((a: any)=>a.attempt_id)).size,evidence.attempts.length);
   }
 });

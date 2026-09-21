@@ -4,10 +4,10 @@ import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
-import { binary, workspace, cleanEnv } from './helpers.mjs';
+import { binary, workspace, cleanEnv } from './helpers.mts';
 const runtime=process.env.SPEC_AUTONOMOUS_JS_RUNTIME || process.execPath;
 const launcher=process.env.SPEC_AUTONOMOUS_TEST_LAUNCHER || join(workspace,'packages/cli/bin/spec-autonomous.mjs');
-function fixture(t){
+function fixture(t: any){
  const base=mkdtempSync(join(tmpdir(),'sa empty init ')),root=join(base,'project'),tools=join(base,'tools'),marker=join(base,'called');mkdirSync(root);mkdirSync(tools);
  t.after(()=>rmSync(base,{recursive:true,force:true}));
  // OpenSpec is real; Spec Kit's small offline fixture checks bootstrap routing.
@@ -15,7 +15,7 @@ function fixture(t){
  specify:`import fs from 'node:fs';if(process.argv[2]==='version'){console.log('1.0.6');process.exit(0);}if(process.argv[2]!=='init'||!process.argv.includes('--non-interactive'))process.exit(4);fs.appendFileSync(${JSON.stringify(marker)},'init\\n');fs.mkdirSync('.specify/memory',{recursive:true});fs.writeFileSync('.specify/memory/constitution.md','# Constitution\\n');`};
  for(const [name,body] of Object.entries(scripts)){const file=join(tools,name);writeFileSync(file,`#!${process.execPath}\n${body}`);chmodSync(file,0o755);}
  const env=cleanEnv({PATH:`${tools}${delimiter}${process.env.PATH}`,SPEC_AUTONOMOUS_BINARY:binary,SPEC_AUTONOMOUS_PROVIDER_HOME:join(base,'providers'),SPEC_AUTONOMOUS_LANG:'zh-CN',SPEC_AUTONOMOUS_OFFLINE:'1'});delete env.CI;
- const cli=args=>spawnSync(runtime,[launcher,'--path',root,...args],{env,encoding:'utf8',timeout:30000});
+ const cli=(args: any)=>spawnSync(runtime,[launcher,'--path',root,...args],{env,encoding:'utf8',timeout:30000});
  return{base,root,tools,env,cli,marker};
 }
 for(const provider of ['openspec','speckit'])test(`empty ${provider} init creates Git and complete project structure; repeat preserves config`,{skip:process.platform==='win32'},t=>{

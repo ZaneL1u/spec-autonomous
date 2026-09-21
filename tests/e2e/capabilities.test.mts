@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
-import {fixture,cli,git,join} from './helpers.mjs';
-import {raw} from '../mock-host.mjs';
-const call=(root,name,args={})=>raw(root,['tools','call',name,'--input',JSON.stringify(args)]);
-const put=(root,file,body)=>{mkdirSync(join(root,file,'..'),{recursive:true});writeFileSync(join(root,file),body);};
-const commit=root=>{git(root,['add','--all']);git(root,['commit','-qm','test: capabilities fixture']);};
+import {fixture,cli,git,join} from './helpers.mts';
+import {raw} from '../mock-host.mts';
+const call=(root: any,name: any,args={})=>raw(root,['tools','call',name,'--input',JSON.stringify(args)]);
+const put=(root: any,file: any,body: any)=>{mkdirSync(join(root,file,'..'),{recursive:true});writeFileSync(join(root,file),body);};
+const commit=(root: any)=>{git(root,['add','--all']);git(root,['commit','-qm','test: capabilities fixture']);};
 
 test('default catalog is limited while all granular tools have schemas and reject unknown fields',t=>{
  const root=fixture(t,'speckit');const primary=raw(root,['tools','list']);assert.equal(primary.status,0,primary.details);assert.equal(primary.data.capabilities.length,8);
- const all=raw(root,['tools','list','--all','--limit','200']);assert.equal(all.status,0,all.details);const caps=all.data.capabilities;assert.ok(caps.length>=50);assert.equal(new Set(caps.map(c=>c.id)).size,caps.length);
+ const all=raw(root,['tools','list','--all','--limit','200']);assert.equal(all.status,0,all.details);const caps=all.data.capabilities;assert.ok(caps.length>=50);assert.equal(new Set(caps.map((c: any)=>c.id)).size,caps.length);
  for(const cap of caps){assert.equal(cap.input_schema.additionalProperties,false);assert.ok(cap.output_schema);}
  const before=git(root,['status','--porcelain']);const bad=call(root,'document.scaffold',{file:'bad.md',kind:'summary',unexpected:true});assert.notEqual(bad.status,0);assert.equal(git(root,['status','--porcelain']),before);assert.ok(!existsSync(join(root,'bad.md')));
 });
@@ -59,7 +59,7 @@ test('archive refuses active work and stale preview without changing the source'
 
 test('doctor and previewed repairs preserve user configuration and back up the original bytes',t=>{
  const root=fixture(t,'speckit');const original=readFileSync(join(root,'.spec-autonomous/config.toml'));
- const doctor=raw(root,['doctor']);assert.equal(doctor.status,0,doctor.details);assert.ok(doctor.data.diagnostics.some(d=>d.includes('legacy_runner_ignored')));assert.deepEqual(readFileSync(join(root,'.spec-autonomous/config.toml')),original);
+ const doctor=raw(root,['doctor']);assert.equal(doctor.status,0,doctor.details);assert.ok(doctor.data.diagnostics.some((d: any)=>d.includes('legacy_runner_ignored')));assert.deepEqual(readFileSync(join(root,'.spec-autonomous/config.toml')),original);
  const preview=call(root,'repair',{kind:'legacy-config'});assert.equal(preview.status,0,preview.details);
  const stale=call(root,'repair',{kind:'legacy-config',apply:true,expected_hash:'not-current'});assert.notEqual(stale.status,0);assert.deepEqual(readFileSync(join(root,'.spec-autonomous/config.toml')),original);
  const fixed=call(root,'repair',{kind:'legacy-config',apply:true,expected_hash:preview.data.expected_hash});assert.equal(fixed.status,0,fixed.details);assert.ok(!readFileSync(join(root,'.spec-autonomous/config.toml'),'utf8').includes('[runner]'));

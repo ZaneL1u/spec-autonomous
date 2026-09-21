@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { binary, workspace, cleanEnv } from './helpers.mjs';
-import { npmCommand } from '../../scripts/npm-command.mjs';
+import { binary, workspace, cleanEnv } from './helpers.mts';
+import { npmCommand } from '../../scripts/npm-command.mts';
 
 for (const ignoreScripts of [false, true]) test(`npm Git installs the root facade (${ignoreScripts ? 'without scripts' : 'default install'})`, { skip: process.platform === 'win32', timeout: 120_000 }, t => {
   const temp = mkdtempSync(join(tmpdir(), 'sa git npm install '));
@@ -17,7 +17,7 @@ for (const ignoreScripts of [false, true]) test(`npm Git installs the root facad
   mkdirSync(source); mkdirSync(tools);
   for (const file of ['package.json', 'git-install.json', 'Cargo.toml', 'README.md', 'LICENSE']) cpSync(join(workspace, file), join(source, file));
   for (const file of ['bin', 'lib', 'locales', 'skills', 'package.json']) cpSync(join(workspace, 'packages/cli', file), join(source, 'packages/cli', file), { recursive: true });
-  const version = JSON.parse(readFileSync(join(source, 'package.json'))).version;
+  const version = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version;
   const key = `${process.platform}-${process.arch}`;
   const sha256 = createHash('sha256').update(readFileSync(binary)).digest('hex');
   writeFileSync(join(source, 'git-install.json'), JSON.stringify({ schema_version: 1, repository: 'owner/private', version, tag: `v${version}`, assets: { [key]: { name: 'native-test-asset', sha256 } } }));
@@ -28,7 +28,7 @@ if(args[0]!=='release'||args[1]!=='download')process.exit(4);
 fs.appendFileSync(${JSON.stringify(marker)},'download\\n');
 fs.copyFileSync(${JSON.stringify(binary)},path.join(args[args.indexOf('--dir')+1],args[args.indexOf('--pattern')+1]));
 `); chmodSync(gh, 0o755);
-  const git = args => {
+  const git = (args: any) => {
     const r = spawnSync('git', ['-c', 'user.name=Git Install Test', '-c', 'user.email=git-install@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: source, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
   };
@@ -38,13 +38,13 @@ fs.copyFileSync(${JSON.stringify(binary)},path.join(args[args.indexOf('--dir')+1
   const url = `git+${pathToFileURL(source).href}`;
   npmCommand(['install', '-g', '--prefix', prefix, '--no-audit', '--no-fund', ...(ignoreScripts ? ['--ignore-scripts'] : []), url], { env, encoding: 'utf8', timeout: 90_000 });
   const installed = join(prefix, 'lib/node_modules/spec-autonomous');
-  const manifest = JSON.parse(readFileSync(join(installed, 'package.json')));
+  const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
   assert.equal(manifest.name, 'spec-autonomous');
   assert.equal(existsSync(join(installed, 'Cargo.toml')), false);
   assert.equal(existsSync(join(installed, 'packages/cli/native')), false);
   assert.equal(existsSync(marker), false);
   const entry = join(installed, manifest.bin['spec-autonomous']);
-  const invoke = args => spawnSync(process.execPath, [entry, ...args], { cwd: temp, env, encoding: 'utf8', timeout: 30_000 });
+  const invoke = (args: any) => spawnSync(process.execPath, [entry, ...args], { cwd: temp, env, encoding: 'utf8', timeout: 30_000 });
   const result = invoke(['--version']); assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), version);
   assert.equal(readFileSync(marker, 'utf8').trim(), 'download');
   env.SPEC_AUTONOMOUS_OFFLINE = '1';

@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
-import {fixture,cli,start,until,git,edit,join} from './helpers.mjs';
+import {fixture,cli,start,until,git,edit,join} from './helpers.mts';
 
 for(const scope of ['phase','milestone'])test(`${scope} verification failures enter bounded source repair and revalidation`,{timeout:150000},t=>{
   const root=fixture(t,'speckit',{phaseRepair:scope==='phase',milestoneRepair:scope==='milestone'});
   const r=cli(root,['run','--milestone','M001']);
   assert.equal(r.status,0,r.details);assert.equal(r.data.status,'completed');
   assert.equal(r.data.repair_rounds,1);assert.ok(existsSync(join(root,'src/version.mjs')));
-  const checks=r.data.evidence.filter(e=>e.argv.includes('checks/version.mjs'));
-  assert.ok(checks.some(e=>e.exit_code!==0),'a real missing implementation failed verification');
-  assert.ok(checks.some(e=>e.exit_code===0&&e.tree_unchanged),'the repaired implementation passed');
-  assert.ok(checks.some(e=>readFileSync(e.log,'utf8').includes('tests')),'Node assertions actually executed');
-  assert.ok(r.data.attempts.some(a=>a.kind==='converge'&&a.status==='accepted'));
+  const checks=r.data.evidence.filter((e: any)=>e.argv.includes('checks/version.mjs'));
+  assert.ok(checks.some((e: any)=>e.exit_code!==0),'a real missing implementation failed verification');
+  assert.ok(checks.some((e: any)=>e.exit_code===0&&e.tree_unchanged),'the repaired implementation passed');
+  assert.ok(checks.some((e: any)=>readFileSync(e.log,'utf8').includes('tests')),'Node assertions actually executed');
+  assert.ok(r.data.attempts.some((a: any)=>a.kind==='converge'&&a.status==='accepted'));
   assert.equal(git(root,['status','--porcelain']),'');
 });
 
@@ -41,5 +41,5 @@ test('source drift can be committed and reconciled on resume without losing nati
   assert.equal(result.status,0,result.details);assert.equal(result.data.status,'completed');
   assert.ok(readFileSync(join(root,'specs/arithmetic/spec.md'),'utf8').includes('Native edit: preserve'));
   assert.equal(git(root,['status','--porcelain']),'');
-  const report=cli(root,['report',result.data.id]);assert.ok(report.data.events.some(e=>e.kind==='source_reconciled'));
+  const report=cli(root,['report',result.data.id]);assert.ok(report.data.events.some((e: any)=>e.kind==='source_reconciled'));
 });

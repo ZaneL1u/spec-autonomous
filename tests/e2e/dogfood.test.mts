@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 test('checked-in OpenSpec playground dogfoods init, auto receipts, progress and cleanup preview', { timeout: 120000 }, () => {
-  const result = spawnSync(process.execPath, [join(root, 'scripts/dogfood.mjs')], { cwd: root, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OPENSPEC_TELEMETRY: '0' } });
+  const result = spawnSync(process.execPath, [join(root, 'scripts/dogfood.mts')], { cwd: root, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OPENSPEC_TELEMETRY: '0' } });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, 'completed');

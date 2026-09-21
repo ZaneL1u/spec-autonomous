@@ -4,29 +4,29 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { fixture, cli, start, until, git, edit, join, resolve, workspace } from './helpers.mjs';
+import { fixture, cli, start, until, git, edit, join, resolve, workspace } from './helpers.mts';
 
 const milestonePath = '.spec-autonomous/milestones/M001/milestone.toml';
-const mockAgent = pathToFileURL(join(workspace, 'tests/mock-agent.mjs')).href;
+const mockAgent = pathToFileURL(join(workspace, 'tests/mock-agent.mts')).href;
 
-function failure(result) {
+function failure(result: any) {
   return result.data?.blocker ?? result.output?.error?.message ?? result.details;
 }
 
-function put(root, path, body) {
+function put(root: any, path: any, body: any) {
   const target = join(root, path);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, body);
 }
 
-function commit(root, message = 'test: configure recovery boundary') {
+function commit(root: any, message = 'test: configure recovery boundary') {
   git(root, ['add', '--all']);
   git(root, ['commit', '-qm', message]);
 }
 
 // Fault injection stays in this temporary repository. The shared mock runner is
 // imported unchanged, so its normal planning, implementation and checks still run.
-function driver(root, body) {
+function driver(root: any, body: any) {
   const path = join(root, '.mock/recovery-driver.mjs');
   writeFileSync(path, `import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, realpathSync } from 'node:fs';
@@ -40,7 +40,7 @@ ${body}
   ));
 }
 
-function setPhaseCheck(root, index, argv) {
+function setPhaseCheck(root: any, index: any, argv: any) {
   edit(root, milestonePath, text => {
     const parts = text.split('\n[[phases]]');
     assert.ok(parts[index + 1], 'fixture phase must exist');
@@ -52,19 +52,19 @@ function setPhaseCheck(root, index, argv) {
   });
 }
 
-function attemptDirectory(root, run, attempt) {
+function attemptDirectory(root: any, run: any, attempt: any) {
   const common = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   return join(common, 'spec-autonomous/runs', run.id, 'attempts', attempt.id);
 }
 
-function alive(pid) {
+function alive(pid: any) {
   const result = spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' });
   return result.status === 0 && result.stdout.trim() !== '' && !result.stdout.trim().startsWith('Z');
 }
 
-function ownProcess(t, running) {
-  const groups = new Set();
-  const descendants = new Set();
+function ownProcess(t: any, running: any) {
+  const groups = new Set<number>();
+  const descendants = new Set<number>();
   t.after(() => {
     for (const pid of groups) {
       try { process.kill(-pid, 'SIGKILL'); } catch {}
@@ -77,11 +77,11 @@ function ownProcess(t, running) {
   return { groups, descendants };
 }
 
-async function observeHungAttempt(root, kind, owned) {
+async function observeHungAttempt(root: any, kind: any, owned: any) {
   return until(() => {
     const status = cli(root, ['status']);
     if (status.status !== 0) return null;
-    const attempt = status.data.attempts.find(a => a.kind === kind && a.status === 'claimed');
+    const attempt = status.data.attempts.find((a: any) => a.kind === kind && a.status === 'claimed');
     if (!attempt) return null;
     const directory = attemptDirectory(root, status.data, attempt);
     const processPath = join(directory, 'host-process.json');
@@ -120,7 +120,7 @@ test('native handoff and resume retain the selected phase and committed native e
   assert.equal(resumed.data.status, 'scope_completed');
   assert.deepEqual(resumed.data.selected_phases, ['P002']);
   assert.deepEqual(resumed.data.completed_phases, ['P002']);
-  assert.ok(resumed.data.attempts.every(a => a.phase_id === 'P002'));
+  assert.ok(resumed.data.attempts.every((a: any) => a.phase_id === 'P002'));
   assert.equal(readFileSync(join(root, 'NATIVE-NOTES.md'), 'utf8'), 'Native work retained across the handoff.\n');
   assert.ok(existsSync(join(root, 'src/service.mjs')));
   assert.equal(existsSync(join(root, 'specs/arithmetic/tasks.md')), false);
@@ -145,9 +145,9 @@ test('completed phase evidence is invalidated by code or phase-verification chan
     assert.notEqual(rerun.status, 0, `${change}: ${rerun.details}`);
     assert.ok(rerun.data, rerun.details);
     assert.ok(!rerun.data.completed_phases.includes('P001'), rerun.details);
-    assert.ok(rerun.data.evidence.some(e => e.exit_code !== 0), `${change}: expected fresh failing verification; ${failure(rerun)}`);
+    assert.ok(rerun.data.evidence.some((e: any) => e.exit_code !== 0), `${change}: expected fresh failing verification; ${failure(rerun)}`);
     if (change === 'verification') {
-      assert.ok(rerun.data.evidence.some(e => e.argv.some(arg => arg.includes('NEW_PHASE_ACCEPTANCE'))));
+      assert.ok(rerun.data.evidence.some((e: any) => e.argv.some((arg: any) => arg.includes('NEW_PHASE_ACCEPTANCE'))));
     }
     assert.equal(git(root, ['rev-parse', 'HEAD']), origin);
     assert.equal(readFileSync(join(root, 'specs/arithmetic/tasks.md'), 'utf8'), tasks);
@@ -172,7 +172,7 @@ test('an unsupported mandatory after hook is rejected before any implementation 
   if (result.data?.attempts) assert.equal(result.data.attempts.length, 0);
   const progress = cli(root, ['progress', '--all-worktrees']);
   assert.equal(progress.status, 0, progress.details);
-  assert.equal(progress.data.worktrees.filter(w => w.kind === 'managed-worker').length, 0);
+  assert.equal(progress.data.worktrees.filter((w: any) => w.kind === 'managed-worker').length, 0);
   assert.equal(git(root, ['rev-parse', 'HEAD']), origin);
   assert.equal(existsSync(join(root, 'src/add.mjs')), false);
   assert.equal(existsSync(join(root, 'specs/arithmetic/tasks.md')), false);
@@ -285,6 +285,6 @@ test('an unrelated passing audit cannot establish native requirement coverage', 
   assert.notEqual(result.status, 0, result.details);
   assert.match(failure(result), /audit|coverage|requirement|repair_budget/);
   assert.ok(result.data && !result.data.completed_phases.includes('P001'), result.details);
-  assert.ok(result.data.attempts.some(a => a.kind === 'audit'), 'must reach the syntactically valid audit result');
+  assert.ok(result.data.attempts.some((a: any) => a.kind === 'audit'), 'must reach the syntactically valid audit result');
   assert.equal(git(root, ['rev-parse', 'HEAD']), origin);
 });

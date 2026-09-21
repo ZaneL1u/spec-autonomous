@@ -6,16 +6,17 @@ import {readFileSync,writeFileSync,openSync,closeSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
+type Json=any;
 export const workspace=fileURLToPath(new URL('../',import.meta.url));
 export const binary=process.env.SPEC_AUTONOMOUS_TEST_BINARY??join(workspace,'target/debug',process.platform==='win32'?'spec-autonomous.exe':'spec-autonomous');
-export function cleanEnv(extra={}){const env={...process.env,...extra};for(const key of ['NODE_TEST_CONTEXT','NODE_TEST_WORKER_ID','NODE_CHANNEL_FD','NODE_CHANNEL_SERIALIZATION_MODE','NODE_UNIQUE_ID'])delete env[key];return env;}
-export function parseOutput(text){try{return JSON.parse(text)}catch{}return text.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).at(-1)}
-export function raw(root,args,env={}){
+export function cleanEnv(extra:NodeJS.ProcessEnv={}):NodeJS.ProcessEnv{const env={...process.env,...extra};for(const key of ['NODE_TEST_CONTEXT','NODE_TEST_WORKER_ID','NODE_CHANNEL_FD','NODE_CHANNEL_SERIALIZATION_MODE','NODE_UNIQUE_ID'])delete env[key];return env;}
+export function parseOutput(text: any){try{return JSON.parse(text)}catch{}return text.trim().split('\n').filter(Boolean).map((line: any)=>JSON.parse(line)).at(-1)}
+export function raw(root:string,args:string[],env:NodeJS.ProcessEnv={}):Json{
  const r=spawnSync(binary,['--path',root,...args,'--json'],{encoding:'utf8',timeout:120000,maxBuffer:16*1024*1024,env:cleanEnv(env)});
  if(r.error)throw r.error;let output;try{output=parseOutput(r.stdout)}catch{}
  return {...r,output,data:output?.data,details:`exit=${r.status}\n${r.stderr}\n${r.stdout.slice(-6000)}`};
 }
-export function resolveDiscussion(root,current,env={}){
+export function resolveDiscussion(root:string,current:Json,env:NodeJS.ProcessEnv={}):Json{
  if(current.data?.status!=='needs_input'||!current.data?.blocker?.includes('discussion_required'))return current;
  const run_id=current.data.id,phase_id=current.data.current_phase;
  const preview=raw(root,['tools','call','discussion.next','--input',JSON.stringify({run_id,phase_id})],env);
@@ -24,9 +25,9 @@ export function resolveDiscussion(root,current,env={}){
  if(applied.status!==0)throw Error(applied.details);
  return applied.data.unresolved?.length?current:raw(root,['resume',run_id],env);
 }
-export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={}){
- let current=raw(root,args,env);const jobs=new Map();let abort=false;
- const kill=child=>{if(!child?.pid)return;try{if(process.platform==='win32')spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});else process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL')}};
+export async function drive(root:string,args:string[],{env={},onSnapshot=()=>{},maxRounds=300}:{env?:NodeJS.ProcessEnv;onSnapshot?:(value:Json)=>void;maxRounds?:number}={}):Promise<Json>{
+ let current=raw(root,args,env);const jobs=new Map<string,Json>();let abort=false;
+ const kill=(child: any)=>{if(!child?.pid)return;try{if(process.platform==='win32')spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});else process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL')}};
  const stop=()=>{abort=true;for(const {child} of jobs.values())kill(child);};
  process.once('SIGTERM',stop);process.once('SIGINT',stop);
  try{
@@ -45,7 +46,7 @@ export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={
     const owner={host_id:'mock-host',session_id:`session-${request.request_id}`,fresh_context:true};
     const claimed=raw(root,['claim',request.run_id,request.request_id,'--token',request.token,'--host-id',owner.host_id,'--session-id',owner.session_id,'--fresh-context'],env);
     if(claimed.status!==0)throw Error(claimed.details);
-    let input=JSON.parse(readFileSync(request.input_path));if(input.snapshot?.metadata?.context_reference)input=JSON.parse(readFileSync(input.snapshot.metadata.context_reference.path));
+    let input=JSON.parse(readFileSync(request.input_path,'utf8'));if(input.snapshot?.metadata?.context_reference)input=JSON.parse(readFileSync(input.snapshot.metadata.context_reference.path,'utf8'));
     const workerEnv=cleanEnv({...env,SPEC_AUTONOMOUS_INPUT:request.input_path,SPEC_AUTONOMOUS_RESULT:request.result_path,SPEC_AUTONOMOUS_ATTEMPT:request.request_id});
     // Fixture controls belong to this test host, never the product launcher.
     const toml=readFileSync(join(root,'.spec-autonomous/config.toml'),'utf8');
@@ -56,7 +57,7 @@ export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={
     if(input.framework==='speckit'){workerEnv.SPECIFY_INIT_DIR=request.project;workerEnv.SPECIFY_FEATURE_DIRECTORY=join(request.project,input.snapshot?.selector??'');workerEnv.SPECIFY_FEATURE=input.snapshot?.selector?.split('/').at(-1)??'';}
     const dir=dirname(request.input_path);const start=performance.now();
     const stdout=openSync(join(dir,'stdout.log'),'w'),stderr=openSync(join(dir,'stderr.log'),'w');
-    const configured=/^command = (\[.*\])$/m.exec(toml);const argv=configured?JSON.parse(configured[1]):[process.execPath,join(workspace,'tests/mock-agent.mjs')];
+    const configured=/^command = (\[.*\])$/m.exec(toml);const argv=configured?JSON.parse(configured[1]):[process.execPath,join(workspace,'tests/mock-agent.mts')];
     const child=spawn(argv[0],argv.slice(1),{cwd:request.project,env:workerEnv,detached:process.platform!=='win32',stdio:['ignore',stdout,stderr]});closeSync(stdout);closeSync(stderr);writeFileSync(join(dir,'host-process.json'),JSON.stringify({pid:child.pid,host_session_id:owner.session_id}));
     const timer=setTimeout(()=>kill(child),Math.max(1,Math.min((request.limits?.attempt_timeout_seconds??20)*1000,request.limits?.run_remaining_ms??120000)));
     const promise=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>{clearTimeout(timer);kill(child);resolve({request,owner,code,signal,duration:performance.now()-start});});});
@@ -68,7 +69,7 @@ export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={
    jobs.delete(ended.request.request_id);
    if(abort){raw(root,['pause',ended.request.run_id]);return raw(root,['status',ended.request.run_id]);}
    if(ended.code!==0){
-    let input=JSON.parse(readFileSync(ended.request.input_path));
+    let input=JSON.parse(readFileSync(ended.request.input_path,'utf8'));
     writeFileSync(ended.request.result_path,JSON.stringify({schema_version:1,run_id:input.run_id,task_id:input.task_id,attempt_id:input.attempt_id,status:'failed',summary:`external mock exited ${ended.code}`,blockers:[],milestone:null,plan:null,audit:[]}));
    }
    current=raw(root,['apply-result','--result',ended.request.result_path,'--token',ended.request.token,'--host-id',ended.owner.host_id,'--session-id',ended.owner.session_id,'--fresh-context'],env);
@@ -77,7 +78,7 @@ export async function drive(root,args,{env={},onSnapshot=()=>{},maxRounds=300}={
  }finally{stop();await Promise.allSettled([...jobs.values()].map(j=>j.promise));for(const {request} of jobs.values())raw(root,['tools','call','work.revoke','--input',JSON.stringify({run_id:request.run_id,request_id:request.request_id,token:request.token,host_stopped:true,reason:'External test host stopped the child'})]);process.off('SIGTERM',stop);process.off('SIGINT',stop);}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const index=process.argv.indexOf('--path');if(index<0)throw Error('mock-host requires --path');const root=resolve(process.argv[index+1]);const args=process.argv.slice(index+2).filter(x=>x!=='--json');
- const result=await drive(root,args,{onSnapshot:r=>{if(r.data)console.log(JSON.stringify({event:'host_snapshot',data:{run_id:r.data.id,status:r.data.status,stage:r.data.stage}}));}});
+ const index=process.argv.indexOf('--path');if(index<0)throw Error('mock-host requires --path');const root=resolve(process.argv[index+1]!);const args=process.argv.slice(index+2).filter(x=>x!=='--json');
+ const result=await drive(root,args,{onSnapshot:(r: any)=>{if(r.data)console.log(JSON.stringify({event:'host_snapshot',data:{run_id:r.data.id,status:r.data.status,stage:r.data.stage}}));}});
  console.log(JSON.stringify(result.output??{error:{message:result.details}}));process.exitCode=result.status??1;
 }

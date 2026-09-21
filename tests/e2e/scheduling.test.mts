@@ -4,11 +4,11 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { binary, cleanEnv, cli, edit, fixture, git, join } from './helpers.mjs';
+import { binary, cleanEnv, cli, edit, fixture, git, join } from './helpers.mts';
 
 const sleepMs = 600;
 
-function sixIndependentTasks(root) {
+function sixIndependentTasks(root: any) {
   const scenarioPath = join(root, '.mock/scenario.json');
   const scenario = JSON.parse(readFileSync(scenarioPath, 'utf8'));
   // Keep add/multiply so the untouched second roadmap phase remains meaningful.
@@ -31,10 +31,10 @@ assert.equal(offset(-3), ${-3 + n});
 `);
   }
   const tasks = scenario.phases[0].tasks;
-  const phaseCheck = { argv: [process.execPath, '--test', ...tasks.map(task => task.test)], cwd: '.' };
+  const phaseCheck = { argv: [process.execPath, '--test', ...tasks.map((task: any) => task.test)], cwd: '.' };
   scenario.phases[0].verification = [phaseCheck];
   scenario.milestone_verification = [{
-    argv: [process.execPath, '--test', ...scenario.phases.flatMap(phase => phase.tasks.map(task => task.test))],
+    argv: [process.execPath, '--test', ...scenario.phases.flatMap((phase: any) => phase.tasks.map((task: any) => task.test))],
     cwd: '.',
   }];
   scenario.sleep_ms = sleepMs;
@@ -42,7 +42,7 @@ assert.equal(offset(-3), ${-3 + n});
   writeFileSync(scenarioPath, JSON.stringify(scenario, null, 2));
   edit(root, '.spec-autonomous/milestones/M001/milestone.toml', text => {
     const parts = text.split('\n[[phases]]');
-    const render = check => `verification = [{argv = ${JSON.stringify(check.argv)}, cwd = "."}]`;
+    const render = (check: any) => `verification = [{argv = ${JSON.stringify(check.argv)}, cwd = "."}]`;
     parts[0] = parts[0].replace(/^verification = .*$/m, render(scenario.milestone_verification[0]));
     parts[1] = parts[1].replace(/^verification = .*$/m, render(phaseCheck));
     return parts.join('\n[[phases]]');
@@ -52,8 +52,8 @@ assert.equal(offset(-3), ${-3 + n});
   return tasks;
 }
 
-function concurrency(attempts) {
-  const events = attempts.flatMap(attempt => {
+function concurrency(attempts: any) {
+  const events = attempts.flatMap((attempt: any) => {
     const start = Date.parse(attempt.started_at);
     const finish = Date.parse(attempt.finished_at);
     assert.ok(Number.isFinite(start) && Number.isFinite(finish), 'every implementation has durable start/end timestamps');
@@ -62,7 +62,7 @@ function concurrency(attempts) {
   });
   // Half-open intervals: a worker finishing at the next worker's start does not
   // count as overlap. These are coordinator-observed attempt intervals, not CPU time.
-  events.sort((a, b) => a.at - b.at || a.delta - b.delta);
+  events.sort((a: any, b: any) => a.at - b.at || a.delta - b.delta);
   let live = 0;
   let peak = 0;
   for (const event of events) {
@@ -81,7 +81,7 @@ test('six independent Spec Kit tasks respect worker limits and produce equivalen
     const root = fixture(t, 'speckit', { sleepMs });
     const tasks = sixIndependentTasks(root);
     assert.equal(tasks.length, 6);
-    assert.equal(new Set(tasks.map(task => task.path)).size, 6);
+    assert.equal(new Set(tasks.map((task: any) => task.path)).size, 6);
     if (expectedTasks) assert.deepEqual(tasks, expectedTasks, 'both runs must implement the same workload');
     expectedTasks = tasks;
 
@@ -106,11 +106,11 @@ test('six independent Spec Kit tasks respect worker limits and produce equivalen
     assert.equal(new Set(checked.map(match => match[1])).size, 6);
     assert.doesNotMatch(source, /^- \[ \]/m);
 
-    const writes = result.data.attempts.filter(attempt => attempt.kind === 'implement');
+    const writes = result.data.attempts.filter((attempt: any) => attempt.kind === 'implement');
     assert.equal(writes.length, 6, 'the successful workload needs one attempt per source task');
-    assert.ok(writes.every(attempt => attempt.status === 'integrated'));
-    assert.equal(new Set(writes.map(attempt => attempt.id)).size, 6);
-    assert.equal(new Set(writes.map(attempt => attempt.worktree)).size, 6);
+    assert.ok(writes.every((attempt: any) => attempt.status === 'integrated'));
+    assert.equal(new Set(writes.map((attempt: any) => attempt.id)).size, 6);
+    assert.equal(new Set(writes.map((attempt: any) => attempt.worktree)).size, 6);
     const peak = concurrency(writes);
     assert.ok(peak <= maxWorkers, `observed ${peak} overlapping attempts for max_workers=${maxWorkers}`);
     if (maxWorkers === 1) assert.equal(peak, 1, 'serial execution must never overlap attempts');
@@ -124,7 +124,7 @@ test('six independent Spec Kit tasks respect worker limits and produce equivalen
       assert.equal(evidence.tree_unchanged, true);
       assert.ok(readFileSync(evidence.log).length > 0, 'host test evidence must contain executed test output');
     }
-    const delivered = spawnSync(process.execPath, ['--test', ...tasks.map(task => task.test)], {
+    const delivered = spawnSync(process.execPath, ['--test', ...tasks.map((task: any) => task.test)], {
       cwd: root,
       env: cleanEnv(),
       encoding: 'utf8',
@@ -143,7 +143,7 @@ test('six independent Spec Kit tasks respect worker limits and produce equivalen
       run_id: result.data.id,
       accepted_head: result.data.accepted_head,
       host_verification_count: result.data.evidence.length,
-      attempts: writes.map(attempt => ({
+      attempts: writes.map((attempt: any) => ({
         task_id: attempt.task_id,
         started_at: attempt.started_at,
         finished_at: attempt.finished_at,

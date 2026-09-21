@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
-import {fixture,cli,git,configure,join} from './helpers.mjs';
+import {fixture,cli,git,configure,join} from './helpers.mts';
 
 for(const idempotent of [false,true])test(`interrupted ${idempotent?'idempotent':'non-idempotent'} native hook is reconciled without duplicate effects`,{timeout:150000},t=>{
   const root=fixture(t,'speckit');
@@ -36,6 +36,6 @@ test('plan mode never executes implementation hooks',{timeout:120000},t=>{
   configure(root,`\n[hooks."mock.marker"]\nargv = [${JSON.stringify(process.execPath)}, "hooks/marker.mjs"]\nidempotent = false\n`);
   const planned=cli(root,['plan','--milestone','M001']);
   assert.equal(planned.status,0,planned.details);assert.equal(planned.data.status,'plan_ready');
-  assert.equal(planned.data.attempts.filter(a=>a.kind==='hook'||a.kind==='implement').length,0);
+  assert.equal(planned.data.attempts.filter((a: any)=>a.kind==='hook'||a.kind==='implement').length,0);
   assert.equal(git(root,['ls-files','implementation-hook-ran.txt']),'');
 });
