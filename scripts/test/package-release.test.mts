@@ -4,11 +4,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assemble } from '../package-release.mjs';
-import { npmCommand } from '../npm-command.mjs';
+import { assemble } from '../package-release.mts';
+import { npmCommand } from '../npm-command.mts';
 import { platforms } from '../../packages/cli/lib/platform.mjs';
 
-function filesIn(directory, prefix = '') {
+function filesIn(directory:string, prefix = ''):string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const name = prefix + entry.name;
     return entry.isDirectory() ? filesIn(join(directory, entry.name), `${name}/`) : [name];
@@ -31,14 +31,14 @@ test('release isolates platform packages and pins optional dependencies exactly'
   }
   const output = join(root, 'out');
   const release = assemble(root, output, {repository: 'https://github.com/example/spec-autonomous'});
-  const wrapper = JSON.parse(readFileSync(join(output, 'spec-autonomous/package.json')));
+  const wrapper = JSON.parse(readFileSync(join(output, 'spec-autonomous/package.json'), 'utf8')) as any;
   assert.equal(release.packages.length, 7);
   assert.equal(Object.keys(wrapper.optionalDependencies).length, 6);
   assert.ok(Object.values(wrapper.optionalDependencies).every((v) => v === wrapper.version));
   assert.equal(existsSync(join(output, 'spec-autonomous/native')), false);
   assert.ok(existsSync(join(output, 'spec-autonomous/locales/en.json')));
-  assert.equal(JSON.parse(readFileSync(join(output, 'spec-autonomous/package.json'))).repository.url, 'https://github.com/example/spec-autonomous');
-  const linux = JSON.parse(readFileSync(join(output, 'spec-autonomous-linux-x64/package.json')));
+  assert.equal((JSON.parse(readFileSync(join(output, 'spec-autonomous/package.json'), 'utf8')) as any).repository.url, 'https://github.com/example/spec-autonomous');
+  const linux = JSON.parse(readFileSync(join(output, 'spec-autonomous-linux-x64/package.json'), 'utf8')) as any;
   assert.equal(linux.repository.url, 'https://github.com/example/spec-autonomous');
   assert.deepEqual(linux.libc, ['glibc']);
   assert.deepEqual(linux.cpu, ['x64']);
@@ -63,9 +63,9 @@ test('release wrapper tarball contains every skill asset and no platform binarie
     assert.deepEqual(readFileSync(join(wrapper, 'skills', path)), readFileSync(join(sourceSkills, path)));
   }
   const result = npmCommand(['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: wrapper, encoding: 'utf8' });
-  const [packed] = JSON.parse(result.stdout);
-  const paths = packed.files.map((entry) => entry.path);
-  assert.ok(existsSync(join(root, packed.filename)));
+  const [packed] = JSON.parse(result.stdout) as Array<{filename:string;files:Array<{path:string}>}>;
+  const paths = packed!.files.map((entry) => entry.path);
+  assert.ok(existsSync(join(root, packed!.filename)));
   assert.deepEqual(paths.filter((path) => path.startsWith('skills/')).sort(), skills.map((path) => `skills/${path}`));
   assert.equal(paths.some((path) => path.startsWith('native/')), false);
   assert.equal(paths.some((path) => path.endsWith('.exe')), false);

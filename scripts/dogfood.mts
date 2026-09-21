@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { cp, mkdtemp, rm, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { cp, mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -11,35 +11,35 @@ const temp = await mkdtemp(join(tmpdir(), 'spec-autonomous-dogfood-'));
 const project = join(temp, 'todo-project');
 await cp(source, project, { recursive: true });
 await mkdir(join(project, '.mock'), { recursive: true });
-const env = { ...process.env, SPEC_AUTONOMOUS_LANG: 'en', OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1' };
+const env:NodeJS.ProcessEnv = { ...process.env, SPEC_AUTONOMOUS_LANG: 'en', OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1' };
 const binary = join(root, 'target/debug/spec-autonomous');
 const launcher = join(root, 'packages/cli/bin/spec-autonomous.mjs');
 env.SPEC_AUTONOMOUS_BINARY = binary;
-function run(args, options = {}) {
-  const result = spawnSync(process.execPath, [launcher, '--path', project, ...args], { env: { ...env, SPEC_AUTONOMOUS_TEST_BINARY: binary }, encoding: 'utf8', timeout: 30000, ...options });
+function run(args:string[], options:Record<string,unknown> = {}) {
+  const result = spawnSync(process.execPath, [launcher, '--path', project, ...args], { env: { ...env, SPEC_AUTONOMOUS_TEST_BINARY: binary }, encoding: 'utf8', timeout: 30000, ...options } as any);
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${args.join(' ')} failed (${result.status})\n${result.stderr}\n${result.stdout}`);
-  return result.stdout.trim() ? JSON.parse(result.stdout) : {};
+  return result.stdout.trim() ? JSON.parse(result.stdout) as any : {};
 }
 try {
   // Empty-project initialization path, using OpenSpec's native initializer.
   run(['init', '--provider', 'openspec', '--agent', 'codex', '--mcp', '--non-interactive', '--json']);
   const git = spawnSync('git', ['-C', project, 'add', '--all']);
-  if (git.status !== 0) throw new Error(git.stderr);
+  if (git.status !== 0) throw new Error(String(git.stderr));
   const commit = spawnSync('git', ['-C', project, '-c', 'user.name=Spec Autonomous Dogfood', '-c', 'user.email=dogfood@example.invalid', 'commit', '-qm', 'dogfood: initialize OpenSpec project']);
-  if (commit.status !== 0) throw new Error(commit.stderr);
+  if (commit.status !== 0) throw new Error(String(commit.stderr));
   const config = join(project, '.spec-autonomous/config.toml');
   const configText = await readFile(config, 'utf8');
   const openspecCommand = `[${JSON.stringify(process.execPath)}, ${JSON.stringify(join(root, 'node_modules/@fission-ai/openspec/bin/openspec.js'))}]`;
   const checks = `[{ argv = [${JSON.stringify(process.execPath)}, "--test", "test/todo.test.mjs"], cwd = "." }]`;
   await writeFile(config, configText.replace(/openspec_command\s*=\s*\[[^\n]*\]/, `openspec_command = ${openspecCommand}`).replace(/verification\s*=\s*\[\]/, `verification = ${checks}`));
   const configCommit = spawnSync('git', ['-C', project, 'add', '.spec-autonomous/config.toml']);
-  if (configCommit.status !== 0) throw new Error(configCommit.stderr);
+  if (configCommit.status !== 0) throw new Error(String(configCommit.stderr));
   const configCommitResult = spawnSync('git', ['-C', project, '-c', 'user.name=Spec Autonomous Dogfood', '-c', 'user.email=dogfood@example.invalid', 'commit', '-qm', 'dogfood: configure OpenSpec command']);
-  if (configCommitResult.status !== 0) throw new Error(configCommitResult.stderr);
-  const host = spawnSync(process.execPath, [join(root, 'tests/mock-host.mjs'), '--path', project, 'prepare', '--change', 'todo-list', '--mode', 'autonomous'], { env: { ...env, SPEC_AUTONOMOUS_TEST_BINARY: binary }, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+  if (configCommitResult.status !== 0) throw new Error(String(configCommitResult.stderr));
+  const host = spawnSync(process.execPath, [join(root, 'tests/mock-host.mts'), '--path', project, 'prepare', '--change', 'todo-list', '--mode', 'autonomous'], { env: { ...env, SPEC_AUTONOMOUS_TEST_BINARY: binary }, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
   if (host.error || host.status !== 0) throw new Error(`mock host failed\n${host.stderr}\n${host.stdout}`);
-  const lines = host.stdout.trim().split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  const lines = host.stdout.trim().split('\n').filter(Boolean).map(line => { try { return JSON.parse(line) as any; } catch { return null; } }).filter(Boolean);
   const terminal = lines.at(-1)?.data ?? lines.at(-1);
   const runId = terminal.id;
   const todo = join(project, 'openspec/changes/todo-list');

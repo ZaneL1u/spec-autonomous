@@ -1,10 +1,14 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+interface ReferenceRepository { directory: string; commit: string; url: string; version: string }
+interface ReferenceLock { repositories: ReferenceRepository[] }
+
 const base = new URL('../.references/', import.meta.url);
 mkdirSync(base, { recursive: true });
-const lock = JSON.parse(readFileSync(new URL('../docs/research/upstreams.lock.json', import.meta.url), 'utf8'));
-function git(args) {
+const lock = JSON.parse(readFileSync(new URL('../docs/research/upstreams.lock.json', import.meta.url), 'utf8')) as ReferenceLock;
+function git(args: string[]) {
   const result = spawnSync('git', args, { encoding: 'utf8', shell: false });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr);

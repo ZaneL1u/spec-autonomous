@@ -10,12 +10,12 @@ const workspace=fileURLToPath(new URL('../',import.meta.url));
 const launcher=process.env.SPEC_AUTONOMOUS_TEST_LAUNCHER || join(workspace,'packages/cli/bin/spec-autonomous.mjs');
 const runtime=process.env.SPEC_AUTONOMOUS_JS_RUNTIME || process.execPath;
 const sandbox=mkdtempSync(join(tmpdir(),'sa real init '));
-const env={...process.env,OPENSPEC_TELEMETRY:'0',DO_NOT_TRACK:'1',SPEC_AUTONOMOUS_LANG:'zh-CN'};
+const env:NodeJS.ProcessEnv={...process.env,OPENSPEC_TELEMETRY:'0',DO_NOT_TRACK:'1',SPEC_AUTONOMOUS_LANG:'zh-CN'};
 for(const key of ['NODE_TEST_CONTEXT','NODE_CHANNEL_FD','SPECIFY_FEATURE','SPECIFY_FEATURE_DIRECTORY','SPECIFY_INIT_DIR'])delete env[key];
-const results=[];
-for(const [provider,agent] of [['openspec','codex'],['speckit','claude']]){
+const results:any[]=[];
+for(const [provider,agent] of [['openspec','codex'],['speckit','claude']] as const){
  const root=join(sandbox,`project-${provider}`);mkdirSync(root);
- const run=args=>{const r=spawnSync(runtime,[launcher,'--path',root,...args],{env,encoding:'utf8',timeout:180000,maxBuffer:8*1024*1024});if(r.error)throw r.error;assert.equal(r.status,0,r.stderr+r.stdout);return JSON.parse(r.stdout).data;};
+ const run=(args:string[])=>{const r=spawnSync(runtime,[launcher,'--path',root,...args],{env,encoding:'utf8',timeout:180000,maxBuffer:8*1024*1024});if(r.error)throw r.error;assert.equal(r.status,0,r.stderr+r.stdout);return (JSON.parse(r.stdout) as any).data;};
  const initialized=run(['init','--provider',provider,'--agent',agent,'--mcp','--non-interactive','--json']);
  for(const path of ['.git','.spec-autonomous/config.toml','.spec-autonomous/milestones','.spec-autonomous/plans','.spec-autonomous/archives',agent==='codex'?'.agents/skills/autonomous/SKILL.md':'.claude/commands/autonomous.md',agent==='codex'?'.codex/config.toml':'.mcp.json',provider==='openspec'?'openspec/config.yaml':'.specify/memory/constitution.md'])assert.ok(existsSync(join(root,path)),path);
  const config=join(root,'.spec-autonomous/config.toml');writeFileSync(config,readFileSync(config,'utf8')+'\n# preserved user setting\n');const before=readFileSync(config);

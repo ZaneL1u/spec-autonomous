@@ -4,10 +4,14 @@ import {spawnSync} from 'node:child_process';
 import {readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const files=dir=>readdirSync(new URL(`../${dir}/`,import.meta.url)).filter(f=>f.endsWith('.test.mjs')).sort().map(f=>`${dir}/${f}`);
-const env={...process.env,OPENSPEC_TELEMETRY:'0',DO_NOT_TRACK:'1'};
+const files=(dir:string)=>readdirSync(new URL(`../${dir}/`,import.meta.url)).filter(f=>f.endsWith('.test.mts')).sort().map(f=>`${dir}/${f}`);
+const env:NodeJS.ProcessEnv={...process.env,OPENSPEC_TELEMETRY:'0',DO_NOT_TRACK:'1'};
 for(const key of ['NODE_TEST_CONTEXT','NODE_TEST_WORKER_ID','NODE_CHANNEL_FD','NODE_CHANNEL_SERIALIZATION_MODE','NODE_UNIQUE_ID'])delete env[key];
-const steps=[
+const steps:[string,string[]][]=[
+  [process.execPath,['node_modules/typescript/bin/tsc','--noEmit']],
+  // The committed packages/cli/{bin,lib} output must match its TypeScript
+  // sources; CI additionally fails when this build leaves the tree dirty.
+  [process.execPath,['node_modules/tsdown/dist/run.mjs']],
   ['cargo',['fmt','--all','--','--check']],
   ['cargo',['clippy','--workspace','--all-targets','--locked','--','-D','warnings']],
   ['cargo',['test','--workspace','--locked']],

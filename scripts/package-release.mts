@@ -5,9 +5,12 @@ import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { platforms } from '../packages/cli/lib/platform.mjs';
 
-export function assemble(input, output, { repository } = {}) {
+interface PackageManifest {name:string;version:string;description?:string;license:string;repository?:string|{type:string;url:string};bin?:Record<string,string>;publishConfig?:{access?:string;registry?:string};[key:string]:unknown}
+interface AssembleOptions {repository?:string}
+
+export function assemble(input:string, output:string, { repository }:AssembleOptions = {}) {
   const source = fileURLToPath(new URL('../packages/cli/', import.meta.url));
-  const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
+  const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as PackageManifest;
   if (repository) {
     if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('Repository must be an explicit public GitHub HTTPS URL');
     manifest.repository = { type: 'git', url: repository };
@@ -23,8 +26,8 @@ export function assemble(input, output, { repository } = {}) {
     if (!existsSync(binary) || !statSync(binary).isFile() || statSync(binary).size === 0) throw new Error(`Missing native artifact: ${binary}`);
   }
   mkdirSync(output, { recursive: true });
-  const checksums = [];
-  const optionalDependencies = {};
+  const checksums:string[] = [];
+  const optionalDependencies:Record<string,string> = {};
   for (const p of platforms) {
     const name = `spec-autonomous-${p.key}`;
     const directory = join(output, name);
