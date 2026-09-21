@@ -41,6 +41,13 @@ jobs:
           git config --global commit.gpgsign false
       - name: Install locked workspace dependencies
         run: bun install --frozen-lockfile 2>&1 | tee .artifacts/ci-logs/install.log
+      - name: Typecheck TypeScript sources
+        run: bun run typecheck 2>&1 | tee .artifacts/ci-logs/typecheck.log
+      - name: Build the CLI runtime from TypeScript
+        run: bun run build:cli 2>&1 | tee .artifacts/ci-logs/build.log
+      - name: Verify the committed build output matches its sources
+        if: ${{ matrix.os == 'ubuntu-22.04' }}
+        run: git diff --exit-code -- packages/cli/bin packages/cli/lib
       - name: Check Rust formatting and lint
         run: bun run check 2>&1 | tee .artifacts/ci-logs/check.log
       - name: Rust unit and public API contracts
@@ -54,13 +61,13 @@ jobs:
       - name: Node launcher, skill assets and package contracts
         run: >-
           node --test --test-reporter=tap
-          packages/cli/test/*.test.mjs scripts/test/*.test.mjs
+          packages/cli/test/*.test.mts scripts/test/*.test.mts
           2>&1 | tee .artifacts/ci-logs/node-contracts.tap
       - name: Build debug CLI for e2e and failure injection
         run: cargo build -p spec-autonomous-cli --locked 2>&1 | tee .artifacts/ci-logs/debug-build.log
       - name: Autonomous milestone, verification and recovery e2e
         run: >-
-          node --test --test-concurrency=2 --test-reporter=tap tests/e2e/*.test.mjs
+          node --test --test-concurrency=2 --test-reporter=tap tests/e2e/*.test.mts
           2>&1 | tee .artifacts/ci-logs/e2e.tap
       - name: Validate OpenSpec requirements
         run: bun run spec:validate 2>&1 | tee .artifacts/ci-logs/spec-validation.log

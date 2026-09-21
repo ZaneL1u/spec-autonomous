@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .artifacts/publish-logs
-          node scripts/publish-release.mjs --input .artifacts/npm 2>&1 | tee .artifacts/publish-logs/dry-run.log
+          node scripts/publish-release.mts --input .artifacts/npm 2>&1 | tee .artifacts/publish-logs/dry-run.log
       - name: Publish exact platform packages before the wrapper
         if: ${{ inputs.publish }}
         shell: bash
@@ -99,7 +99,7 @@ jobs:
             echo 'Configure npm package ownership, seven trusted publishers, and npm-release protection; then set environment variable NPM_RELEASE_READY=true.' >&2
             exit 1
           fi
-          node scripts/publish-release.mjs --input .artifacts/npm --publish --tag next 2>&1 | tee .artifacts/publish-logs/publish.log
+          node scripts/publish-release.mts --input .artifacts/npm --publish --tag next 2>&1 | tee .artifacts/publish-logs/publish.log
       - name: Preserve release check logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
