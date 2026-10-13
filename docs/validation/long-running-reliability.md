@@ -1,5 +1,7 @@
 # 长任务可靠性修复验证
 
+实现提交：`0c2e344`，分支 `codex/long-running-reliability`。
+
 日期：2026-10-13。平台：macOS arm64。Node.js v26.5.0，Bun 1.4.2，Rust 1.98.1。
 
 ## 已验证

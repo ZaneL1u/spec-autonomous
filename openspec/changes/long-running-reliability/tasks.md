@@ -15,4 +15,4 @@
 
 ## 5. Delivery
 - [x] 5.1 Run full test:all, strict OpenSpec validation and local package smoke tests using isolated build output.
-- [ ] 5.2 Record verification and commit reviewed changes without changing active consumer repositories, installed binaries or MCP processes.
+- [x] 5.2 Record verification and commit reviewed changes without changing active consumer repositories, installed binaries or MCP processes.
