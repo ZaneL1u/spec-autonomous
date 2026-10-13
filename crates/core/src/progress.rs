@@ -159,9 +159,45 @@ pub fn snapshot(path: &Path) -> Result<Value> {
             value
         })
         .collect();
+    let native_milestones = declared_milestones(path, &runs, &mut diagnostics);
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    for row in &worktrees {
+        *kinds
+            .entry(row["status"].as_str().unwrap_or("unknown").into())
+            .or_default() += 1;
+    }
+    let resource_summary = json!({"worktrees":worktrees.len(),"by_status":kinds,"pressure":if worktrees.len() >= 100 {"high"} else {"normal"},"cleanup_hint":if worktrees.len() >= 100 {Some("Review run.cleanup with active:true at a coordinator-free boundary; ignored artifacts and active references are retained.")} else {None}});
     Ok(
-        json!({"schema_version":1,"snapshot_id":paths::id("snapshot"),"generated_at":paths::now(),"repository_id":paths::hash(repo.common.to_string_lossy().as_bytes()),"consistency":if diagnostics.is_empty(){"consistent"}else{"partial"},"active_workers":active,"verified_tasks":done.len(),"usage":"unavailable","worktrees":worktrees,"runs":summaries,"diagnostics":diagnostics}),
+        json!({"native_milestones":native_milestones,"resource_summary":resource_summary,"schema_version":1,"snapshot_id":paths::id("snapshot"),"generated_at":paths::now(),"repository_id":paths::hash(repo.common.to_string_lossy().as_bytes()),"consistency":if diagnostics.is_empty(){"consistent"}else{"partial"},"active_workers":active,"verified_tasks":done.len(),"usage":usage_summary(&runs),"worktrees":worktrees,"runs":summaries,"diagnostics":diagnostics}),
     )
+}
+
+fn usage_summary(runs: &[Run]) -> Value {
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut cached_input_tokens = 0u64;
+    let mut any = false;
+    for run in runs {
+        for attempt in &run.attempts {
+            let Some(usage) = &attempt.usage else {
+                continue;
+            };
+            any = true;
+            input_tokens = input_tokens.saturating_add(usage["input_tokens"].as_u64().unwrap_or(0));
+            output_tokens =
+                output_tokens.saturating_add(usage["output_tokens"].as_u64().unwrap_or(0));
+            cached_input_tokens = cached_input_tokens
+                .saturating_add(usage["cached_input_tokens"].as_u64().unwrap_or(0));
+        }
+    }
+    if !any {
+        return json!("unavailable");
+    }
+    json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cached_input_tokens": cached_input_tokens
+    })
 }
 fn native_progress(runtime: &Path, run: &Run, diagnostics: &mut Vec<String>) -> Value {
     let mut views = vec![];
@@ -230,7 +266,22 @@ fn native_progress(runtime: &Path, run: &Run, diagnostics: &mut Vec<String>) -> 
     json!(views)
 }
 pub fn summary(run: &Run) -> Value {
-    json!({"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
+    let mut attempt_states = std::collections::BTreeMap::<String, usize>::new();
+    for attempt in &run.attempts {
+        *attempt_states
+            .entry(format!("{}:{}", attempt.kind, attempt.status))
+            .or_default() += 1;
+    }
+    let measured: Vec<_> = run
+        .evidence
+        .iter()
+        .filter_map(|e| e.details.as_ref()?.get("duration_ms")?.as_u64())
+        .collect();
+    let duration_ms = measured
+        .iter()
+        .fold(0u64, |total, next| total.saturating_add(*next));
+    let overhead = json!({"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==run.evidence.len(){"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
+    json!({"overhead":overhead,"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
 }
 pub fn public_run(run: &Run) -> Value {
     let mut value = serde_json::to_value(run).unwrap();
@@ -301,4 +352,78 @@ pub fn human(value: &Value) -> String {
 }
 pub fn readonly_git_status(root: &Path) -> Result<String> {
     git::command(root, &["status", "--porcelain"], None)
+}
+
+/// Read only declared native files. Never invoke a provider process for progress.
+fn declared_milestones(root: &Path, runs: &[Run], diagnostics: &mut Vec<String>) -> Vec<Value> {
+    let Ok(base) = paths::inside(root, ".spec-autonomous/milestones") else {
+        return vec![];
+    };
+    let Ok(entries) = fs::read_dir(base) else {
+        return vec![];
+    };
+    let mut names: Vec<_> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    if names.len() > 200 {
+        diagnostics.push("native_milestones_truncated: first 200 declarations inspected".into());
+        names.truncate(200);
+    }
+    names.into_iter().map(|id| {
+        let result = (|| -> Result<Value> {
+            paths::valid_id(&id)?;
+            let content = paths::read(root, &format!(".spec-autonomous/milestones/{id}/milestone.toml"), 2*1024*1024)?;
+            let m: crate::model::Milestone = toml::from_str(&content)?;
+            let associated: Vec<_> = runs.iter().filter(|r|r.milestone.id==m.id).map(|r|r.id.clone()).collect();
+            let phases: Vec<_> = m.phases.iter().take(128).map(|phase| {
+                let file = if m.framework == crate::Framework::Openspec { format!("openspec/changes/{}/tasks.md", phase.source.selector) } else { format!("{}/tasks.md", phase.source.selector) };
+                match paths::read(root, &file, 2*1024*1024).and_then(|s|crate::markdown::parse(&file, &s, m.framework)) {
+                    Ok(doc) => json!({"phase_id":phase.id,"source_path":file,"availability":"native_file","native_checked":doc.tasks.iter().filter(|t|t.done).count(),"native_total":doc.tasks.len(),"verification":"not_inferred","diagnostics":doc.diagnostics}),
+                    Err(_) => json!({"phase_id":phase.id,"source_path":file,"availability":"unavailable","verification":"not_inferred"}),
+                }
+            }).collect();
+            Ok(json!({"milestone_id":m.id,"execution":if associated.is_empty(){"not_started"}else{"recorded"},"run_ids":associated,"phases":phases,"phase_count":m.phases.len(),"truncated":m.phases.len()>128}))
+        })();
+        result.unwrap_or_else(|e|json!({"milestone_id":id,"availability":"unavailable","error":e.to_string()}))
+    }).collect()
+}
+
+pub fn with_related(root: &Path, args: &Value) -> Result<Value> {
+    let mut primary = snapshot(root)?;
+    let mut seen = BTreeSet::from([primary["repository_id"].as_str().unwrap().to_owned()]);
+    let requested = args["repository_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    anyhow::ensure!(
+        requested.len() <= 16,
+        "invalid_arguments: at most 16 related repositories"
+    );
+    let mut related = vec![];
+    for path in requested {
+        let path = path.as_str().ok_or_else(|| {
+            anyhow::anyhow!("invalid_arguments: repository path must be a string")
+        })?;
+        let target = root.join(path);
+        match snapshot(&target) {
+            Ok(mut data) => {
+                let id = data["repository_id"].as_str().unwrap().to_owned();
+                if !seen.insert(id) {
+                    continue;
+                }
+                crate::capabilities::views::select_page(
+                    &mut data,
+                    &json!({"limit":args.get("limit").cloned().unwrap_or(json!(50)),"offset":args.get("offset").cloned().unwrap_or(json!(0))}),
+                )?;
+                related.push(json!({"path":path,"availability":"available","progress":data}));
+            }
+            Err(error) => related
+                .push(json!({"path":path,"availability":"unavailable","error":error.to_string()})),
+        }
+    }
+    primary["related_repositories"] = json!(related);
+    Ok(primary)
 }

@@ -331,6 +331,7 @@ pub fn apply_result(
     owner: HostIdentity,
     cancel: Arc<AtomicBool>,
     observer: Observer<'_>,
+    usage: Option<Value>,
 ) -> Result<Value> {
     let repo = Repository::discover(root)?;
     let mut replay = false;
@@ -418,6 +419,9 @@ pub fn apply_result(
         failpoint("after_receipt_file");
         run.attempts[index].status = "submitted".into();
         run.attempts[index].finished_at = Some(paths::now());
+        if let Some(usage) = usage {
+            run.attempts[index].usage = Some(usage);
+        }
         run.updated_at = paths::now();
         store.save(&run, "host_result_submitted")?;
         if store.requested(&run.id)? == "pause" {
@@ -563,29 +567,76 @@ impl Coordinator<'_> {
             &instruction,
             &snapshot,
         ))?);
-        let host = host_state(&self.run)?;
+        self.supersede_replaced_submissions()?;
+        let requests = host_state(&self.run)?.requests.clone();
         for (index, a) in self.run.attempts.iter().enumerate().rev() {
-            if host
-                .requests
+            if a.status == "submitted"
+                && requests
+                    .get(&a.id)
+                    .is_some_and(|m| m.request_key == key && !m.revoked)
+            {
+                let dir = paths::inside(
+                    &self.store.root,
+                    &format!("runs/{}/attempts/{}", self.run.id, a.id),
+                )?;
+                let worktree = PathBuf::from(&a.worktree);
+                let result = work_packet::read_result(&dir);
+                self.end_attempt(index, &result)?;
+                return result.map(|r| (r, worktree, index));
+            }
+        }
+        for (index, a) in self.run.attempts.iter().enumerate().rev() {
+            if requests
                 .get(&a.id)
                 .is_some_and(|m| m.request_key == key && !m.revoked)
             {
                 if matches!(a.status.as_str(), "issued" | "claimed") {
                     bail!("awaiting_host: semantic work is prepared");
                 }
-                if matches!(a.status.as_str(), "submitted" | "accepted" | "candidate") {
+                if matches!(a.status.as_str(), "accepted" | "candidate") {
                     let dir = paths::inside(
                         &self.store.root,
                         &format!("runs/{}/attempts/{}", self.run.id, a.id),
                     )?;
                     let worktree = PathBuf::from(&a.worktree);
                     let result = work_packet::read_result(&dir);
-                    if a.status == "submitted" {
-                        self.end_attempt(index, &result)?;
-                    }
                     return result.map(|r| (r, worktree, index));
                 }
             }
+        }
+        let leftover = self
+            .run
+            .attempts
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, a)| {
+                (a.kind == kind
+                    && a.task_id == task
+                    && a.phase_id == phase
+                    && a.status == "submitted"
+                    && requests.get(&a.id).is_some_and(|m| !m.revoked))
+                .then_some(index)
+            });
+        if let Some(index) = leftover {
+            let attempt = &self.run.attempts[index];
+            let dir = paths::inside(
+                &self.store.root,
+                &format!("runs/{}/attempts/{}", self.run.id, attempt.id),
+            )?;
+            let previous = work_packet::read_input(&dir)?;
+            if attempt.base_commit != self.run.accepted_head
+                || previous.snapshot.as_ref().map(|s| &s.source_hash)
+                    != snapshot.as_ref().map(|s| &s.source_hash)
+            {
+                bail!(
+                    "source_drift: submitted receipt belongs to another source revision; preserve it and reconcile before dispatch"
+                );
+            }
+            let worktree = PathBuf::from(&attempt.worktree);
+            let result = work_packet::read_result(&dir);
+            self.end_attempt(index, &result)?;
+            return result.map(|r| (r, worktree, index));
         }
         let failures = self
             .run

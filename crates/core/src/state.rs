@@ -170,6 +170,11 @@ impl Store {
         })?;
         rows.map(|row|{let(seq,kind,payload,time)=row?;Ok(serde_json::json!({"seq":seq,"kind":kind,"data":serde_json::from_str::<serde_json::Value>(&payload)?,"time":time}))}).collect()
     }
+    pub fn user_version(&self) -> Result<u32> {
+        Ok(self
+            .db
+            .pragma_query_value(None, "user_version", |row| row.get(0))?)
+    }
     pub fn attempt_dir(&self, run: &str, attempt: &str) -> Result<PathBuf> {
         if !self.writable {
             bail!("state_read_only: cannot create attempt directories from a read-only store");

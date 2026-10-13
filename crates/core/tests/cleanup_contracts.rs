@@ -296,3 +296,134 @@ fn cleanup_invoked_inside_a_worker_retains_its_current_directory() {
     );
     assert!(Path::new(&a.worktree).exists());
 }
+
+#[test]
+fn active_cleanup_preserves_live_recovery_references_and_ignored_artifacts() {
+    use spec_autonomous_core::cleanup::{CleanupScope, cleanup_reviewed};
+    let mut f = Fixture::new();
+    f.run.status = "awaiting_host".into();
+    let closed = f.attempt("closed", "integrated");
+    let accepted = f.attempt("planner", "accepted");
+    let live = f.attempt("live", "claimed");
+    let referenced = f.attempt("referenced", "integrated");
+    let ignored = f.attempt("ignored", "failed");
+    f.run.completed_tasks.push(Run::key("P1", "ignored"));
+    let retry = f.attempt("retry-pending", "failed");
+    fs::write(
+        Path::new(&ignored.worktree).join(".gitignore"),
+        "*.evidence\n",
+    )
+    .unwrap();
+    git::commit(Path::new(&ignored.worktree), "ignore artifacts").unwrap();
+    fs::write(Path::new(&ignored.worktree).join("raw.evidence"), "retain").unwrap();
+    let input = f
+        .repo
+        .runtime()
+        .unwrap()
+        .join("runs/run-cleanup/attempts/live/input.json");
+    fs::create_dir_all(input.parent().unwrap()).unwrap();
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({"reference":referenced.worktree})).unwrap(),
+    )
+    .unwrap();
+    let durable = f.repo.runtime().unwrap().join("old-check.log");
+    fs::create_dir_all(durable.parent().unwrap()).unwrap();
+    fs::write(&durable, "historical verification").unwrap();
+    f.run.evidence.push(serde_json::from_value(json!({"argv":["node","test"],"cwd":closed.worktree,"revision":f.run.accepted_head,"exit_code":0,"log":durable,"log_hash":"hash","finished_at":"2026-10-13T00:00:00Z","tree_unchanged":true})).unwrap());
+    f.save();
+    assert!(cleanup::cleanup_with_options(&f.repo.root, &f.run.id, false, false, None).is_err());
+    let scope = CleanupScope {
+        active: true,
+        ..Default::default()
+    };
+    let preview = cleanup_reviewed(&f.repo.root, &f.run.id, false, scope, None).unwrap();
+    assert_eq!(
+        preview["worktrees"].as_array().unwrap().len(),
+        1,
+        "{preview}"
+    );
+    let lock = spec_autonomous_core::state::Lease::acquire(&f.repo).unwrap();
+    assert!(
+        cleanup_reviewed(
+            &f.repo.root,
+            &f.run.id,
+            true,
+            scope,
+            preview["plan_hash"].as_str()
+        )
+        .is_err()
+    );
+    assert!(Path::new(&closed.worktree).exists());
+    drop(lock);
+    let result = cleanup_reviewed(
+        &f.repo.root,
+        &f.run.id,
+        true,
+        scope,
+        preview["plan_hash"].as_str(),
+    )
+    .unwrap();
+    assert_eq!(result["removed"], json!([closed.worktree]));
+    for a in [accepted, live, referenced, ignored, retry] {
+        assert!(Path::new(&a.worktree).exists());
+    }
+    assert!(Path::new(&f.run.integration).exists());
+    assert_eq!(
+        Store::open(&f.repo, false)
+            .unwrap()
+            .unwrap()
+            .get(&f.run.id)
+            .unwrap()
+            .status,
+        "awaiting_host"
+    );
+    assert!(
+        cleanup_reviewed(
+            &f.repo.root,
+            &f.run.id,
+            false,
+            CleanupScope {
+                active: true,
+                delete_integration: true,
+                ..Default::default()
+            },
+            None
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn capability_honors_explicit_integration_deletion() {
+    let f = Fixture::new();
+    f.save();
+    let preview = spec_autonomous_core::capabilities::invoke(
+        &f.repo.root,
+        "run.cleanup",
+        &json!({"run_id":f.run.id,"delete_integration":true}),
+    )
+    .unwrap();
+    let result = spec_autonomous_core::capabilities::invoke(&f.repo.root, "run.cleanup", &json!({"run_id":f.run.id,"delete_integration":true,"apply":true,"plan_hash":preview["plan_hash"]})).unwrap();
+    assert!(
+        result["removed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(f.run.integration))
+    );
+}
+
+#[test]
+fn integration_cleanup_cannot_delete_an_external_worktree_named_in_a_ledger() {
+    let mut f = Fixture::new();
+    f.run.integration = f.repo.root.to_string_lossy().into_owned();
+    f.run.integration_branch = "main".into();
+    f.save();
+    let args = json!({"run_id":f.run.id,"delete_integration":true});
+    let preview =
+        spec_autonomous_core::capabilities::invoke(&f.repo.root, "run.cleanup", &args).unwrap();
+    assert_eq!(preview["integration_removal"]["eligible"], false);
+    let result=spec_autonomous_core::capabilities::invoke(&f.repo.root,"run.cleanup",&json!({"run_id":f.run.id,"delete_integration":true,"apply":true,"plan_hash":preview["plan_hash"]})).unwrap();
+    assert_eq!(result["removed"], json!([]));
+    assert!(f.repo.root.join("README.md").exists());
+}

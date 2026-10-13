@@ -107,6 +107,7 @@ pub fn select_page(value: &mut Value, args: &Value) -> Result<()> {
     if let Some(map) = value.as_object_mut() {
         for name in [
             "worktrees",
+            "native_milestones",
             "runs",
             "sources",
             "events",

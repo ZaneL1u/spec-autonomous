@@ -44,8 +44,15 @@ export function npmArgv(env: NodeJS.ProcessEnv = process.env): string[] {
     join(dirname(node), 'node_modules/npm/bin/npm-cli.js'),
     join(dirname(node), '../lib/node_modules/npm/bin/npm-cli.js'),
   ];
-  const npm = findExecutable('npm', env);
-  if (npm && !npm.endsWith('.cmd')) candidates.push(realpathSync(npm));
+  // Homebrew keeps npm outside the versioned Node Cellar directory and
+  // exposes it through a sibling symlink, even when PATH is intentionally empty.
+  for (const npm of [join(dirname(node), 'npm'), findExecutable('npm', env)]) {
+    if (!npm || npm.endsWith('.cmd')) continue;
+    try {
+      const resolved = realpathSync(npm);
+      if (basename(resolved) === 'npm-cli.js') candidates.push(resolved);
+    } catch { /* Try the remaining explicit installation locations. */ }
+  }
   const entry = candidates.find(existsSync);
   if (!entry) throw new Error('runtime_missing: use a Node.js installation with npm, or run with Bun');
   return [node, entry];

@@ -264,6 +264,19 @@ pub fn allowed(path: &str, patterns: &[String]) -> bool {
             || path.starts_with(&format!("{}/", p.trim_end_matches('/')))
     })
 }
+
+/// Context files are read-only unless the assigned write set explicitly names them.
+/// `.spec-autonomous/` stays forbidden even when listed in writes.
+pub fn worker_write_forbidden(path: &str, writes: &[String], context_paths: &[&str]) -> bool {
+    if path.starts_with(".spec-autonomous/") {
+        return true;
+    }
+    let write_allowed = !writes.is_empty() && allowed(path, writes);
+    if context_paths.contains(&path) && !write_allowed {
+        return true;
+    }
+    !writes.is_empty() && !write_allowed
+}
 pub fn ready<'a>(
     plan: &'a Plan,
     done: &[String],

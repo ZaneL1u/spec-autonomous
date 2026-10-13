@@ -688,3 +688,497 @@ fn native_metadata_refresh_keeps_corrections_until_native_checks_change() {
     assert_eq!(m.phases[0].verification, vec![native]);
     assert_eq!(history[0]["diff"][0]["superseded_by_native"], true);
 }
+
+#[test]
+fn heartbeat_accepts_claim_host_and_rejects_other_unknown_fields() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let request = &first["work"][0];
+    let beat = api::invoke(
+        root.path(),
+        "work.heartbeat",
+        &json!({
+            "run_id": first["id"],
+            "request_id": request["request_id"],
+            "token": request["token"],
+            "host": owner(request)
+        }),
+    )
+    .unwrap();
+    assert_eq!(beat["host_action"], "continue");
+    let error = api::invoke(
+        root.path(),
+        "work.heartbeat",
+        &json!({
+            "run_id": first["id"],
+            "request_id": request["request_id"],
+            "token": request["token"],
+            "extra": true
+        }),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("unknown field arguments.extra"));
+}
+
+#[test]
+fn doctor_reports_skill_drift_ledger_version_and_stale_outstanding_work() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let request_id = first["work"][0]["request_id"].as_str().unwrap().to_string();
+    put(
+        root.path(),
+        ".spec-autonomous/skills-installed.toml",
+        "version = \"0.0.1\"\n",
+    );
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(first["id"].as_str().unwrap()).unwrap();
+    run.host
+        .as_mut()
+        .unwrap()
+        .requests
+        .get_mut(&request_id)
+        .unwrap()
+        .heartbeat_at_ms = 0;
+    store.save(&run, "test-stale-doctor").unwrap();
+    drop(store);
+    let report = api::invoke(root.path(), "doctor", &json!({})).unwrap();
+    let diagnostics: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        diagnostics.iter().any(|line| {
+            line.starts_with("skills_version_drift:")
+                && line.contains("0.0.1")
+                && line.contains(env!("CARGO_PKG_VERSION"))
+        }),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|line| line.starts_with("ledger_user_version:")),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|line| line.starts_with("stale_outstanding:") && line.contains(&request_id)),
+        "{diagnostics:?}"
+    );
+    assert_eq!(report["starts_agents"], false);
+}
+
+#[test]
+fn leftover_submitted_receipt_is_processed_even_when_request_key_differs() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let planned = answer_plan(root.path(), &first["work"][0]);
+    let work = planned["work"][0].clone();
+    put(
+        Path::new(work["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let result = receipt(root.path(), &work);
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let coordinator = spec_autonomous_core::state::Lease::acquire(&repo).unwrap();
+    engine::host_control(root.path(), first["id"].as_str().unwrap(), "pause").unwrap();
+    drop(coordinator);
+    let paused = submit(root.path(), &work, result);
+    assert_eq!(paused["status"], "paused");
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(first["id"].as_str().unwrap()).unwrap();
+    run.host
+        .as_mut()
+        .unwrap()
+        .requests
+        .get_mut(work["request_id"].as_str().unwrap())
+        .unwrap()
+        .request_key = "rotated-key".into();
+    store.save(&run, "rotate-key").unwrap();
+    drop(store);
+    let resumed = api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id": first["id"], "view": "full"}),
+    )
+    .unwrap();
+    assert!(
+        !resumed["completed_tasks"].as_array().unwrap().is_empty(),
+        "{resumed}"
+    );
+}
+
+#[test]
+fn later_accepted_attempt_supersedes_leftover_submitted_receipts() {
+    let root = fixture();
+    let first = prepare(root.path());
+    answer_plan(root.path(), &first["work"][0]);
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(first["id"].as_str().unwrap()).unwrap();
+    let accepted = run
+        .attempts
+        .iter()
+        .find(|attempt| matches!(attempt.status.as_str(), "accepted" | "integrated"))
+        .cloned()
+        .expect("planner accepted");
+    let mut leftover = accepted.clone();
+    leftover.id = "leftoverplan01".into();
+    leftover.status = "submitted".into();
+    leftover.error = None;
+    leftover.usage = None;
+    let lease = run.host.as_ref().unwrap().requests[&accepted.id].clone();
+    run.host
+        .as_mut()
+        .unwrap()
+        .requests
+        .insert(leftover.id.clone(), lease);
+    run.attempts.insert(0, leftover);
+    store.save(&run, "inject-leftover").unwrap();
+    drop(store);
+    api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id": first["id"], "view": "full"}),
+    )
+    .unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(first["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        run.attempts
+            .iter()
+            .find(|attempt| attempt.id == "leftoverplan01")
+            .unwrap()
+            .status,
+        "superseded"
+    );
+}
+
+#[test]
+fn later_submitted_receipt_is_not_superseded_by_an_earlier_success() {
+    let root = fixture();
+    let first = prepare(root.path());
+    answer_plan(root.path(), &first["work"][0]);
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(first["id"].as_str().unwrap()).unwrap();
+    let accepted = run
+        .attempts
+        .iter()
+        .find(|attempt| matches!(attempt.status.as_str(), "accepted" | "integrated"))
+        .cloned()
+        .expect("planner accepted");
+    let mut retry = accepted.clone();
+    retry.id = "retryplan000001".into();
+    retry.status = "submitted".into();
+    retry.error = None;
+    retry.usage = None;
+    let from = store
+        .root
+        .join(format!("runs/{}/attempts/{}", run.id, accepted.id));
+    let to = store
+        .root
+        .join(format!("runs/{}/attempts/{}", run.id, retry.id));
+    fs::create_dir_all(&to).unwrap();
+    for entry in fs::read_dir(&from).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+        }
+    }
+    let lease = run.host.as_ref().unwrap().requests[&accepted.id].clone();
+    run.host
+        .as_mut()
+        .unwrap()
+        .requests
+        .insert(retry.id.clone(), lease);
+    run.attempts.push(retry);
+    store.save(&run, "inject-retry").unwrap();
+    drop(store);
+    api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id": first["id"], "view": "full"}),
+    )
+    .unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(first["id"].as_str().unwrap())
+        .unwrap();
+    assert_ne!(
+        run.attempts
+            .iter()
+            .find(|attempt| attempt.id == "retryplan000001")
+            .unwrap()
+            .status,
+        "superseded"
+    );
+}
+
+#[test]
+fn submitted_receipts_for_a_distinct_task_id_are_not_superseded() {
+    let root = fixture();
+    let first = prepare(root.path());
+    answer_plan(root.path(), &first["work"][0]);
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(first["id"].as_str().unwrap()).unwrap();
+    let accepted = run
+        .attempts
+        .iter()
+        .find(|attempt| matches!(attempt.status.as_str(), "accepted" | "integrated"))
+        .cloned()
+        .expect("planner accepted");
+    let mut leftover = accepted.clone();
+    leftover.id = "otherunitaudit1".into();
+    leftover.status = "submitted".into();
+    leftover.error = None;
+    leftover.usage = None;
+    leftover.task_id = format!("{}-other", accepted.task_id);
+    leftover.kind = "audit".into();
+    let from = store
+        .root
+        .join(format!("runs/{}/attempts/{}", run.id, accepted.id));
+    let to = store
+        .root
+        .join(format!("runs/{}/attempts/{}", run.id, leftover.id));
+    fs::create_dir_all(&to).unwrap();
+    for entry in fs::read_dir(&from).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+        }
+    }
+    let lease = run.host.as_ref().unwrap().requests[&accepted.id].clone();
+    run.host
+        .as_mut()
+        .unwrap()
+        .requests
+        .insert(leftover.id.clone(), lease);
+    run.attempts.insert(0, leftover);
+    store.save(&run, "inject-other-unit").unwrap();
+    drop(store);
+    api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id": first["id"], "view": "full"}),
+    )
+    .unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(first["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        run.attempts
+            .iter()
+            .find(|attempt| attempt.id == "otherunitaudit1")
+            .unwrap()
+            .status,
+        "submitted"
+    );
+}
+
+#[test]
+fn apply_result_records_optional_usage_and_progress_aggregates_it() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let request = &first["work"][0];
+    let input: WorkerInput = serde_json::from_value(
+        engine::work_context(
+            root.path(),
+            request["run_id"].as_str().unwrap(),
+            request["request_id"].as_str().unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let snapshot = input.snapshot.unwrap();
+    let mut result = receipt(root.path(), request);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![Task {
+            id: "value".into(),
+            description: "write value".into(),
+            source_ids: vec![snapshot.tasks[0].id.clone()],
+            depends_on: vec![],
+            reads: vec![],
+            writes: vec!["src/value.txt".into()],
+            verification: vec![Check {
+                argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
+                cwd: ".".into(),
+            }],
+        }],
+        milestone: input.milestone,
+    });
+    api::invoke(
+        root.path(),
+        "apply-result",
+        &json!({
+            "token": request["token"],
+            "host": owner(request),
+            "result": result,
+            "usage": {"input_tokens": 9, "output_tokens": 3, "cached_input_tokens": 1},
+            "view": "full"
+        }),
+    )
+    .unwrap();
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(first["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(run.attempts[0].usage.as_ref().unwrap()["input_tokens"], 9);
+    let snapshot = api::invoke(root.path(), "progress", &json!({})).unwrap();
+    assert_eq!(snapshot["usage"]["input_tokens"], 9);
+    assert_eq!(snapshot["usage"]["output_tokens"], 3);
+    assert_eq!(snapshot["usage"]["cached_input_tokens"], 1);
+}
+
+#[test]
+fn a_newer_submitted_receipt_is_not_hidden_by_an_older_success() {
+    let root = fixture();
+    let first = prepare(root.path());
+    answer_plan(root.path(), &first["work"][0]);
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let mut run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(first["id"].as_str().unwrap())
+        .unwrap();
+    run.attempts.retain(|a| a.status == "accepted");
+    let mut newer = run.attempts[0].clone();
+    newer.id = "newer-submission".into();
+    newer.status = "submitted".into();
+    run.attempts.push(newer);
+    assert!(run.has_outstanding_host_work());
+}
+
+#[test]
+fn replanning_keeps_latest_reviewed_checks_and_rejects_silent_replacement() {
+    let check = |name: &str| json!({"argv":["node",name],"cwd":"."});
+    let mut plan:Plan=serde_json::from_value(json!({"schema_version":1,"phase_id":"P1","source_hash":"hash","tasks":[{"id":"T1","description":"verify","source_ids":["T1"],"depends_on":[],"reads":[],"writes":[],"verification":[check("old.mjs")]}]})).unwrap();
+    let revisions = vec![
+        json!({"diff":[{"scope":"task","phase_id":"P1","task_id":"T1","before":[check("old.mjs")],"after":[check("fixed.mjs")]}]}),
+    ];
+    spec_autonomous_core::run_revision::reconcile_plan(&mut plan, &revisions).unwrap();
+    assert_eq!(plan.tasks[0].verification[0].argv[1], "fixed.mjs");
+    plan.tasks[0].verification[0].argv[1] = "other.mjs".into();
+    assert!(
+        spec_autonomous_core::run_revision::reconcile_plan(&mut plan, &revisions)
+            .unwrap_err()
+            .to_string()
+            .contains("verification_revision_conflict")
+    );
+}
+
+#[test]
+fn coordinator_prepares_each_wave_once_and_preserves_independent_check_results() {
+    let root = fixture();
+    let mut config = Config::load(root.path()).unwrap();
+    config.hooks.insert("verification_prepare".into(),spec_autonomous_core::config::Hook{argv:vec!["node".into(),"-e".into(),"require('fs').writeFileSync(require('path').join(process.env.SA_VERIFY_OUTPUT_DIR,'prepared'),process.env.SA_VERIFY_STAGE,{flag:'wx'})".into()],idempotent:true});
+    config.verification.push(Check {argv:vec!["node".into(),"-e".into(),"require('node:assert/strict').equal(require('fs').readFileSync(require('path').join(process.env.SA_VERIFY_OUTPUT_DIR,'prepared'),'utf8'),process.env.SA_VERIFY_STAGE)".into()],cwd:".".into()});
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    git::commit(root.path(), "configure preparation").unwrap();
+    let first = prepare(root.path());
+    let planned = answer_plan(root.path(), &first["work"][0]);
+    let request = &planned["work"][0];
+    put(
+        Path::new(request["worktree"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let completed = submit(root.path(), request, receipt(root.path(), request));
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(completed["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(run.completed_tasks.len(), 1);
+    for stage in ["worker", "combined"] {
+        let evidence: Vec<_> = run
+            .evidence
+            .iter()
+            .filter(|e| e.details.as_ref().is_some_and(|d| d["stage"] == stage))
+            .collect();
+        assert_eq!(
+            evidence.len(),
+            3,
+            "one preparation and two unique checks: {stage}"
+        );
+        assert!(evidence.iter().all(|e| e.exit_code == 0));
+    }
+}
+
+#[test]
+fn preparation_failure_does_not_run_checks_or_mark_a_task_complete() {
+    let root = fixture();
+    let mut config = Config::load(root.path()).unwrap();
+    config.hooks.insert(
+        "verification_prepare".into(),
+        spec_autonomous_core::config::Hook {
+            argv: vec![
+                "node".into(),
+                "-e".into(),
+                "console.error('private-preparation-output');process.exit(9)".into(),
+            ],
+            idempotent: true,
+        },
+    );
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    git::commit(root.path(), "failing preparation").unwrap();
+    let first = prepare(root.path());
+    let planned = answer_plan(root.path(), &first["work"][0]);
+    let request = &planned["work"][0];
+    put(
+        Path::new(request["worktree"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let response = submit(root.path(), request, receipt(root.path(), request));
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let run = Store::open(&repo, false)
+        .unwrap()
+        .unwrap()
+        .get(response["id"].as_str().unwrap())
+        .unwrap();
+    assert!(run.completed_tasks.is_empty());
+    assert_eq!(run.evidence.len(), 1);
+    assert_eq!(
+        run.evidence[0].details.as_ref().unwrap()["step"],
+        "preparation"
+    );
+    let failed = run
+        .attempts
+        .iter()
+        .find(|a| a.id == request["request_id"])
+        .unwrap();
+    assert!(
+        !failed
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("private-preparation-output")
+    );
+}

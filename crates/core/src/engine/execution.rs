@@ -93,6 +93,7 @@ impl Coordinator<'_> {
         if self.run.mode == "plan" {
             return Ok(());
         }
+        self.supersede_replaced_submissions()?;
         let submitted: Vec<_> = self
             .run
             .attempts
@@ -275,10 +276,12 @@ impl Coordinator<'_> {
             let local = file
                 .strip_prefix(&prefix)
                 .context("scope_violation: changed another project")?;
-            if snapshot.context_files.iter().any(|c| c.path == local)
-                || local.starts_with(".spec-autonomous/")
-                || (!task.writes.is_empty() && !plan::allowed(local, &task.writes))
-            {
+            let context: Vec<&str> = snapshot
+                .context_files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect();
+            if plan::worker_write_forbidden(local, &task.writes, &context) {
                 bail!("scope_violation: worker changed {file}");
             }
             paths::inside(&worker, file)?;
@@ -409,6 +412,7 @@ impl Coordinator<'_> {
         self.run.intents[intent_index].state = "accepted".into();
         self.run.attempts[index].status = "integrated".into();
         self.save("task_integrated")?;
+        self.supersede_replaced_submissions()?;
         let dir = self.store.attempt_dir(&self.run.id, &attempt.id)?;
         Ok(serde_json::from_slice(&fs::read(dir.join("result.json"))?)?)
     }
@@ -537,6 +541,7 @@ impl Coordinator<'_> {
                 pid: None,
                 process_identity: None,
                 evidence: vec![],
+                usage: None,
             });
             self.run.stage = format!("hook_{event}");
             self.save("hook_started")?;

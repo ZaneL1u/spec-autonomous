@@ -363,6 +363,27 @@ fn write_allowlist_distinguishes_directory_boundaries_and_patterns() {
 }
 
 #[test]
+fn write_set_may_edit_assigned_context_files_but_not_runtime_or_unlisted_context() {
+    let context = ["docs/spec.md", "src/lib.rs"];
+    assert!(
+        !plan::worker_write_forbidden("src/lib.rs", &["src/lib.rs".into()], &context),
+        "an assigned context file remains in scope"
+    );
+    assert!(plan::worker_write_forbidden(
+        "docs/spec.md",
+        &["src/lib.rs".into()],
+        &context
+    ));
+    assert!(plan::worker_write_forbidden(
+        ".spec-autonomous/config.toml",
+        &[".spec-autonomous/config.toml".into()],
+        &[]
+    ));
+    assert!(plan::worker_write_forbidden("docs/spec.md", &[], &context));
+    assert!(!plan::worker_write_forbidden("src/other.rs", &[], &context));
+}
+
+#[test]
 fn ready_queue_respects_integrated_dependencies_capacity_and_running_writes() {
     let source = snapshot(
         Framework::Openspec,

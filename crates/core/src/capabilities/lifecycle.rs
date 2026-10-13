@@ -350,6 +350,38 @@ pub fn doctor(root: &Path) -> Result<Value> {
         diagnostics.push(e.to_string());
         json!({"consistency":"unavailable"})
     });
+    let installed_skills = paths::inside(root, ".spec-autonomous/skills-installed.toml")
+        .ok()
+        .filter(|path| path.is_file())
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok());
+    if let Some(manifest) = &installed_skills {
+        let installed = manifest
+            .get("version")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let running = env!("CARGO_PKG_VERSION");
+        if installed != running {
+            diagnostics.push(format!(
+                "skills_version_drift: installed {installed} running {running}"
+            ));
+        }
+    }
+    diagnostics.extend(crate::skills::content_diagnostics(root));
+    if let Some(ids) = inventory["worktrees"].as_array() {
+        let stale: Vec<String> = ids
+            .iter()
+            .filter(|row| {
+                row["lease_state"] == "stale"
+                    || (row["status"] == "stale"
+                        && matches!(row["kind"].as_str(), Some("managed-worker")))
+            })
+            .filter_map(|row| row["attempt_id"].as_str().map(str::to_owned))
+            .collect();
+        if !stale.is_empty() {
+            diagnostics.push(format!("stale_outstanding: {}", stale.join(",")));
+        }
+    }
     let repo = Repository::discover(root).ok();
     let mut operations = vec![];
     if let Some(repo) = repo {
@@ -365,6 +397,14 @@ pub fn doctor(root: &Path) -> Result<Value> {
                     match serde_json::from_slice::<Operation>(&fs::read(file.path())?){Ok(op)=>operations.push(json!({"operation_id":op.id,"status":op.status,"candidate":op.candidate})),Err(_)=>diagnostics.push("operation_corrupt: explicit inspection required".into())}
                 }
             }
+        }
+        match Store::open(&repo, false) {
+            Ok(Some(store)) => match store.user_version() {
+                Ok(version) => diagnostics.push(format!("ledger_user_version: {version}")),
+                Err(error) => diagnostics.push(error.to_string()),
+            },
+            Ok(None) => {}
+            Err(error) => diagnostics.push(error.to_string()),
         }
     }
     Ok(

@@ -312,3 +312,35 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     preview["status"] = json!(run.status);
     Ok(preview)
 }
+
+/// A new planner must not silently restore a known obsolete check list.
+pub fn reconcile_plan(plan: &mut crate::model::Plan, revisions: &[Value]) -> Result<()> {
+    for task in &mut plan.tasks {
+        let mut versions = vec![];
+        for record in revisions {
+            for diff in record["diff"].as_array().into_iter().flatten() {
+                if diff["scope"] == "task"
+                    && diff["phase_id"] == plan.phase_id
+                    && diff["task_id"] == task.id
+                    && diff["superseded_by_native"] != true
+                {
+                    versions.push(serde_json::from_value::<Vec<Check>>(
+                        diff["before"].clone(),
+                    )?);
+                    versions.push(serde_json::from_value::<Vec<Check>>(diff["after"].clone())?);
+                }
+            }
+        }
+        if let Some(latest) = versions.last() {
+            if versions.contains(&task.verification) {
+                task.verification = latest.clone();
+            } else {
+                bail!(
+                    "verification_revision_conflict: task {} has reviewed run-local checks; preserve their latest values or explicitly reconcile the new check contract",
+                    task.id
+                );
+            }
+        }
+    }
+    Ok(())
+}

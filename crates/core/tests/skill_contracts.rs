@@ -486,3 +486,43 @@ fn init_preflight_is_readonly_and_rejects_declaration_path_conflicts() {
         "user file"
     );
 }
+
+#[test]
+fn autonomous_auto_and_resume_skills_are_not_opengsd_and_require_closeout() {
+    for name in ["autonomous", "auto", "resume"] {
+        let body = asset(name);
+        assert!(
+            body.contains("not OpenGSD"),
+            "{name} must distinguish this product from OpenGSD"
+        );
+        assert!(
+            !body
+                .replace("not OpenGSD", "")
+                .to_ascii_lowercase()
+                .contains("opengsd"),
+            "{name} must not describe this product as OpenGSD"
+        );
+        assert!(body.contains("Spec Autonomous"));
+        assert!(body.contains("doctor"));
+        assert!(body.contains("inspect"));
+        assert!(body.contains("work.heartbeat"));
+        assert!(body.contains("run.cleanup"));
+        assert!(body.contains("run.revise"));
+    }
+}
+
+#[test]
+fn same_version_skill_drift_is_read_only_and_handles_prefixes() {
+    let tmp = TempDir::new().unwrap();
+    for agent in ["codex", "claude"] {
+        skills::install(tmp.path(), agent, "sa").unwrap();
+    }
+    assert!(skills::content_diagnostics(tmp.path()).is_empty());
+    let path = tmp.path().join(".agents/skills/sa-auto/SKILL.md");
+    fs::write(&path, "user changed alias").unwrap();
+    let before = files(tmp.path());
+    let ds = skills::content_diagnostics(tmp.path());
+    assert_eq!(ds.len(), 1);
+    assert!(ds[0].starts_with("skills_content_drift:"));
+    assert_eq!(files(tmp.path()), before);
+}

@@ -231,3 +231,46 @@ pub fn init_with_provider(
     }
     Ok(result)
 }
+
+/// Compare bytes, including same-version local builds. Never rewrite user skills.
+pub fn content_diagnostics(root: &Path) -> Vec<String> {
+    let result = (|| -> Result<Vec<String>> {
+        let file = paths::inside(root, ".spec-autonomous/skills-installed.toml")?;
+        if !file.exists() {
+            return Ok(vec![]);
+        }
+        let manifest: Manifest = toml::from_str(&paths::read(
+            root,
+            ".spec-autonomous/skills-installed.toml",
+            256 * 1024,
+        )?)?;
+        let mut diagnostics = vec![];
+        for path in manifest.files.keys() {
+            let p = Path::new(path);
+            let name = if p.file_name().is_some_and(|n| n == "SKILL.md") {
+                p.parent().and_then(Path::file_name)
+            } else {
+                p.file_stem()
+            }
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+            let Some((_, body)) = ASSETS
+                .iter()
+                .find(|(base, _)| name == *base || name.ends_with(&format!("-{base}")))
+            else {
+                continue;
+            };
+            let original = body.lines().find(|l| l.starts_with("name: ")).unwrap();
+            let expected = body.replacen(original, &format!("name: {name}"), 1);
+            match paths::read(root, path, 256*1024) {
+                Ok(current) if current == expected => (),
+                Ok(_) => diagnostics.push(format!("skills_content_drift: {path}; use ownership-aware skill installation at a safe handoff")),
+                Err(_) => diagnostics.push(format!("skills_file_unavailable: {path}")),
+            }
+        }
+        Ok(diagnostics)
+    })();
+    result.unwrap_or_else(|_| {
+        vec!["skills_manifest_invalid: inspect installed skill manifest".into()]
+    })
+}

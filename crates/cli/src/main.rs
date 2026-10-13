@@ -136,6 +136,9 @@ enum Command {
     Progress {
         #[arg(long)]
         all_worktrees: bool,
+        /// Include a separate execution repository; repeat up to sixteen times.
+        #[arg(long = "related-path")]
+        repository_paths: Vec<String>,
     },
     /// Prepare work packets and advance the selected milestone.
     #[command(aliases=["run","autonomous","auto"])]
@@ -393,7 +396,10 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             put(&mut a, "phase_id", phase);
             ("inspect", a)
         }
-        Command::Progress { all_worktrees: _ } => ("progress", json!({})),
+        Command::Progress {
+            all_worktrees: _,
+            repository_paths,
+        } => ("progress", json!({"repository_paths":repository_paths})),
         Command::Next { run_id } => {
             let mut a = json!({});
             put(&mut a, "run_id", run_id);

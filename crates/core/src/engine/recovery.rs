@@ -97,6 +97,7 @@ impl Coordinator<'_> {
                 self.run.attempts[index].finished_at = Some(paths::now());
             }
         }
+        self.supersede_replaced_submissions()?;
         for a in self
             .run
             .attempts

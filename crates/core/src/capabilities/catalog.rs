@@ -64,11 +64,11 @@ pub fn all() -> Vec<Capability> {
         ),
         entry(
             "progress",
-            "Read all Git worktrees and verified progress without mutation.",
+            "Read all Git worktrees, native-only milestones and explicitly related repositories without mutation.",
             true,
             false,
             &[],
-            json!({}),
+            json!({"repository_paths":{"type":"array","maxItems":16,"items":s}}),
         ),
         entry(
             "prepare",
@@ -108,7 +108,7 @@ pub fn all() -> Vec<Capability> {
             true,
             true,
             &["token", "host", "result"],
-            json!({"token":s,"host":host,"result":o}),
+            json!({"token":s,"host":host,"result":o,"usage":o}),
         ),
         entry(
             "archive",
@@ -148,7 +148,7 @@ pub fn all() -> Vec<Capability> {
             false,
             true,
             &["run_id", "request_id", "token"],
-            json!({"run_id":s,"request_id":s,"token":s}),
+            json!({"run_id":s,"request_id":s,"token":s,"host":host}),
         ),
         entry(
             "work.revoke",
@@ -489,7 +489,7 @@ pub fn all() -> Vec<Capability> {
             write,
             &["run_id"],
             if id == "run.cleanup" {
-                json!({"run_id":s,"apply":b,"delete_branches":b,"delete_integration":b,"plan_hash":s})
+                json!({"run_id":s,"apply":b,"delete_branches":b,"delete_integration":b,"active":b,"plan_hash":s})
             } else {
                 json!({"run_id":s,"phase_id":s})
             },

@@ -71,7 +71,9 @@ test('a failed verification command can be revised and delivered in the same run
   assert.match(failedAttempt.error, /verification_failed/);
   const failure = stopped.data.evidence.find((e: any) => e.exit_code !== 0 && e.argv.includes(badCheck.argv[2]));
   assert.ok(failure, 'the coordinator executed and recorded the failing command');
-  assert.match(failedAttempt.error, /MODULE_NOT_FOUND|Cannot find module/);
+  assert.match(failedAttempt.error, /diagnostics/);
+  assert.ok(failure.details?.stderr, 'failure retains the original stderr path');
+  assert.match(readFileSync(failure.details.stderr, 'utf8') + readFileSync(failure.log, 'utf8'), /MODULE_NOT_FOUND|Cannot find module/);
   const acceptedAttempts = stopped.data.attempts.filter((a: any) => a.kind === 'implement' && a.task_id === acceptedId).map((a: any) => a.id);
   const checkpoint = stopped.data.accepted_head;
   const correction = {run_id: runId, reason: 'Use the existing multiply test file: the native arithmetic requirement and assertions are unchanged.',

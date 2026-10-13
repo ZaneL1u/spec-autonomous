@@ -49,6 +49,7 @@ impl Coordinator<'_> {
             }
             self.run.milestone = m;
             self.run.attempts[index].status = "accepted".into();
+            self.supersede_replaced_submissions()?;
             provider::save_milestone(&self.project(), &self.run.milestone)?;
             self.run.accepted_head = git::commit(
                 Path::new(&self.run.integration),
@@ -291,11 +292,31 @@ impl Coordinator<'_> {
         for (batch, refs) in required.chunks(32).enumerate() {
             let mut partial = snapshot.clone();
             partial.metadata["acceptance"] = serde_json::json!(refs);
-            let (result,worktree,index)=self.invoke("audit",&format!("audit-{}-{}",phase.id,batch+1),&phase.id,"Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.".into(),Some(partial.clone()))?;
-            if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
-                bail!("scope_violation: verifier changed files");
+            let audit_task = if snapshot.metadata["scope"] == "milestone" {
+                format!("audit-milestone-{}-{}", phase.id, batch + 1)
+            } else {
+                format!("audit-{}-{}", phase.id, batch + 1)
+            };
+            let (result, worktree, index) = self.invoke(
+                "audit",
+                &audit_task,
+                &phase.id,
+                "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.".into(),
+                Some(partial.clone()),
+            )?;
+            let verified = (|| -> Result<()> {
+                if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+                    bail!("scope_violation: verifier changed files");
+                }
+                provider::check_audit(&partial, &result.audit)?;
+                Ok(())
+            })();
+            if let Err(error) = verified {
+                self.run.attempts[index].status = "failed".into();
+                self.run.attempts[index].error = Some(format!("{error:#}"));
+                self.save("audit_rejected")?;
+                return Err(error);
             }
-            provider::check_audit(&partial, &result.audit)?;
             all.extend(result.audit);
             self.run.attempts[index].status = "accepted".into();
             self.save("audit_recorded")?;
@@ -560,48 +581,57 @@ impl Coordinator<'_> {
         if checks.is_empty() {
             bail!("verification_missing: configure real verification argv for {label}");
         }
-        let revision = git::head(project)?;
         if !git::clean(project)? {
             bail!(
                 "verification_uncommitted_input: code must be committed before host verification"
             );
         }
-        for check in checks {
-            self.check()?;
-            crate::config::validate_check(check)?;
-            let dir = self.store.attempt_dir(&self.run.id, &paths::id("check"))?;
-            let output = process::execute(process::Request {
-                argv: &check.argv,
-                cwd: &paths::inside(project, &check.cwd)?,
-                env: &self.run.config.runner.environment,
-                stdin: None,
-                directory: &dir,
-                timeout: Duration::from_secs(self.run.config.execution.attempt_timeout_seconds),
-                max_log_bytes: self.run.config.execution.max_log_bytes,
-                cancel: self.cancel.clone(),
-            })?;
-            let log = dir.join("stdout.log");
-            let stderr = fs::read_to_string(dir.join("stderr.log")).unwrap_or_default();
-            let tree_unchanged = git::head(project)? == revision && git::clean(project)?;
-            let evidence = Evidence {
-                argv: check.argv.clone(),
-                cwd: project.join(&check.cwd).to_string_lossy().into(),
-                revision: revision.clone(),
-                exit_code: output.code,
-                log: log.to_string_lossy().into(),
-                log_hash: paths::hash(fs::read(&log)?),
-                finished_at: paths::now(),
-                tree_unchanged,
-            };
-            self.run.evidence.push(evidence);
-            self.save("verification")?;
-            if !tree_unchanged {
-                bail!("verification_mutated_tree: check changed the code or HEAD being verified");
+        let directory = self
+            .store
+            .root
+            .join("runs")
+            .join(&self.run.id)
+            .join(paths::id("verify"));
+        let wave = crate::verification::Wave::new(directory, project, label, &self.run.config)?;
+        let mut steps = vec![];
+        if let Some(hook) = self.run.config.hooks.get("verification_prepare") {
+            if !hook.idempotent {
+                bail!(
+                    "verification_prepare_requires_idempotent: preparation must be safe to retry for its wave identity"
+                );
             }
-            if output.code != 0 {
+            steps.push((
+                Check {
+                    argv: hook.argv.clone(),
+                    cwd: ".".into(),
+                },
+                true,
+            ));
+        }
+        for check in unique_checks(checks.to_vec()) {
+            steps.push((check, false));
+        }
+        for (check, preparation) in steps {
+            self.check()?;
+            let result =
+                wave.execute(&check, preparation, &self.run.config, self.cancel.clone())?;
+            let details = result.evidence.details.clone().unwrap();
+            self.run.evidence.push(result.evidence);
+            self.save("verification")?;
+            if let Some(failure) = result.failure {
+                if failure == "source_changed" {
+                    bail!(
+                        "verification_mutated_tree: diagnostics {}",
+                        details["manifest"]
+                    );
+                }
+                // Retain the existing actionable Node directory diagnosis without
+                // exposing arbitrary child output in a public error.
+                let stderr =
+                    fs::read_to_string(details["stderr"].as_str().unwrap()).unwrap_or_default();
                 let readiness = crate::verification_preflight::inspect_checks_with_environment(
                     project,
-                    std::slice::from_ref(check),
+                    std::slice::from_ref(&check),
                     &[],
                     &self.run.config.runner.environment,
                 );
@@ -612,19 +642,17 @@ impl Coordinator<'_> {
                         .any(|d| d.code == "node_test_directory_operand")
                 {
                     bail!(
-                        "needs_input: verification_configuration: Node rejected a test directory operand {:?}; use run.revise to select explicit test files or supported discovery",
-                        check.argv
+                        "needs_input: verification_configuration: Node rejected a test directory operand; use run.revise; diagnostics {}",
+                        details["manifest"]
                     );
                 }
-                let stdout = fs::read_to_string(&log).unwrap_or_default();
                 bail!(
-                    "verification_failed: {label} {:?}, exit {}: {}",
-                    check.argv,
-                    output.code,
-                    format!("{stderr}\n{stdout}")
-                        .chars()
-                        .take(4096)
-                        .collect::<String>()
+                    "verification_failed: {label} {} {failure}, exit {}; diagnostics {}; stdout {}; stderr {}",
+                    if preparation { "preparation" } else { "check" },
+                    details["exit_code"],
+                    details["manifest"],
+                    details["stdout"],
+                    details["stderr"]
                 );
             }
         }

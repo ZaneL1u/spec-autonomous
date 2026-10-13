@@ -22,6 +22,22 @@ impl Coordinator<'_> {
                 "checked": snapshot.tasks.iter().filter(|t| t.done).count()
             });
             partial.tasks = rows.to_vec();
+            let mut overrides = BTreeMap::new();
+            if let Some(host) = &self.run.host {
+                for record in &host.verification_revisions {
+                    for diff in record["diff"].as_array().into_iter().flatten() {
+                        if diff["scope"] == "task"
+                            && diff["phase_id"] == phase.id
+                            && diff["superseded_by_native"] != true
+                            && let Some(id) = diff["task_id"].as_str()
+                            && !self.run.completed_tasks.contains(&Run::key(&phase.id, id))
+                        {
+                            overrides.insert(id, diff["after"].clone());
+                        }
+                    }
+                }
+            }
+            partial.metadata["reviewed_task_checks"] = serde_json::json!(overrides);
             partial.metadata["verification_environment"] =
                 crate::verification_preflight::environment_with_overrides(
                     &self.project(),
@@ -40,7 +56,7 @@ impl Coordinator<'_> {
                 });
             }
             let instruction = format!(
-                "Return an execution Plan for phase {}. Use schema_version=1 and exact snapshot.source_hash. Cover EVERY source task in snapshot.tasks using its exact ID; do not add other sources even when the native tracking file contains more rows. Tasks contain id,description,source_ids,depends_on,reads,writes,verification. Preserve native order and phase barriers; only independent [P] siblings may parallelize in Spec Kit. Every task must have meaningful, individually runnable verification argv unless project-level checks are configured. Do not edit files. This is planning batch {}; dependency references must be internal to this batch; the host adds conservative cross-batch barriers. {}",
+                "Return an execution Plan for phase {}. Use schema_version=1 and exact snapshot.source_hash. Cover EVERY source task in snapshot.tasks using its exact ID; do not add other sources even when the native tracking file contains more rows. Tasks contain id,description,source_ids,depends_on,reads,writes,verification. Preserve snapshot.metadata.reviewed_task_checks for matching task IDs; these are reviewed corrections, not obsolete baseline checks. Preserve native order and phase barriers; only independent [P] siblings may parallelize in Spec Kit. Every task must have meaningful, individually runnable verification argv unless project-level checks are configured. Do not edit files. This is planning batch {}; dependency references must be internal to this batch; the host adds conservative cross-batch barriers. {}",
                 phase.id,
                 batch + 1,
                 crate::verification_preflight::planning_guidance()
@@ -115,6 +131,15 @@ impl Coordinator<'_> {
                         task.depends_on.extend(previous_leaves.clone());
                     }
                 }
+            }
+            if let Some(host) = &self.run.host
+                && let Err(error) =
+                    crate::run_revision::reconcile_plan(&mut plan, &host.verification_revisions)
+            {
+                self.run.attempts[index].status = "failed".into();
+                self.run.attempts[index].error = Some(error.to_string());
+                self.save("planning_revision_conflict")?;
+                return Err(error);
             }
             previous_leaves = plan
                 .tasks

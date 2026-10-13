@@ -28,8 +28,13 @@ function npmArgv(env = process.env) {
 		join(dirname(node), "node_modules/npm/bin/npm-cli.js"),
 		join(dirname(node), "../lib/node_modules/npm/bin/npm-cli.js")
 	];
-	const npm = findExecutable("npm", env);
-	if (npm && !npm.endsWith(".cmd")) candidates.push(realpathSync(npm));
+	for (const npm of [join(dirname(node), "npm"), findExecutable("npm", env)]) {
+		if (!npm || npm.endsWith(".cmd")) continue;
+		try {
+			const resolved = realpathSync(npm);
+			if (basename(resolved) === "npm-cli.js") candidates.push(resolved);
+		} catch {}
+	}
 	const entry = candidates.find(existsSync);
 	if (!entry) throw new Error("runtime_missing: use a Node.js installation with npm, or run with Bun");
 	return [node, entry];

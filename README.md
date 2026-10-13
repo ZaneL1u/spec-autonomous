@@ -17,6 +17,7 @@
 - [Dogfood playground](docs/validation/dogfood.md)
 - [修订验证并续跑](docs/run-revision.md)
 - [运行结束后的资源清理](docs/run-cleanup.md)
+- [长任务维护与安全更新](docs/long-running-runs.md)
 - [交互式与参数式初始化](docs/initialization.md)
 - [自动安装 OpenSpec / Spec Kit](docs/provider-bootstrap.md)
 - [CLI 框架与命令接口](docs/cli-interface.md)

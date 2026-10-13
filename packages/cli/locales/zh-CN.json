@@ -350,5 +350,6 @@
   "error.duplicate_request": "批量认领包含重复请求，请为每个工作包提供唯一请求和新会话。",
   "error.cleanup_plan_stale": "清理预览已变化，请重新获取预览后执行。",
   "error.cleanup_preview_required": "执行清理前请先预览，并传入匹配的 plan_hash。",
-  "error.cleanup_conflict": "清理对象已变化，已保留相关资源，请重新预览。"
+  "error.cleanup_conflict": "清理对象已变化，已保留相关资源，请重新预览。",
+  "arg.repository_paths": "包含独立执行仓库，可重复指定，最多十六个。"
 }

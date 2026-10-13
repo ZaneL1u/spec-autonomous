@@ -28,3 +28,5 @@ pub mod skills_mcp;
 pub mod run_revision;
 
 pub mod discussion;
+
+pub mod verification;

@@ -104,6 +104,7 @@ impl Fixture {
             pid: None,
             process_identity: None,
             evidence: vec![],
+            usage: None,
         }
     }
 
@@ -187,6 +188,32 @@ fn any_worktree_sees_the_same_complete_repository_inventory_without_a_database()
         "read-only inventory must not create state, registry, or alter Git files"
     );
     assert!(!fixture.repo.runtime().unwrap().exists());
+}
+
+#[test]
+fn progress_aggregates_host_reported_usage_without_inventing_zeros() {
+    let fixture = Fixture::new();
+    let (integration, integration_branch) = fixture.managed("integration");
+    let (worker, worker_branch) = fixture.managed("attempt-one");
+    let mut run = fixture.run("run-one", &integration, &integration_branch);
+    let mut attempt = fixture.attempt(
+        &worker,
+        &worker_branch,
+        "attempt-one",
+        "task-one",
+        "integrated",
+    );
+    attempt.usage = Some(json!({
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "cached_input_tokens": 2
+    }));
+    run.attempts = vec![attempt];
+    fixture.seed(&[run]);
+    let snapshot = progress::snapshot(&fixture.repo.root).unwrap();
+    assert_eq!(snapshot["usage"]["input_tokens"], 11);
+    assert_eq!(snapshot["usage"]["output_tokens"], 7);
+    assert_eq!(snapshot["usage"]["cached_input_tokens"], 2);
 }
 
 #[test]
@@ -635,4 +662,40 @@ exec "$SA_PROGRESS_CONTRACT_REAL_GIT" "$@"
         2,
         "the interleaving must actually create a Git worktree"
     );
+}
+
+#[test]
+fn declared_native_work_and_related_clones_are_read_only_and_not_verified() {
+    let f = Fixture::new();
+    let (integration, branch) = f.managed("declaration");
+    let mut run = f.run("native-only", &integration, &branch);
+    run.milestone.phases[0].source.selector = "native".into();
+    spec_autonomous_core::provider::save_milestone(&f.repo.root, &run.milestone).unwrap();
+    fs::create_dir_all(f.repo.root.join("openspec/changes/native")).unwrap();
+    fs::write(
+        f.repo.root.join("openspec/changes/native/tasks.md"),
+        "- [x] 1.1 Implement\n- [ ] 1.2 Verify\n",
+    )
+    .unwrap();
+    let related = Fixture::new();
+    let before = file_bytes(&f.base);
+    let other_before = file_bytes(&related.base);
+    let args = json!({"repository_paths":[related.repo.root,related.repo.root,f.repo.root,f.base.join("missing")],"limit":1});
+    let snapshot = progress::with_related(&f.repo.root, &args).unwrap();
+    assert_eq!(snapshot["native_milestones"][0]["execution"], "not_started");
+    assert_eq!(
+        snapshot["native_milestones"][0]["phases"][0]["native_checked"],
+        1
+    );
+    assert_eq!(snapshot["verified_tasks"], 0);
+    assert_eq!(
+        snapshot["related_repositories"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        snapshot["related_repositories"][1]["availability"],
+        "unavailable"
+    );
+    assert_eq!(before, file_bytes(&f.base));
+    assert_eq!(other_before, file_bytes(&related.base));
 }

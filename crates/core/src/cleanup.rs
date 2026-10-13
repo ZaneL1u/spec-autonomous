@@ -11,7 +11,7 @@ use std::{collections::BTreeMap, path::Path};
 
 /// Historical CLI entry: remove safe worktrees immediately, preserving every branch.
 pub fn cleanup(root: &Path, id: &str) -> Result<Value> {
-    execute(root, id, true, false, false, None, false)
+    execute(root, id, true, CleanupScope::default(), None, false)
 }
 
 /// Capability entry: preview first, then apply the exact observed plan.
@@ -32,15 +32,64 @@ pub fn cleanup_with_scope(
     delete_integration: bool,
     plan_hash: Option<&str>,
 ) -> Result<Value> {
-    execute(
+    cleanup_reviewed(
         root,
         id,
         apply,
-        delete_branches,
-        delete_integration,
+        CleanupScope {
+            delete_branches,
+            delete_integration,
+            active: false,
+        },
         plan_hash,
-        true,
     )
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct CleanupScope {
+    pub delete_branches: bool,
+    pub delete_integration: bool,
+    pub active: bool,
+}
+
+pub fn cleanup_reviewed(
+    root: &Path,
+    id: &str,
+    apply: bool,
+    scope: CleanupScope,
+    plan_hash: Option<&str>,
+) -> Result<Value> {
+    execute(root, id, apply, scope, plan_hash, true)
+}
+
+// Immutable packets can refer to prior worktrees. Unknown references fail closed.
+fn active_references(repo: &Repository, run: &Run) -> Result<String> {
+    // A historical cwd is provenance, not a live dependency. Only actual
+    // evidence storage paths must survive removal of the old checkout.
+    let mut references = String::new();
+    for evidence in &run.evidence {
+        references.push_str(&evidence.log);
+        if let Some(details) = &evidence.details {
+            for key in ["manifest", "stdout", "stderr", "output_directory"] {
+                if let Some(path) = details[key].as_str() {
+                    references.push_str(path);
+                }
+            }
+        }
+    }
+    for a in run.attempts.iter().filter(|a| !terminal_attempt(&a.status)) {
+        let base = format!("spec-autonomous/runs/{}/attempts/{}", run.id, a.id);
+        references.push_str(&paths::read(
+            &repo.common,
+            &format!("{base}/input.json"),
+            16 * 1024 * 1024,
+        )?);
+        let full = format!("{base}/context-full.json");
+        if paths::inside(&repo.common, &full)?.exists() {
+            references.push_str(&paths::read(&repo.common, &full, 16 * 1024 * 1024)?);
+        }
+    }
+    Ok(references)
 }
 
 #[derive(Clone)]
@@ -83,6 +132,11 @@ fn branch_head(repo: &Repository, branch: &str) -> Option<String> {
 
 fn plan(repo: &Repository, run: &Run, runs: &[Run], delete_branches: bool) -> Result<Value> {
     let inventory = repo.worktrees()?;
+    let references = if run.terminal() {
+        Ok(String::new())
+    } else {
+        active_references(repo, run)
+    };
     let mut candidates: BTreeMap<String, Candidate> = BTreeMap::new();
     for a in &run.attempts {
         let lease_active = run
@@ -93,6 +147,17 @@ fn plan(repo: &Repository, run: &Run, runs: &[Run], delete_branches: bool) -> Re
         let process_active = a.pid.is_some_and(|pid| !process::identity(pid).is_empty());
         let reason = if lease_active || process_active {
             Some("owner_not_stopped")
+        } else if !run.terminal() && a.status == "accepted" {
+            Some("recovery_worktree_retained")
+        } else if !run.terminal()
+            && a.kind == "implement"
+            && a.status == "failed"
+            && !run
+                .completed_tasks
+                .contains(&Run::key(&a.phase_id, &a.task_id))
+        {
+            // Retry/no-progress logic still fingerprints this checkout's patch.
+            Some("retry_evidence_retained")
         } else if !terminal_attempt(&a.status) {
             Some("attempt_not_terminal")
         } else {
@@ -160,6 +225,24 @@ fn plan(repo: &Repository, run: &Run, runs: &[Run], delete_branches: bool) -> Re
             Some("not_in_git_inventory")
         } else if wt.is_some() && !Path::new(&path).exists() {
             Some("missing_worktree")
+        } else if !run.terminal() && references.is_err() {
+            Some("active_references_unavailable")
+        } else if !run.terminal()
+            && references.as_ref().is_ok_and(|r| {
+                r.contains(&path) || r.contains(&serde_json::to_string(&path).unwrap_or_default())
+            })
+        {
+            Some("active_reference_retained")
+        } else if !run.terminal()
+            && wt.is_some()
+            && !git::command(
+                Path::new(&path),
+                &["ls-files", "--others", "--ignored", "--exclude-standard"],
+                None,
+            )?
+            .is_empty()
+        {
+            Some("ignored_artifacts_retained")
         } else if wt.is_some() && !git::clean(Path::new(&path))? {
             Some("dirty")
         } else {
@@ -194,8 +277,7 @@ fn execute(
     root: &Path,
     id: &str,
     apply: bool,
-    delete_branches: bool,
-    delete_integration: bool,
+    scope: CleanupScope,
     expected: Option<&str>,
     reviewed: bool,
 ) -> Result<Value> {
@@ -207,11 +289,40 @@ fn execute(
     };
     let store = Store::open(&repo, false)?.context("run_not_found")?;
     let run = store.get(id)?;
-    if !run.terminal() {
-        bail!("run_active: only terminal runs can be cleaned");
+    if !run.terminal() && !scope.active {
+        bail!(
+            "run_active: preview with active:true to clean closed work while preserving live work"
+        );
     }
+    if !run.terminal() && scope.delete_integration {
+        bail!("run_active: active integration must be retained");
+    }
+    let delete_branches = scope.delete_branches;
+    let delete_integration = scope.delete_integration;
     let mut result = plan(&repo, &run, &store.list()?, delete_branches)?;
+    result["active"] = json!(scope.active);
     result["delete_integration"] = json!(delete_integration);
+    if delete_integration {
+        let inventory = repo.worktrees()?;
+        let entry = inventory.iter().find(|w| w.path == run.integration);
+        let shared = store.list()?.iter().filter(|r| r.id != run.id).any(|r| {
+            r.integration == run.integration
+                || r.attempts.iter().any(|a| a.worktree == run.integration)
+                || r.intents.iter().any(|i| i.worktree == run.integration)
+        });
+        let safe = owned(&repo, &run.integration, &run.integration_branch)
+            && Path::new(&run.integration) != repo.root
+            && !shared
+            && entry.is_some_and(|w| {
+                w.branch == run.integration_branch
+                    && w.head == run.accepted_head
+                    && !w.locked
+                    && !w.prunable
+            })
+            && git::clean(Path::new(&run.integration)).unwrap_or(false);
+        result["integration_removal"] =
+            json!({"path":run.integration,"head":entry.map(|w|&w.head),"eligible":safe});
+    }
     let hash = paths::hash(serde_json::to_vec(&result)?);
     if apply && reviewed && expected != Some(hash.as_str()) {
         bail!(
@@ -226,7 +337,8 @@ fn execute(
     if apply {
         if delete_integration {
             let integration = Path::new(&run.integration);
-            if integration == repo.root
+            if result["integration_removal"]["eligible"] != true
+                || integration == repo.root
                 || !git::clean(integration)?
                 || git::head(integration)? != run.accepted_head
             {

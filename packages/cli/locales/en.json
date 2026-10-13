@@ -350,5 +350,6 @@
   "error.duplicate_request": "duplicate request",
   "error.cleanup_plan_stale": "cleanup plan stale",
   "error.cleanup_preview_required": "cleanup preview required",
-  "error.cleanup_conflict": "cleanup conflict"
+  "error.cleanup_conflict": "cleanup conflict",
+  "arg.repository_paths": "Include a separate execution repository; repeat up to sixteen times."
 }

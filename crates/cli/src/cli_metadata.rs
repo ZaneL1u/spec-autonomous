@@ -23,7 +23,7 @@ fn describe(command: &clap::Command) -> Value {
                 "help":arg.get_help().map(ToString::to_string),
                 "required":arg.is_required_set(), "global":arg.is_global_set(),
                 "hidden":arg.is_hide_set(), "takes_value":arg.get_action().takes_values(),
-                "multiple":range.max_values()>1,
+                "multiple":range.max_values()>1 || matches!(arg.get_action(), clap::ArgAction::Append),
                 "defaults":arg.get_default_values().iter().map(|v|v.to_string_lossy()).collect::<Vec<_>>(),
                 "choices":arg.get_possible_values().iter().filter(|v|!v.is_hide_set()).map(|v|v.get_name()).collect::<Vec<_>>(),
             })
@@ -41,9 +41,8 @@ fn describe(command: &clap::Command) -> Value {
 pub fn invoke(command: &MetadataCommand, current: locale::Locale) -> Value {
     match command {
         MetadataCommand::Describe => {
-            let mut grammar = Cli::command();
+            let mut grammar = locale::localize_command(Cli::command(), current);
             grammar.build();
-            let grammar = locale::localize_command(grammar, current);
             json!({"schema_version":1,"locale":current.code(),"data":describe(&grammar)})
         }
         MetadataCommand::Parse { argv } => {
@@ -73,6 +72,31 @@ pub fn invoke(command: &MetadataCommand, current: locale::Locale) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progress_flags_and_repeated_paths_survive_localization() {
+        for language in [locale::Locale::En, locale::Locale::ZhCn] {
+            for values in [
+                vec!["progress", "--all-worktrees"],
+                vec![
+                    "progress",
+                    "--all-worktrees",
+                    "--related-path",
+                    "one",
+                    "--related-path",
+                    "two",
+                ],
+            ] {
+                let result = invoke(
+                    &MetadataCommand::Parse {
+                        argv: values.iter().map(|s| s.to_string()).collect(),
+                    },
+                    language,
+                );
+                assert_eq!(result["ok"], true, "{result}");
+            }
+        }
+    }
+
     #[test]
     fn grammar_and_preflight_use_clap_without_loading_a_project() {
         let grammar = invoke(&MetadataCommand::Describe, locale::Locale::En);

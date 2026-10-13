@@ -183,6 +183,8 @@ pub struct Evidence {
     pub finished_at: String,
     #[serde(default)]
     pub tree_unchanged: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attempt {
@@ -202,6 +204,8 @@ pub struct Attempt {
     pub process_identity: Option<String>,
     #[serde(default)]
     pub evidence: Vec<Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationIntent {
@@ -269,6 +273,18 @@ impl Run {
     }
     pub fn key(phase: &str, task: &str) -> String {
         format!("{phase}/{task}")
+    }
+    pub fn has_outstanding_host_work(&self) -> bool {
+        self.attempts.iter().enumerate().any(|(index, attempt)| {
+            matches!(attempt.status.as_str(), "issued" | "claimed" | "receiving")
+                || (attempt.status == "submitted"
+                    && !self.attempts.iter().skip(index + 1).any(|other| {
+                        other.kind == attempt.kind
+                            && other.task_id == attempt.task_id
+                            && other.phase_id == attempt.phase_id
+                            && matches!(other.status.as_str(), "accepted" | "integrated")
+                    }))
+        })
     }
 }
 

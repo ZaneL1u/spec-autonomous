@@ -132,12 +132,7 @@ pub fn start(
     if let Some(existing) = store.list()?.into_iter().find(|r| {
         r.host.is_some()
             && (!r.terminal() && !["plan_ready", "handed_off"].contains(&r.status.as_str())
-                || r.attempts.iter().any(|a| {
-                    matches!(
-                        a.status.as_str(),
-                        "issued" | "claimed" | "submitted" | "receiving"
-                    )
-                }))
+                || r.has_outstanding_host_work())
             && r.project_relative == relative
     }) {
         if repo.head()? != existing.origin_head {
@@ -418,6 +413,52 @@ impl Coordinator<'_> {
     fn origin_project(&self) -> PathBuf {
         Path::new(&self.run.origin).join(&self.run.project_relative)
     }
+    fn supersede_replaced_submissions(&mut self) -> Result<()> {
+        let mut latest_success = BTreeMap::<(String, String, String), usize>::new();
+        for (index, attempt) in self.run.attempts.iter().enumerate() {
+            if matches!(attempt.status.as_str(), "accepted" | "integrated") {
+                latest_success.insert(
+                    (
+                        attempt.kind.clone(),
+                        attempt.task_id.clone(),
+                        attempt.phase_id.clone(),
+                    ),
+                    index,
+                );
+            }
+        }
+        let now = paths::now();
+        let mut changed = false;
+        for (index, attempt) in self.run.attempts.iter_mut().enumerate() {
+            let Some(&success) = latest_success.get(&(
+                attempt.kind.clone(),
+                attempt.task_id.clone(),
+                attempt.phase_id.clone(),
+            )) else {
+                continue;
+            };
+            if index >= success || attempt.status != "submitted" {
+                continue;
+            }
+            attempt.status = "superseded".into();
+            attempt.error =
+                Some("superseded: a later accepted attempt replaced this receipt".into());
+            attempt.finished_at = Some(now.clone());
+            if let Some(lease) = self
+                .run
+                .host
+                .as_mut()
+                .and_then(|host| host.requests.get_mut(&attempt.id))
+            {
+                lease.revoked = true;
+            }
+            changed = true;
+        }
+        if changed {
+            self.save("receipt_superseded")?;
+        }
+        Ok(())
+    }
     fn save(&mut self, event: &str) -> Result<()> {
         self.run.updated_at = paths::now();
         self.run.elapsed_ms = self.elapsed_before + self.started.elapsed().as_millis() as u64;
@@ -585,6 +626,7 @@ impl Coordinator<'_> {
             pid: None,
             process_identity: None,
             evidence: vec![],
+            usage: None,
         });
         self.save("attempt_started")?;
         Ok((index, worktree, dir))

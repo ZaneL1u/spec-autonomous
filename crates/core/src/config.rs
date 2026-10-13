@@ -183,6 +183,13 @@ impl Config {
         for c in &self.verification {
             validate_check(c)?;
         }
+        if self
+            .hooks
+            .get("verification_prepare")
+            .is_some_and(|h| !h.idempotent)
+        {
+            bail!("invalid_config: verification_prepare must be idempotent for each wave identity");
+        }
         for hook in self.hooks.values() {
             validate_check(&Check {
                 argv: hook.argv.clone(),

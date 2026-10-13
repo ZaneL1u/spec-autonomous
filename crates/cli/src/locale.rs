@@ -119,8 +119,7 @@ pub fn explicit_from_args(args: &[String]) -> Option<String> {
 }
 
 pub fn parse(args: &[String], locale: Locale) -> Result<crate::Cli, clap::Error> {
-    let mut command = crate::Cli::command();
-    command.build();
+    let command = crate::Cli::command();
     let matches = native_help(localize_command(command, locale), locale).try_get_matches_from(
         std::iter::once("spec-autonomous").chain(args.iter().map(String::as_str)),
     )?;
@@ -155,9 +154,13 @@ fn native_help(mut command: clap::Command, locale: Locale) -> clap::Command {
             if !choices.is_empty() {
                 help.push_str(&format!("（可选值：{}）", choices.join(", ")));
             }
-            arg.help(help)
-                .hide_default_value(true)
-                .hide_possible_values(true)
+            if arg.get_action().takes_values() {
+                arg.help(help)
+                    .hide_default_value(true)
+                    .hide_possible_values(true)
+            } else {
+                arg.help(help)
+            }
         });
     }
     let names: Vec<_> = command

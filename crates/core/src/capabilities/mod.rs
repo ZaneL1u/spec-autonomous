@@ -95,18 +95,9 @@ pub fn guard_project_idle(root: &Path) -> Result<()> {
             let project = Path::new(&run.origin).join(&run.project_relative);
             if project.canonicalize().ok() == root.canonicalize().ok()
                 && run.host.is_some()
-                && (!run.terminal()
-                    || run.attempts.iter().any(|a| {
-                        matches!(
-                            a.status.as_str(),
-                            "issued" | "claimed" | "submitted" | "receiving"
-                        )
-                    }))
+                && (!run.terminal() || run.has_outstanding_host_work())
                 && (!matches!(run.status.as_str(), "handed_off" | "plan_ready")
-                    || run
-                        .attempts
-                        .iter()
-                        .any(|a| matches!(a.status.as_str(), "issued" | "claimed" | "submitted")))
+                    || run.has_outstanding_host_work())
             {
                 bail!(
                     "project_in_use: run {} owns active planning or work; pause/revoke or finish it first",
@@ -122,7 +113,7 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
     let root = crate::detect(root, None)?.root;
     let mut result = match name {
         "inspect" => queries::inspect(&root, args)?,
-        "progress" => crate::progress::snapshot(&root)?,
+        "progress" => crate::progress::with_related(&root, args)?,
         "next" => engine::next(&root, args["run_id"].as_str())?,
         "discussion.next" => {
             crate::discussion::next(&root, text(args, "run_id")?, args["phase_id"].as_str())?
@@ -207,6 +198,7 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
                 owner,
                 Arc::new(AtomicBool::new(false)),
                 &mut |_, _| {},
+                args.get("usage").cloned().filter(|value| !value.is_null()),
             )?
         }
         "work.claim" | "task.claim" => engine::claim(
@@ -241,11 +233,15 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         "run.pause" => engine::host_control(&root, text(args, "run_id")?, "pause")?,
         "run.cancel" => engine::host_control(&root, text(args, "run_id")?, "cancel")?,
         "run.revise" => crate::run_revision::revise(&root, args)?,
-        "run.cleanup" => crate::cleanup::cleanup_with_options(
+        "run.cleanup" => crate::cleanup::cleanup_reviewed(
             &root,
             text(args, "run_id")?,
             args["apply"] == true,
-            args["delete_branches"] == true,
+            crate::cleanup::CleanupScope {
+                delete_branches: args["delete_branches"] == true,
+                delete_integration: args["delete_integration"] == true,
+                active: args["active"] == true,
+            },
             args["plan_hash"].as_str(),
         )?,
         "hook.resolve" => crate::progress::public_run(&engine::resolve_hook(
