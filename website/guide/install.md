@@ -37,7 +37,7 @@ node scripts/test-all.mts
 
 ```sh
 bun run pack:local
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.13.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.14.tgz
 ```
 
 ## OpenSpec / Spec Kit 要提前装吗

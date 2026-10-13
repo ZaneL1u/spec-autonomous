@@ -2,7 +2,15 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
-## Unreleased
+## 0.1.0-alpha.14
+
+- 长任务可在安全交接点预览并清理已结束工作树，保留活跃所有者、恢复证据与未完成任务补丁。
+- 验证波次提供独立产物目录、准备钩子、耗时与失败诊断，合并检查去重。
+- 重新规划保留已审查的验证修订；修复写入范围误判、悬挂回执和心跳参数兼容。
+- 进度支持显式关联执行仓库，并显示原生清单、重试开销和资源压力。
+- doctor 检测同版本 skills 内容漂移；修复 Homebrew npm 查找和 CLI 本地化参数解析。
+- 升级继续原 run，已运行的命令保留旧可执行文件；详细步骤见[长任务维护](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/long-running-runs.md)。
+
 
 - 启动层、脚本与测试全部改用 TypeScript 编写，发行产物仍是 JavaScript：`packages/cli/src/*.mts` 经 tsdown 构建为提交在仓库中的 `packages/cli/{bin,lib}/*.mjs`，CI 校验产物与源码一致。
 - 新增 VitePress 中文文档站和 GitHub Pages 自动发布。

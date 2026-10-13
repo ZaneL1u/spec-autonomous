@@ -49,5 +49,5 @@ OpenSpec / Spec Kit 帮你说明“要做什么”，宿主 Agent 负责“动�
 </div>
 
 ::: tip 当前发行状态
-当前版本为 `0.1.0-alpha.13`。GitHub Release 安装已支持 macOS arm64；公开 npm registry 尚未发布。文档不会把尚未验证的平台描述成可用。
+当前版本为 `0.1.0-alpha.14`。GitHub Release 安装已支持 macOS arm64；公开 npm registry 尚未发布。文档不会把尚未验证的平台描述成可用。
 :::
