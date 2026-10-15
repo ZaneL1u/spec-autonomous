@@ -45,7 +45,10 @@ test('large task lists use fresh bounded planner batches with complete global co
 });
 
 test('explicit cleanup preserves dirty worktrees, integration, external worktrees and branch refs',{timeout:120000},t=>{
-  const root=fixture(t,'speckit');const done=cli(root,['run','--milestone','M001','--only','1']);assert.equal(done.status,0,done.details);
+  const root=fixture(t,'speckit');
+  edit(root,'.spec-autonomous/config.toml',text=>text.replace('[execution]','[execution]\nautomatic_cleanup = false'));
+  git(root,['add','--all']);git(root,['commit','-qm','test: retain resources for explicit cleanup']);
+  const done=cli(root,['run','--milestone','M001','--only','1']);assert.equal(done.status,0,done.details);
   const dirty=done.data.attempts.find((a: any)=>a.kind==='implement');writeFileSync(join(dirty.worktree,'keep-uncommitted.txt'),'keep me');
   const external=join(root,'..','external');git(root,['worktree','add','-b','user-work',external,'HEAD']);
   const refs=git(root,['show-ref']);

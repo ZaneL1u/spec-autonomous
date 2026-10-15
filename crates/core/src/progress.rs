@@ -166,7 +166,22 @@ pub fn snapshot(path: &Path) -> Result<Value> {
             .entry(row["status"].as_str().unwrap_or("unknown").into())
             .or_default() += 1;
     }
-    let resource_summary = json!({"worktrees":worktrees.len(),"by_status":kinds,"pressure":if worktrees.len() >= 100 {"high"} else {"normal"},"cleanup_hint":if worktrees.len() >= 100 {Some("Review run.cleanup with active:true at a coordinator-free boundary; ignored artifacts and active references are retained.")} else {None}});
+    let capacity: usize = runs
+        .iter()
+        .filter(|r| !r.terminal())
+        .map(|r| {
+            r.config
+                .execution
+                .max_workers
+                .min(r.config.host.max_concurrency)
+        })
+        .sum::<usize>()
+        .max(1);
+    // Primary + integration + review + workers + transient merge candidates,
+    // with recovery allowance. This is a warning budget, never forced deletion.
+    let budget = 1 + runs.iter().filter(|r| !r.terminal()).count() * 2 + capacity * 2 + 2;
+    let backlog = worktrees.len().saturating_sub(budget);
+    let resource_summary = json!({"worktrees":worktrees.len(),"by_status":kinds,"host_capacity":capacity,"expected_worktree_budget":budget,"retained_backlog":backlog,"pressure":if backlog > 0 {"high"} else {"normal"},"cleanup_hint":if backlog > 0 {Some("Review maintenance.json and run.cleanup with active:true at a coordinator-free boundary; ignored artifacts and active references are retained.")} else {None}});
     Ok(
         json!({"native_milestones":native_milestones,"resource_summary":resource_summary,"schema_version":1,"snapshot_id":paths::id("snapshot"),"generated_at":paths::now(),"repository_id":paths::hash(repo.common.to_string_lossy().as_bytes()),"consistency":if diagnostics.is_empty(){"consistent"}else{"partial"},"active_workers":active,"verified_tasks":done.len(),"usage":usage_summary(&runs),"worktrees":worktrees,"runs":summaries,"diagnostics":diagnostics}),
     )
@@ -280,7 +295,9 @@ pub fn summary(run: &Run) -> Value {
     let duration_ms = measured
         .iter()
         .fold(0u64, |total, next| total.saturating_add(*next));
-    let overhead = json!({"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==run.evidence.len(){"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
+    let unique_checkouts: std::collections::BTreeSet<_> =
+        run.attempts.iter().map(|a| &a.worktree).collect();
+    let overhead = json!({"verification_reuses":run.verification_reuses,"attempt_checkouts":unique_checkouts.len(),"read_only_attempts":run.attempts.iter().filter(|a|matches!(a.kind.as_str(),"plan-tasks"|"audit")).count(),"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==run.evidence.len(){"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
     json!({"overhead":overhead,"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
 }
 pub fn public_run(run: &Run) -> Value {

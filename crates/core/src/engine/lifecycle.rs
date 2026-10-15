@@ -188,12 +188,27 @@ impl Coordinator<'_> {
                     continue;
                 }
                 let audit_head = self.run.accepted_head.clone();
+                let hooks_before = self
+                    .run
+                    .attempts
+                    .iter()
+                    .filter(|a| a.kind == "hook")
+                    .count();
                 self.hooks(&phase, "after_implement")?;
-                if let Err(error) =
-                    self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
+                if self
+                    .run
+                    .attempts
+                    .iter()
+                    .filter(|a| a.kind == "hook")
+                    .count()
+                    != hooks_before
                 {
-                    self.repair_failure(&phase, error)?;
-                    continue;
+                    if let Err(error) =
+                        self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
+                    {
+                        self.repair_failure(&phase, error)?;
+                        continue;
+                    }
                 }
                 if self.run.accepted_head != audit_head {
                     continue;
@@ -535,6 +550,7 @@ impl Coordinator<'_> {
                         bail!("no_progress: unchanged native artifact");
                     }
                     let patch = git::patch(&worktree, &self.run.accepted_head)?;
+                    git::commit(&worktree, "sa: preserve native artifact candidate")?;
                     git::apply(Path::new(&self.run.integration), &patch)?;
                     self.run.accepted_head = git::commit(
                         Path::new(&self.run.integration),
@@ -585,6 +601,27 @@ impl Coordinator<'_> {
             bail!(
                 "verification_uncommitted_input: code must be committed before host verification"
             );
+        }
+        let identity =
+            crate::verification::input_identity(project, checks, label, &self.run.config).ok();
+        let receipts = self
+            .store
+            .root
+            .join("runs")
+            .join(&self.run.id)
+            .join("verification-receipts");
+        let receipt = identity
+            .as_ref()
+            .map(|key| receipts.join(format!("{key}.json")));
+        // Post-hook gates always execute: a hook can change state outside Git.
+        let reuse = self.run.config.execution.reuse_verification && label != "post-hook";
+        if reuse
+            && let (Some(key), Some(path)) = (&identity, &receipt)
+            && crate::verification::reusable(path, key)
+        {
+            self.run.verification_reuses += 1;
+            self.save("verification_reused")?;
+            return Ok(());
         }
         let directory = self
             .store
@@ -655,6 +692,16 @@ impl Coordinator<'_> {
                     details["stderr"]
                 );
             }
+        }
+        if reuse
+            && let (Some(key), Some(path)) = (&identity, &receipt)
+            && crate::verification::input_identity(project, checks, label, &self.run.config)
+                .ok()
+                .as_ref()
+                == Some(key)
+        {
+            // A receipt is an optimization; inability to memoize never fails a PASS.
+            let _ = crate::verification::complete_receipt(path, key, &wave.directory);
         }
         Ok(())
     }

@@ -571,3 +571,52 @@ fn roadmap_regeneration_preserves_human_modified_view_and_manifest() {
         "Deliver a verified greeting command"
     );
 }
+
+#[test]
+fn external_changes_reopen_declared_scopes_and_dependents_with_unknown_fallback() {
+    use spec_autonomous_core::config::Config;
+    let phase = |id: &str, deps: Vec<&str>| json!({"id":id,"label":id,"title":id,"depends_on":deps,"source":{"kind":"openspec-change","selector":id}});
+    let mut run:Run=serde_json::from_value(json!({"schema_version":1,"id":"run-scope","milestone":{"id":"M1","goal":"scopes","framework":"openspec","phases":[phase("A",vec![]),phase("B",vec![]),phase("C",vec!["A"])]},"mode":"autonomous","range":{},"selected_phases":["A","B","C"],"completed_phases":["A","B","C"],"origin":"/tmp/origin","origin_head":"head","origin_branch":"main","project_relative":".","integration":"/tmp/integration","integration_branch":"branch","accepted_head":"head","status":"running","stage":"advancing","current_phase":null,"started_at":"now","updated_at":"now","elapsed_ms":0,"blocker":null,"config":Config::default()})).unwrap();
+    for id in ["A", "B", "C"] {
+        let mut t = task("t", "T1", &[&format!("src/{id}")], &[]);
+        t.reads = vec![format!("src/{id}"), format!("tests/{id}")];
+        run.plans.insert(
+            id.into(),
+            Plan {
+                schema_version: 1,
+                phase_id: id.into(),
+                source_hash: "hash".into(),
+                tasks: vec![t],
+                milestone: None,
+            },
+        );
+    }
+    let strings = |v: Vec<&str>| {
+        v.into_iter()
+            .map(String::from)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        plan::affected_phases(&run, &["src/A/model.rs".into()]),
+        strings(vec!["A", "C"])
+    );
+    assert_eq!(
+        plan::affected_phases(&run, &["tests/B/spec.rs".into()]),
+        strings(vec!["B"])
+    );
+    for unknown in [
+        "unclassified/file",
+        "package.json",
+        ".specify/extensions.yml",
+    ] {
+        assert_eq!(
+            plan::affected_phases(&run, &[unknown.into()]),
+            strings(vec!["A", "B", "C"])
+        );
+    }
+    run.plans.get_mut("B").unwrap().tasks[0].reads.clear();
+    assert_eq!(
+        plan::affected_phases(&run, &["src/A/model.rs".into()]),
+        strings(vec!["A", "B", "C"])
+    );
+}

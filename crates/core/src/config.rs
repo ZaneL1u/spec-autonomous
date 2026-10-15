@@ -23,6 +23,10 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Execution {
+    /// Reuse complete same-input verification while waiting for semantic work.
+    pub reuse_verification: bool,
+    /// Reclaim closed, unreferenced, clean checkouts at host handoffs.
+    pub automatic_cleanup: bool,
     pub mode: String,
     pub max_workers: usize,
     pub max_attempts: u32,
@@ -82,6 +86,8 @@ impl Default for Config {
 impl Default for Execution {
     fn default() -> Self {
         Self {
+            reuse_verification: true,
+            automatic_cleanup: true,
             mode: "autonomous".into(),
             max_workers: 3,
             max_attempts: 3,

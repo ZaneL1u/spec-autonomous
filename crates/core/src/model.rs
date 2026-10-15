@@ -220,6 +220,8 @@ pub struct IntegrationIntent {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
+    #[serde(default)]
+    pub verification_reuses: u64,
     pub schema_version: u32,
     pub id: String,
     pub milestone: Milestone,

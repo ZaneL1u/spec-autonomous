@@ -427,3 +427,39 @@ fn integration_cleanup_cannot_delete_an_external_worktree_named_in_a_ledger() {
     assert_eq!(result["removed"], json!([]));
     assert!(f.repo.root.join("README.md").exists());
 }
+
+#[test]
+fn accepted_native_artifact_candidates_can_close_during_a_run_without_deleting_refs() {
+    let mut f = Fixture::new();
+    f.run.status = "awaiting_host".into();
+    let native = f.attempt("native-candidate", "accepted");
+    f.run.attempts[0].kind = "native-planning".into();
+    let review = f.attempt("review-candidate", "accepted");
+    f.run.attempts[1].kind = "audit".into();
+    f.save();
+    let result = cleanup::cleanup_reviewed(
+        &f.repo.root,
+        &f.run.id,
+        false,
+        cleanup::CleanupScope {
+            active: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
+    assert!(
+        result["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["path"] == native.worktree)
+    );
+    assert!(
+        result["retained_details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["path"] == review.worktree && w["reason"] == "recovery_worktree_retained")
+    );
+}

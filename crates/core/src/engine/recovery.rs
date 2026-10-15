@@ -339,13 +339,20 @@ impl Coordinator<'_> {
                 self.run.plans.remove(&phase);
             }
         } else {
-            self.run.completed_phases.clear();
-            self.run.phase_hashes.clear();
+            let affected = plan::affected_phases(
+                &self.run,
+                &files.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>(),
+            );
+            for phase in affected {
+                self.reopen(&phase);
+                self.run.plans.remove(&phase);
+                if let Some(host) = self.run.host.as_mut() {
+                    host.source_revisions.remove(&phase);
+                }
+            }
             if let Some(host) = self.run.host.as_mut() {
                 host.pending_repair = None;
-                host.source_revisions.clear();
             }
-            self.run.plans.clear();
         }
         let mut range = self.run.range.clone();
         if range.only.is_some() {

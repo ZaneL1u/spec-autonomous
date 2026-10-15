@@ -77,7 +77,7 @@ SQLite schema 为 2。首次升级对非空旧库创建一致性备份；较新 
 2. CLI 验证 schema、IDs、input hash、所有权、上下文新鲜性和结果大小。
 3. 先保存 receipt intent，再原子写 canonical result，再保存 submitted。
 4. 按原生输出/写集检查实际 worktree diff；模型返回“成功”不会直接建立完成状态。
-5. 对 worker revision、组合 candidate revision 执行验证，确认验证过程没有改树。
+5. 对实际组合 candidate revision 执行权威验证，确认验证过程没有改树；串行无基线漂移时直接使用已关闭的 worker 候选。
 6. 记录集成 intent，原生 checkbox CAS，推进 accepted revision，更新 ledger。
 7. 继续确定性步骤，返回下一批工作、handoff、阻塞或最终结果。
 

@@ -1112,7 +1112,14 @@ fn coordinator_prepares_each_wave_once_and_preserves_independent_check_results()
         .get(completed["id"].as_str().unwrap())
         .unwrap();
     assert_eq!(run.completed_tasks.len(), 1);
-    for stage in ["worker", "combined"] {
+    assert!(
+        !run.evidence
+            .iter()
+            .any(|e| e.details.as_ref().is_some_and(|d| d["stage"] == "worker")),
+        "candidate verification replaces redundant worker-only wave"
+    );
+    {
+        let stage = "combined";
         let evidence: Vec<_> = run
             .evidence
             .iter()
@@ -1181,4 +1188,181 @@ fn preparation_failure_does_not_run_checks_or_mark_a_task_complete() {
             .unwrap()
             .contains("private-preparation-output")
     );
+}
+
+#[test]
+fn read_only_contexts_reuse_checkouts_and_audit_wait_does_not_repeat_phase_gates() {
+    let root = fixture();
+    let initial = prepare(root.path());
+    let planning = initial["work"][0].clone();
+    let work = answer_plan(root.path(), &planning);
+    let worker = work["work"][0].clone();
+    put(
+        Path::new(worker["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let audit = submit(root.path(), &worker, receipt(root.path(), &worker));
+    assert_eq!(audit["work"][0]["kind"], "audit");
+    assert_eq!(audit["work"][0]["worktree"], planning["worktree"]);
+    assert_ne!(audit["work"][0]["request_id"], planning["request_id"]);
+    assert_eq!(
+        audit["intents"][0]["worktree"], worker["worktree"],
+        "serial worker is its own candidate"
+    );
+    let count = audit["evidence"].as_array().unwrap().len();
+    let id = audit["id"].as_str().unwrap();
+    let same = api::invoke(root.path(), "prepare", &json!({"run_id":id,"view":"full"})).unwrap();
+    assert_eq!(
+        same["work"][0]["request_id"],
+        audit["work"][0]["request_id"]
+    );
+    assert_eq!(
+        same["evidence"].as_array().unwrap().len(),
+        count,
+        "waiting on audit reuses complete gates"
+    );
+    assert!(same["verification_reuses"].as_u64().unwrap() > 0);
+    assert!(
+        git::Repository::discover(root.path())
+            .unwrap()
+            .worktrees()
+            .unwrap()
+            .len()
+            <= 4
+    );
+}
+
+#[test]
+fn read_only_reuse_preserves_dirty_ignored_and_locked_checkouts() {
+    for kind in ["dirty", "ignored", "locked"] {
+        let root = fixture();
+        let initial = prepare(root.path());
+        let planning = initial["work"][0].clone();
+        let work = answer_plan(root.path(), &planning);
+        let worker = work["work"][0].clone();
+        let old = Path::new(planning["worktree"].as_str().unwrap());
+        match kind {
+            "dirty" => put(old, "unpreserved.txt", "keep"),
+            "ignored" => put(old, ".spec-autonomous/evidence.txt", "keep"),
+            _ => {
+                git::command(
+                    root.path(),
+                    &["worktree", "lock", old.to_str().unwrap()],
+                    None,
+                )
+                .unwrap();
+            }
+        }
+        put(
+            Path::new(worker["project"].as_str().unwrap()),
+            "src/value.txt",
+            "42",
+        );
+        let audit = submit(root.path(), &worker, receipt(root.path(), &worker));
+        assert_ne!(audit["work"][0]["worktree"], planning["worktree"], "{kind}");
+        assert!(old.exists());
+        if kind != "locked" {
+            assert!(
+                old.join(if kind == "dirty" {
+                    "unpreserved.txt"
+                } else {
+                    ".spec-autonomous/evidence.txt"
+                })
+                .is_file()
+            );
+        }
+    }
+}
+
+#[test]
+fn completed_serial_workflow_reclaims_checkouts_but_retains_receipts_branches_and_logs() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let planned = answer_plan(root.path(), &first["work"][0]);
+    let worker = planned["work"][0].clone();
+    put(
+        Path::new(worker["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let mut state = submit(root.path(), &worker, receipt(root.path(), &worker));
+    for _ in 0..5 {
+        if state["status"] == "completed" {
+            break;
+        }
+        let request = state["work"][0].clone();
+        assert_eq!(request["kind"], "audit");
+        let input: WorkerInput = serde_json::from_value(
+            engine::work_context(
+                root.path(),
+                request["run_id"].as_str().unwrap(),
+                request["request_id"].as_str().unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut result = receipt(root.path(), &request);
+        result.audit = input.snapshot.unwrap().metadata["acceptance"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| AuditItem {
+                requirement: r["id"].as_str().unwrap().into(),
+                evidence:
+                    "src/value.txt and tests/value.mjs independently verified by candidate gate"
+                        .into(),
+                passed: true,
+            })
+            .collect();
+        state = submit(root.path(), &request, result);
+    }
+    assert_eq!(state["status"], "completed");
+    let repo = git::Repository::discover(root.path()).unwrap();
+    assert_eq!(
+        repo.worktrees().unwrap().len(),
+        2,
+        "only primary and integration remain"
+    );
+    assert!(
+        state["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| Path::new(e["log"].as_str().unwrap()).is_file())
+    );
+    assert!(
+        !state["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["details"]["stage"] == "post-hook")
+    );
+    let runtime = repo
+        .runtime()
+        .unwrap()
+        .join("runs")
+        .join(state["id"].as_str().unwrap());
+    assert!(runtime.join("maintenance.json").is_file());
+    for a in state["attempts"].as_array().unwrap() {
+        assert!(
+            runtime
+                .join("attempts")
+                .join(a["id"].as_str().unwrap())
+                .join("result.json")
+                .is_file()
+        );
+        assert!(
+            git::command(
+                root.path(),
+                &[
+                    "show-ref",
+                    "--verify",
+                    &format!("refs/heads/{}", a["branch"].as_str().unwrap())
+                ],
+                None
+            )
+            .is_ok()
+        );
+    }
 }

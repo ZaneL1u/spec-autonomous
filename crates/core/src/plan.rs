@@ -305,3 +305,90 @@ pub fn ready<'a>(
     }
     selected
 }
+
+/// Map an external change to declared phase inputs. Unknown coverage falls back
+/// to every completed phase; an empty read set is not proof of independence.
+pub fn affected_phases(run: &Run, files: &[String]) -> BTreeSet<String> {
+    let all: BTreeSet<String> = run.milestone.phases.iter().map(|p| p.id.clone()).collect();
+    let known: BTreeSet<String> = run
+        .completed_phases
+        .iter()
+        .chain(run.plans.keys())
+        .cloned()
+        .collect();
+    let global = |path: &str| {
+        path.starts_with(".spec-autonomous/")
+            || path.starts_with(".specify/")
+            || path.starts_with(".agents/")
+            || path.starts_with(".codex/")
+            || path == "AGENTS.md"
+            || path == "openspec/config.yaml"
+            || [
+                "package.json",
+                "bun.lock",
+                "pnpm-lock.yaml",
+                "package-lock.json",
+                "Cargo.toml",
+                "Cargo.lock",
+                "pyproject.toml",
+                "uv.lock",
+            ]
+            .contains(&path)
+    };
+    let prefix = if run.project_relative == "." {
+        String::new()
+    } else {
+        format!("{}/", run.project_relative)
+    };
+    let mut scopes = BTreeMap::new();
+    for phase in &known {
+        let Some(plan) = run.plans.get(phase) else {
+            return all;
+        };
+        if plan.tasks.is_empty()
+            || plan
+                .tasks
+                .iter()
+                .any(|t| t.reads.is_empty() || t.writes.is_empty())
+        {
+            return all;
+        }
+        let declared: Vec<_> = plan
+            .tasks
+            .iter()
+            .flat_map(|t| t.reads.iter().chain(&t.writes))
+            .cloned()
+            .collect();
+        scopes.insert(phase.clone(), declared);
+    }
+    let mut affected = BTreeSet::new();
+    for file in files {
+        let Some(local) = file.strip_prefix(&prefix) else {
+            return all;
+        };
+        if global(local) {
+            return all;
+        }
+        let matched: Vec<_> = scopes
+            .iter()
+            .filter(|(_, patterns)| allowed(local, patterns))
+            .map(|(phase, _)| phase.clone())
+            .collect();
+        if matched.is_empty() {
+            return all;
+        }
+        affected.extend(matched);
+    }
+    loop {
+        let previous = affected.len();
+        for phase in &run.milestone.phases {
+            if phase.depends_on.iter().any(|p| affected.contains(p)) {
+                affected.insert(phase.id.clone());
+            }
+        }
+        if previous == affected.len() {
+            break;
+        }
+    }
+    affected
+}

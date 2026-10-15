@@ -699,3 +699,29 @@ fn declared_native_work_and_related_clones_are_read_only_and_not_verified() {
     assert_eq!(before, file_bytes(&f.base));
     assert_eq!(other_before, file_bytes(&related.base));
 }
+
+#[test]
+fn retained_backlog_is_reported_relative_to_capacity_well_before_one_hundred_trees() {
+    let f = Fixture::new();
+    let (integration, branch) = f.managed("run-budget");
+    let run = f.run("run-budget", &integration, &branch);
+    Store::open(&f.repo, true)
+        .unwrap()
+        .unwrap()
+        .save(&run, "fixture")
+        .unwrap();
+    for index in 0..7 {
+        f.external(&format!("external-{index}"));
+    }
+    let value = progress::snapshot(&f.repo.root).unwrap();
+    assert_eq!(value["resource_summary"]["host_capacity"], 1);
+    assert_eq!(value["resource_summary"]["expected_worktree_budget"], 7);
+    assert_eq!(value["resource_summary"]["pressure"], "high");
+    assert!(
+        value["resource_summary"]["retained_backlog"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(f.repo.worktrees().unwrap().len() < 100);
+}

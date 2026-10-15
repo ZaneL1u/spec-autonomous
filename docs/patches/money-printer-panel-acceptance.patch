@@ -1,0 +1,45 @@
+--- a/frontend/tests/panel_usability_acceptance.py
++++ b/frontend/tests/panel_usability_acceptance.py
+@@ -60,6 +60,33 @@
+     (output/'lifecycle-safety.json').write_text(json.dumps(evidence,indent=2))
+ 
+ 
++def completed_wave_files(parent, current):
++    """Hash only finished output owned by this harness, never coordinator logs."""
++    inherited = {}
++    for previous in parent.iterdir():
++        if previous == current or not previous.is_dir() or previous.is_symlink():
++            continue
++        manifest = previous / 'manifest.json'
++        if not manifest.is_file() or manifest.is_symlink():
++            continue
++        try:
++            record = json.loads(manifest.read_text())
++        except (OSError, ValueError):
++            continue
++        if not (record.get('schema_version') == 1
++                and record.get('wave') == previous.name
++                and record.get('status') in {'PASS', 'FAIL'}
++                and record.get('end') and record.get('cleanup')
++                and isinstance(record.get('suites'), list)):
++            continue
++        for artifact in previous.rglob('*'):
++            if artifact.is_symlink():
++                raise AssertionError(f'prior wave symlink: {artifact}')
++            if artifact.is_file():
++                inherited[str(artifact.relative_to(parent))] = digest(artifact)
++    return inherited
++
++
+ def main():
+     parser=argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--suite',action='append',choices=sorted(SUITES))
+@@ -67,7 +94,7 @@
+     parent=Path(os.environ.get('SA_VERIFY_OUTPUT_DIR',ROOT/'.local-artifacts/panel-acceptance')).resolve()
+     wave=os.environ.get('SA_VERIFY_WAVE_ID','local')+'-'+uuid.uuid4().hex[:12]
+     output=parent/wave;output.mkdir(parents=True)
+-    inherited={str(p.relative_to(parent)):digest(p) for p in parent.rglob('*') if p.is_file() and output not in p.parents}
++    inherited=completed_wave_files(parent, output)
+     env={**os.environ,'SA_VERIFY_OUTPUT_DIR':str(output),'SA_VERIFY_WAVE_ID':wave,'PYTHONPATH':os.pathsep.join([str(ROOT/'frontend/tests'),str(ROOT/'backend'),str(ROOT),os.environ.get('PYTHONPATH','')])}
+     manifest=dict(schema_version=1,wave=wave,start=stamp(),argv=[sys.executable,*sys.argv],cwd=str(Path.cwd()),selected=selected,source=source_identity(),fixture_provenance='Synthetic authorized fixtures only; static Vite output; no upstream server, DB, Runner, real account or payment.',runtime={'python':sys.version,'node':subprocess.check_output(['node','--version'],text=True).strip(),'playwright':__import__('importlib.metadata',fromlist=['version']).version('playwright')},suites=[],status='RUNNING',prior_files=inherited,extension_surface='session_extension_smoke is extension-only, unchanged; excluded from React/App acceptance; hard-coded extension browser is not applicable.')
+     path=output/'manifest.json'

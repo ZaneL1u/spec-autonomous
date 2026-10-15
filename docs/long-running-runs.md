@@ -45,7 +45,7 @@ progress 的 resource_summary 给出工作树数量、状态分布和压力提�
 
 | 变量 | 含义 |
 | --- | --- |
-| `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的报告/临时准备目录，位于 Git common runtime 中 |
+| `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的 artifacts 报告/临时准备目录，与正在写入的进程日志分开 |
 | `SA_VERIFY_WAVE_ID` | 波次唯一 ID，可用于生成独立测试资源名称 |
 | `SA_VERIFY_STAGE` | worker、combined、phase 等真实执行阶段 |
 | `SA_VERIFY_REVISION` | 正在验证的源码提交 |
@@ -61,13 +61,13 @@ argv = ["node", "scripts/prepare-verification.mjs"]
 idempotent = true
 ```
 
-钩子每波次执行一次，先于检查，使用同一组环境变量。它应只准备该波次拥有的资源，将连接信息或资源凭据放在受保护的波次目录中，检查读取这些文件；子进程修改环境不会自动传回协调器。以波次 ID 保证幂等，worker 与 combined 使用不同数据库或可重建夹具，禁止复用已被消费的状态。准备失败则不运行后续检查。不得修改被验证源码。
+钩子每波次执行一次，先于检查，使用同一组环境变量。它应只准备该波次拥有的资源，将连接信息或资源凭据放在受保护的波次目录中，检查读取这些文件；子进程修改环境不会自动传回协调器。以波次 ID 保证幂等，不同候选/阶段使用不同数据库或可重建夹具，禁止复用已被消费的状态。准备失败则不运行后续检查。不得修改被验证源码。
 
 这是准备契约，不是通用数据库管理器。数据库销毁、VM 所有权及凭据保护仍由项目的准备脚本负责。本次不会替现有业务脚本自动重置数据库。
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。
 
-同波次完全相同的 argv/cwd 只执行一次。worker 与 combined 仍分别执行，不跨阶段缓存 PASS；独立复验确实能发现环境和业务错误。
+同波次完全相同的 argv/cwd 只执行一次。任务在真正的集成候选上运行权威门禁，无基线漂移时直接使用已完成的 worker，不再先跑一套 worker 门禁。不同 checkout、提交和阶段不复用 PASS。审计等待续跑可复用同 checkout、提交、阶段、argv/cwd、配置、环境及可执行文件内容完全一致且全部证据仍完整的成功波次；失败和未完成波次不复用。实际 after_implement hook 会触发新的 post-hook 验证。外部服务、可变外部夹具或依赖目录需要每次检查时，设置 execution.reuse_verification=false。
 
 ## 失败诊断与进度
 
@@ -84,3 +84,8 @@ spec-autonomous progress --all-worktrees --related-path /path/to/executor --json
 最多 16 个路径，以 Git common directory 去重，不递归寻找其他仓库。主仓与 related_repositories 分开计数，后者保留自己的分页和错误。MCP/能力输入为 `repository_paths`。
 
 已声明但没有 run 的里程碑显示为 `not_started`，并读取原生 tasks.md 的勾选情况；勾选不推断已验证完成。自定义任务文件、不可读取源或归档源显示不可用，不启动原生工具补写状态。
+
+
+默认 execution.automatic_cleanup=true：协调器持锁交接时仅回收归属明确、已关闭且无依赖/脏文件/锁/ignored 数据的资源；不删除分支。查看 runs/<run>/maintenance.json 获取移除清单及保留原因。execution.automatic_cleanup=false 保留工作树用于取证。只读规划和审计复用关闭的安全检出，仍要求每次 fresh-context 身份；工作树当前内容不再是旧回执的历史证据，应通过记录的 base_commit 和不可变输入/结果读取历史。
+
+资源预算随活跃 run 和宿主容量计算。单 run、单 worker 的提示预算为 7 个（用户工作区、integration、review、worker/临时集成及恢复余量）；正常顺序执行通常少于此值。它是积压告警而非强删上限；未知证据、活跃 owner、dirty/locked/ignored 数据允许超出并明确报告。
