@@ -29,8 +29,8 @@ mod maintenance;
 mod planning;
 mod recovery;
 pub use host::{
-    ClaimRequest, apply_result, claim, claim_batch, heartbeat, host_control, next, revoke,
-    work_context, work_view,
+    ClaimRequest, apply_result, auto_claim, claim, claim_batch, derived_identity, heartbeat,
+    host_control, next, request_get, revoke, work_context, work_view, work_view_with,
 };
 
 pub type Observer<'a> = &'a mut dyn FnMut(&Run, &str);
@@ -237,6 +237,7 @@ pub fn start(
         blocker: None,
         config,
         completed_phases: completed,
+        stale_phases: vec![],
         phase_hashes,
         plans: BTreeMap::new(),
         completed_tasks: vec![],
@@ -468,7 +469,7 @@ impl Coordinator<'_> {
         (self.observer)(&self.run, event);
         Ok(())
     }
-    fn check(&self) -> Result<()> {
+    fn check(&mut self) -> Result<()> {
         if let Some(host) = &self.run.host {
             if !host.blockers.is_empty() {
                 bail!(
@@ -495,14 +496,30 @@ impl Coordinator<'_> {
         if self.cancel.load(Ordering::Relaxed) || process::interrupted() {
             bail!("paused: interrupted");
         }
-        for (path, expected) in &self.run.origin_sources {
-            let full = paths::inside(&self.origin_project(), path)?;
+        for (path, expected) in self.run.origin_sources.clone() {
+            let full = paths::inside(&self.origin_project(), &path)?;
             let actual = if full.is_file() {
                 paths::hash(fs::read(full)?)
             } else {
                 String::new()
             };
-            if actual != *expected {
+            if actual != expected {
+                // Work the host holds or that is being integrated stays valid against the
+                // integration checkout; merge the new source once it has landed.
+                let in_flight = self.run.attempts.iter().any(|a| {
+                    matches!(
+                        a.status.as_str(),
+                        "issued" | "claimed" | "receiving" | "submitted" | "candidate"
+                    )
+                });
+                if in_flight {
+                    let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+                    if !host.reconcile_pending {
+                        host.reconcile_pending = true;
+                        self.save("source_drift_deferred")?;
+                    }
+                    return Ok(());
+                }
                 bail!("source_drift: original source changed: {path}");
             }
         }
@@ -562,6 +579,19 @@ impl Coordinator<'_> {
             }
             self.run.blocker = Some(message);
             self.save("stopped")?;
+        }
+        // Closed worktrees go now that their evidence is durable; keeping them for a
+        // manual cleanup is what grew runtimes to tens of gigabytes.
+        match crate::reclaim::reclaim(&self.repo, &self.store, &mut self.run) {
+            Ok(report) => {
+                if !report["removed"].as_array().is_none_or(Vec::is_empty) {
+                    self.save("worktrees_reclaimed")?;
+                }
+            }
+            Err(error) => {
+                self.run.blocker.get_or_insert_with(String::new);
+                let _ = error;
+            }
         }
         if self.run.config.execution.automatic_cleanup {
             match self
@@ -637,7 +667,13 @@ impl Coordinator<'_> {
     ) -> Result<(usize, PathBuf, PathBuf)> {
         self.check()?;
         let id = paths::id("attempt");
-        let name = format!("{}-{}", &self.run.id[..12], &id[..20]);
+        let name = format!(
+            "{}-{}",
+            &self.run.id[..self.run.id.len().min(12)],
+            &id[..20]
+        );
+        // Read-only planning and audit packets reuse a closed clean checkout when one
+        // exists; writing workers always get their own.
         let (worktree, branch) = if matches!(kind, "plan-tasks" | "audit") {
             match self.review_checkout()? {
                 Some(checkout) => checkout,
@@ -669,6 +705,8 @@ impl Coordinator<'_> {
             process_identity: None,
             evidence: vec![],
             usage: None,
+            patch_hash: None,
+            worktree_state: None,
         });
         self.save("attempt_started")?;
         Ok((index, worktree, dir))
@@ -697,6 +735,27 @@ impl Coordinator<'_> {
             milestone: Some(self.run.milestone.clone()),
             failure,
         }
+    }
+    /// Files an attempt changed against its base. Reads the checkout while it exists and
+    /// the stored patch after the worktree was reclaimed.
+    fn attempt_changes(&self, index: usize) -> Result<Vec<String>> {
+        let attempt = &self.run.attempts[index];
+        let worktree = Path::new(&attempt.worktree);
+        if worktree.is_dir() {
+            return git::changed(worktree, &attempt.base_commit);
+        }
+        let patch = self
+            .store
+            .attempt_dir(&self.run.id, &attempt.id)?
+            .join("patch.diff");
+        let text = fs::read_to_string(&patch).with_context(|| {
+            format!(
+                "patch_unavailable: worktree {} was reclaimed and {} is missing",
+                attempt.worktree,
+                patch.display()
+            )
+        })?;
+        Ok(git::patch_files(&text))
     }
     fn end_attempt(&mut self, index: usize, result: &Result<WorkerResult>) -> Result<()> {
         let a = &mut self.run.attempts[index];

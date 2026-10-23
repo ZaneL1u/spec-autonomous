@@ -119,6 +119,7 @@ impl Source {
 }
 #[derive(Subcommand, serde::Serialize)]
 #[serde(tag = "name", content = "arguments", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     #[command(hide = true)]
     CliMetadata {
@@ -167,11 +168,18 @@ enum Command {
         max_workers: Option<u64>,
         #[arg(long)]
         delivery: Option<String>,
+        #[command(flatten)]
+        host: OptionalHostArgs,
+        /// Accept the recommended Smart Discuss defaults when a phase pauses on them.
+        #[arg(long)]
+        discussion_auto: bool,
     },
     /// Preview ready work and blockers without allocating or executing anything.
     Next {
         #[arg(long)]
         run_id: Option<String>,
+        #[command(flatten)]
+        host: OptionalHostArgs,
     },
     /// Accept a host receipt, verify/integrate it and prepare subsequent work.
     ApplyResult {
@@ -181,6 +189,9 @@ enum Command {
         token: String,
         #[command(flatten)]
         host: HostArgs,
+        /// Claim the follow-up work for this host under derived sessions.
+        #[arg(long)]
+        claim_next: bool,
     },
     /// Preview a native archive; use --apply --plan-hash to execute it.
     Archive {
@@ -294,6 +305,24 @@ enum Command {
         evidence: String,
     },
 }
+/// Optional host identity: when both ids are given, prepared work is claimed for this
+/// host under derived sessions and owned tokens are returned.
+#[derive(Args, serde::Serialize)]
+struct OptionalHostArgs {
+    #[arg(long, requires = "session_id")]
+    host_id: Option<String>,
+    #[arg(long, requires = "host_id")]
+    session_id: Option<String>,
+}
+impl OptionalHostArgs {
+    fn value(self) -> Option<Value> {
+        Some(json!(HostIdentity {
+            host_id: self.host_id?,
+            session_id: self.session_id?,
+            fresh_context: true
+        }))
+    }
+}
 #[derive(Args, serde::Serialize)]
 struct HostArgs {
     #[arg(long)]
@@ -400,9 +429,12 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             all_worktrees: _,
             repository_paths,
         } => ("progress", json!({"repository_paths":repository_paths})),
-        Command::Next { run_id } => {
+        Command::Next { run_id, host } => {
             let mut a = json!({});
             put(&mut a, "run_id", run_id);
+            if let Some(host) = host.value() {
+                a["host"] = host;
+            }
             ("next", a)
         }
         Command::Prepare {
@@ -418,11 +450,19 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             autonomous,
             max_workers,
             delivery,
+            host,
+            discussion_auto,
         } => {
             if autonomous && matches!(mode, Some(Mode::Native)) {
                 bail!("invalid_mode: autonomous conflicts with native");
             }
             let mut a = source.args();
+            if let Some(host) = host.value() {
+                a["host"] = host;
+            }
+            if discussion_auto {
+                a["discussion_auto"] = json!(true);
+            }
             put(&mut a, "run_id", run_id);
             put(&mut a, "goal", goal);
             put(&mut a, "id", id);
@@ -448,9 +488,10 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             result,
             token,
             host,
+            claim_next,
         } => (
             "apply-result",
-            json!({"result":read_json(&result,65536)?,"token":token,"host":host.value()}),
+            json!({"result":read_json(&result,65536)?,"token":token,"host":host.value(),"claim_next":claim_next}),
         ),
         Command::Archive {
             source,

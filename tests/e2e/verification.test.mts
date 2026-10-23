@@ -28,7 +28,7 @@ test('a supplied plan cannot bypass dependency validation or create a worktree o
   assert.equal(git(root,['worktree','list','--porcelain']),before);
 });
 
-test('source drift can be committed and reconciled on resume without losing native edits',{timeout:180000},async t=>{
+test('source drift while workers run is merged after their receipts without stopping or revoking',{timeout:180000},async t=>{
   const root=fixture(t,'speckit',{sleepMs:1200});
   const planned=cli(root,['plan','--milestone','M001']);assert.equal(planned.status,0,planned.details);
   const running=start(root,['run','--milestone','M001']);
@@ -36,10 +36,11 @@ test('source drift can be committed and reconciled on resume without losing nati
   await until(()=>{const p=cli(root,['progress']);return p.data?.active_workers>=2;},40000);
   edit(root,'specs/arithmetic/spec.md',text=>text+'\nNative edit: preserve the established arithmetic contracts.\n');
   git(root,['add','--all']);git(root,['commit','-qm','test: user refines native spec']);
-  const stopped=await running.finished;assert.equal(stopped.status,4,stopped.details);assert.match(stopped.data.blocker,/source_drift/);
-  const result=cli(root,['resume',stopped.data.id,'--extend-seconds','60']);
-  assert.equal(result.status,0,result.details);assert.equal(result.data.status,'completed');
+  const finished=await running.finished;assert.equal(finished.status,0,finished.details);assert.equal(finished.data.status,'completed');
+  assert.ok(finished.data.attempts.every((a: any)=>a.status!=='revoked'),'in-flight workers were integrated, not revoked');
+  assert.ok(finished.data.intents.some((i: any)=>i.task_id==='native-baseline'&&i.state==='accepted'),'the native edit was merged into integration');
   assert.ok(readFileSync(join(root,'specs/arithmetic/spec.md'),'utf8').includes('Native edit: preserve'));
   assert.equal(git(root,['status','--porcelain']),'');
-  const report=cli(root,['report',result.data.id]);assert.ok(report.data.events.some((e: any)=>e.kind==='source_reconciled'));
+  const report=cli(root,['report',finished.data.id]);
+  assert.ok(report.data.events.some((e: any)=>e.kind==='source_reconciled'));
 });

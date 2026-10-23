@@ -615,7 +615,8 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
         root,
         id,
         req["request_id"].as_str().unwrap(),
-        req["token"].as_str().unwrap(),
+        req["token"].as_str(),
+        None,
         true,
         "discard obsolete verification repair",
     )
@@ -644,8 +645,9 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     assert_eq!(
-        version, 3,
-        "older v2 writers must not erase revision history"
+        version,
+        spec_autonomous_core::state::SCHEMA_VERSION,
+        "older writers must not erase revision history or split rows"
     );
     let control = Store::for_control(&repo).unwrap();
     control.control(id, "pause").unwrap();
@@ -865,6 +867,15 @@ fn later_accepted_attempt_supersedes_leftover_submitted_receipts() {
 #[test]
 fn later_submitted_receipt_is_not_superseded_by_an_earlier_success() {
     let root = fixture();
+    // These receipts are grafted onto an accepted attempt's checkout, so keep it around.
+    let mut keep = Config::load(root.path()).unwrap();
+    keep.execution.reclaim_worktrees = "never".into();
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&keep).unwrap(),
+    );
+    git::commit(root.path(), "keep worktrees for leftover receipts").unwrap();
     let first = prepare(root.path());
     answer_plan(root.path(), &first["work"][0]);
     let repo = git::Repository::discover(root.path()).unwrap();
@@ -927,6 +938,15 @@ fn later_submitted_receipt_is_not_superseded_by_an_earlier_success() {
 #[test]
 fn submitted_receipts_for_a_distinct_task_id_are_not_superseded() {
     let root = fixture();
+    // These receipts are grafted onto an accepted attempt's checkout, so keep it around.
+    let mut keep = Config::load(root.path()).unwrap();
+    keep.execution.reclaim_worktrees = "never".into();
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&keep).unwrap(),
+    );
+    git::commit(root.path(), "keep worktrees for leftover receipts").unwrap();
     let first = prepare(root.path());
     answer_plan(root.path(), &first["work"][0]);
     let repo = git::Repository::discover(root.path()).unwrap();
@@ -1112,26 +1132,34 @@ fn coordinator_prepares_each_wave_once_and_preserves_independent_check_results()
         .get(completed["id"].as_str().unwrap())
         .unwrap();
     assert_eq!(run.completed_tasks.len(), 1);
-    assert!(
-        !run.evidence
+    let stage = |name: &str| -> Vec<&Evidence> {
+        run.evidence
             .iter()
-            .any(|e| e.details.as_ref().is_some_and(|d| d["stage"] == "worker")),
+            .filter(|e| e.details.as_ref().is_some_and(|d| d["stage"] == name))
+            .collect()
+    };
+    // A serial worker is its own integration candidate: the combined wave runs on it
+    // once and there is no separate worker-only wave to repeat.
+    assert!(
+        stage("worker").is_empty(),
         "candidate verification replaces redundant worker-only wave"
     );
-    {
-        let stage = "combined";
-        let evidence: Vec<_> = run
-            .evidence
+    let combined = stage("combined");
+    assert_eq!(
+        combined.len(),
+        3,
+        "one preparation and two unique executed checks: {combined:?}"
+    );
+    assert!(combined.iter().all(|e| e.exit_code == 0));
+    assert!(
+        combined
             .iter()
-            .filter(|e| e.details.as_ref().is_some_and(|d| d["stage"] == stage))
-            .collect();
-        assert_eq!(
-            evidence.len(),
-            3,
-            "one preparation and two unique checks: {stage}"
-        );
-        assert!(evidence.iter().all(|e| e.exit_code == 0));
-    }
+            .all(|e| e.details.as_ref().unwrap().get("reused_from").is_none())
+    );
+    // The integration checkout is a different class and prepares its own wave.
+    let phase = stage("phase");
+    assert_eq!(phase.len(), 3);
+    assert_eq!(phase[0].details.as_ref().unwrap()["step"], "preparation");
 }
 
 #[test]
@@ -1217,11 +1245,20 @@ fn read_only_contexts_reuse_checkouts_and_audit_wait_does_not_repeat_phase_gates
         same["work"][0]["request_id"],
         audit["work"][0]["request_id"]
     );
+    let executed = |value: &Value| {
+        value["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["details"].get("reused_from").is_none())
+            .count()
+    };
     assert_eq!(
-        same["evidence"].as_array().unwrap().len(),
-        count,
-        "waiting on audit reuses complete gates"
+        executed(&same),
+        executed(&audit),
+        "waiting on audit reuses complete gates instead of executing them again"
     );
+    let _ = count;
     assert!(same["verification_reuses"].as_u64().unwrap() > 0);
     assert!(
         git::Repository::discover(root.path())

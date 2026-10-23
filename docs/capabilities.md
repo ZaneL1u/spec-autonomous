@@ -17,15 +17,16 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 | --- | --- | --- | --- | --- |
 | `inspect` | 完整 | 只读 | 按场景选择 | Read provider, native artifacts, provenance and repository state. |
 | `progress` | 完整 | 只读 | 按场景选择 | Read all Git worktrees and verified progress without mutation. |
-| `prepare` | 完整 | 写入/可写 | 按场景选择 | Prepare work packets and advance the selected milestone. |
-| `next` | 完整 | 只读 | 按场景选择 | Preview prepared work, blockers and next action without dispatching. |
+| `prepare` | 完整 | 写入/可写 | 按场景选择 | Prepare work packets and advance the selected milestone. 带 `host` 时自动认领返回的工作；`discussion_auto` 接受推荐默认值。 |
+| `next` | 完整 | 只读 | 按场景选择 | Preview prepared work, blockers and next action without dispatching. 带 `host` 时返回该宿主拥有的令牌。 |
 | `apply-result` | 完整 | 写入/可写 | `token`, `host`, `result` | Accept an owned host receipt, verify and integrate it, and prepare subsequent work. |
 | `archive` | 完整 | 写入/可写 | 按场景选择 | Preview a native archive; apply with its plan_hash using an isolated candidate. |
 | `doctor` | 完整 | 只读 | 按场景选择 | Inspect configuration, ledger, inventory and recoverable operations. |
 | `capabilities` | 细粒度 | 只读 | 按场景选择 | Discover complete and granular interfaces with versioned schemas. |
 | `work.claim` | 细粒度 | 写入/可写 | `run_id`, `request_id`, `token`, `host` | Register the host's unique fresh session for a prepared request. |
 | `work.heartbeat` | 细粒度 | 写入/可写 | `run_id`, `request_id`, `token` | Report host liveness and receive stop/pause instructions. |
-| `work.revoke` | 细粒度 | 写入/可写 | `run_id`, `request_id`, `token`, `host_stopped`, `reason` | Revoke a request after its host confirms execution has stopped. |
+| `work.revoke` | 细粒度 | 写入/可写 | `run_id`, `request_id`, `host_stopped`, `reason` | Revoke a request after its host confirms execution has stopped. `token` 或拥有者 `host` 二选一。 |
+| `request.get` | 细粒度 | 只读 | `run_id`, `request_id` | Read one request's status, owner, heartbeat age and packet paths; the owning host also gets its token. |
 | `work.context` | 细粒度 | 只读 | `run_id`, `request_id` | Read complete immutable work context with verified hashes. |
 | `hook.resolve` | 细粒度 | 写入/可写 | `run_id`, `key`, `outcome`, `evidence` | Record the explicit outcome of an interrupted native hook. |
 | `native.instructions` | 细粒度 | 只读 | 按场景选择 | Read the exact installed provider action without generating a private replacement. |
@@ -64,7 +65,8 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 | `git.commit` | 细粒度 | 写入/可写 | `expected_head`, `message`, `files` | Commit explicitly selected files without capturing unrelated staged changes. |
 | `run.pause` | 细粒度 | 写入/可写 | `run_id` | Request pause and return host cancellation actions. |
 | `run.cancel` | 细粒度 | 写入/可写 | `run_id` | Cancel a run without pretending external sessions stopped. |
-| `run.cleanup` | 细粒度 | 写入/可写 | `run_id` | Preview terminal cleanup, apply with plan_hash, optionally delete safe merged refs. |
+| `run.forensics` | 细粒度 | 只读 | `run_id` | Read-only anomaly report: repeated failing checks, attempt churn, idle requests, repeated completions and worktree backlog. |
+| `run.cleanup` | 细粒度 | 写入/可写 | `run_id` | Preview/apply cleanup; plan_hash is required only when branches or the integration are deleted. |
 | `task.list` | 细粒度 | 只读 | `run_id` | Read execution tasks and source bindings. |
 | `task.ready` | 细粒度 | 只读 | `run_id` | Read eligible tasks under dependency and conflict constraints. |
 | `task.complete` | 细粒度 | 写入/可写 | `token`, `host`, `result` | Complete owned task work through the same verified receipt gate. |
@@ -95,4 +97,4 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 
 URI 只接受注册的形式和安全 ID，不提供任意文件路径读取。查询中的缺失字段、不支持能力和模糊选择均有明确错误。
 
-运行恢复新增 `run.revise`（见 [修订与续跑](run-revision.md)）；批量认领使用 `work.claim-batch`。`run.cleanup` 采用预览/哈希应用，详见 [清理规则](run-cleanup.md)。
+运行恢复新增 `run.revise`（见 [修订与续跑](run-revision.md)）；批量认领使用 `work.claim-batch`。`run.cleanup` 在删除引用时采用预览/哈希应用，详见 [清理规则](run-cleanup.md)。宿主身份、自动认领、令牌找回与调用次数见 [宿主协议](host-protocol.md)。

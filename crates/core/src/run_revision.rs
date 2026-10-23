@@ -166,6 +166,33 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
         .filter(|a| ["issued", "claimed", "receiving", "submitted"].contains(&a.status.as_str()))
         .map(|a| a.id.clone())
         .collect();
+    // Only work whose verification the revision changes blocks it: implement attempts of
+    // revised tasks, and repair/audit attempts of revised phases. Other outstanding work
+    // keeps running and is integrated against the revised checks.
+    let revised_tasks: BTreeSet<String> = changes
+        .task_checks
+        .iter()
+        .map(|u| Run::key(&u.phase_id, &u.task_id))
+        .collect();
+    let revised_phases: BTreeSet<&str> = changes
+        .task_checks
+        .iter()
+        .map(|u| u.phase_id.as_str())
+        .chain(changes.phase_checks.iter().map(|u| u.phase_id.as_str()))
+        .collect();
+    let blocking: Vec<_> = run
+        .attempts
+        .iter()
+        .filter(|a| ["issued", "claimed", "receiving", "submitted"].contains(&a.status.as_str()))
+        .filter(|a| match a.kind.as_str() {
+            "implement" => revised_tasks.contains(&Run::key(&a.phase_id, &a.task_id)),
+            "converge" | "audit" => {
+                changes.milestone_checks.is_some() || revised_phases.contains(a.phase_id.as_str())
+            }
+            _ => false,
+        })
+        .map(|a| a.id.clone())
+        .collect();
     let mut modified = run.clone();
     let mut diff = vec![];
     let mut touched = BTreeSet::new();
@@ -278,16 +305,24 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     let hash = paths::hash(serde_json::to_vec(
         &json!({"run":run,"changes":changes,"reason":reason,"sources":sources}),
     )?);
-    let mut preview = json!({"run_id":id,"applied":false,"plan_hash":hash,"accepted_head":run.accepted_head,"reason":reason,"changes":changes,"diff":diff,"active_requests":active,"can_apply":active.is_empty(),"retained_verified_tasks":run.completed_tasks,"scope":"run-local verification overlay","next_action":"Review checks against native requirements, then apply the same changes with plan_hash. Use prepare with the same run_id afterwards."});
+    let mut preview = json!({"run_id":id,"applied":false,"plan_hash":hash,"accepted_head":run.accepted_head,"reason":reason,"changes":changes,"diff":diff,"active_requests":active,"blocking_requests":blocking,"can_apply":blocking.is_empty(),"retained_verified_tasks":run.completed_tasks,"scope":"run-local verification overlay","next_action":"Review checks against native requirements, then apply the same changes with plan_hash. Use prepare with the same run_id afterwards."});
     if !apply {
         return Ok(preview);
     }
-    if args["plan_hash"].as_str() != Some(&hash) {
-        bail!("revision_conflict: preview is stale or plan_hash is missing");
+    // A supplied plan_hash must match. Without one, the revision applies directly when
+    // nothing in its scope is outstanding; otherwise the preview/hash round trip stays.
+    match args["plan_hash"].as_str() {
+        Some(supplied) if supplied != hash => {
+            bail!("revision_conflict: preview is stale or plan_hash is missing");
+        }
+        None if !blocking.is_empty() => {
+            bail!("revision_conflict: preview is stale or plan_hash is missing");
+        }
+        _ => {}
     }
-    if !active.is_empty() {
+    if !blocking.is_empty() {
         bail!(
-            "revision_busy: stop and revoke host work, or finish receipt processing before revising"
+            "revision_busy: outstanding work on the revised scope; finish its receipt or revoke it before revising"
         );
     }
     let record = json!({"plan_hash":hash,"reason":reason,"changes":changes,"diff":diff,"at":paths::now(),"accepted_head":run.accepted_head,"preserved_verified_tasks":run.completed_tasks.len(),"superseded_verification_repair":host.pending_repair});

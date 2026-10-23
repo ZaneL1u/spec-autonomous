@@ -20,7 +20,7 @@ pub struct Wave {
     pub revision: String,
     environment: BTreeMap<String, String>,
     checkout: PathBuf,
-    stage: String,
+    pub stage: String,
 }
 pub struct CheckResult {
     pub evidence: Evidence,

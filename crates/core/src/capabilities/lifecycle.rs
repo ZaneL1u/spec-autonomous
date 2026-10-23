@@ -345,6 +345,7 @@ pub fn doctor(root: &Path) -> Result<Value> {
                     .into(),
             );
         }
+        diagnostics.extend(config.budget_warnings());
     }
     let inventory = crate::progress::snapshot(root).unwrap_or_else(|e| {
         diagnostics.push(e.to_string());

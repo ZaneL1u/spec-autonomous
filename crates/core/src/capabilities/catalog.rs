@@ -76,7 +76,7 @@ pub fn all() -> Vec<Capability> {
             true,
             true,
             &[],
-            json!({"plan":o,"run_id":s,"framework":f,"change":s,"feature":s,"selector":s,"milestone_id":s,"goal":s,"id":s,"mode":{"type":"string","enum":["native","autonomous","plan"]},"from":s,"to":s,"only":s,"max_workers":{"type":"integer","minimum":1,"maximum":32},"delivery":{"type":"string","enum":["ff-original","branch"]},"reload_config":b,"extend_seconds":{"type":"integer","minimum":0,"maximum":2592000},"max_attempts":{"type":"integer","minimum":1,"maximum":1000}}),
+            json!({"plan":o,"run_id":s,"framework":f,"change":s,"feature":s,"selector":s,"milestone_id":s,"goal":s,"id":s,"mode":{"type":"string","enum":["native","autonomous","plan"]},"from":s,"to":s,"only":s,"max_workers":{"type":"integer","minimum":1,"maximum":32},"delivery":{"type":"string","enum":["ff-original","branch"]},"reload_config":b,"extend_seconds":{"type":"integer","minimum":0,"maximum":2592000},"max_attempts":{"type":"integer","minimum":1,"maximum":1000},"host":host,"discussion_auto":b}),
         ),
         entry(
             "discussion.next",
@@ -96,19 +96,19 @@ pub fn all() -> Vec<Capability> {
         ),
         entry(
             "next",
-            "Preview prepared work, blockers and next action without dispatching.",
+            "Preview prepared work, blockers and next action without dispatching; with host, return the tokens that host owns.",
             true,
             false,
             &[],
-            json!({"run_id":s}),
+            json!({"run_id":s,"host":host}),
         ),
         entry(
             "apply-result",
-            "Accept an owned host receipt, verify and integrate it, and prepare subsequent work.",
+            "Accept an owned host receipt, verify and integrate it, and prepare subsequent work; claim_next claims that work for the receipt's host.",
             true,
             true,
             &["token", "host", "result"],
-            json!({"token":s,"host":host,"result":o,"usage":o}),
+            json!({"token":s,"host":host,"result":o,"usage":o,"claim_next":b}),
         ),
         entry(
             "archive",
@@ -152,11 +152,19 @@ pub fn all() -> Vec<Capability> {
         ),
         entry(
             "work.revoke",
-            "Revoke a request after its host confirms execution has stopped.",
+            "Revoke a request after its host confirms execution has stopped; the token or the owning host identifies it.",
             false,
             true,
-            &["run_id", "request_id", "token", "host_stopped", "reason"],
-            json!({"run_id":s,"request_id":s,"token":s,"host_stopped":b,"reason":s}),
+            &["run_id", "request_id", "host_stopped", "reason"],
+            json!({"run_id":s,"request_id":s,"token":s,"host":host,"host_stopped":b,"reason":s}),
+        ),
+        entry(
+            "request.get",
+            "Read one request's status, owner, heartbeat age and packet paths; the owning host also gets its token.",
+            false,
+            false,
+            &["run_id", "request_id"],
+            json!({"run_id":s,"request_id":s,"host":host}),
         ),
         entry(
             "work.context",
@@ -453,7 +461,7 @@ pub fn all() -> Vec<Capability> {
             json!({"expected_head":s,"message":s,"files":{"type":"array","items":s}}),
         ),
     ]);
-    out.push(entry("run.revise", "Preview/apply pending verification corrections while preserving verified work and native requirements.", false, true, &["run_id", "reason"], json!({"run_id":s,"reason":s,"task_checks":{"type":"array","items":{"type":"object"}},"phase_checks":{"type":"array","items":{"type":"object"}},"milestone_checks":{"type":"array","items":{"type":"object"}},"apply":b,"plan_hash":s})));
+    out.push(entry("run.revise", "Preview/apply pending verification corrections while preserving verified work and native requirements; apply without plan_hash when nothing in the revised scope is outstanding.", false, true, &["run_id", "reason"], json!({"run_id":s,"reason":s,"task_checks":{"type":"array","items":{"type":"object"}},"phase_checks":{"type":"array","items":{"type":"object"}},"milestone_checks":{"type":"array","items":{"type":"object"}},"apply":b,"plan_hash":s})));
     out.push(entry("work.claim-batch", "Atomically claim prepared work for distinct host sessions in one operation.", false, true, &["run_id","requests"], json!({"run_id":s,"requests":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["request_id","token","host"],"properties":{"request_id":s,"token":s,"host":host}}}})));
     for (id, description, write) in [
         (
@@ -467,8 +475,13 @@ pub fn all() -> Vec<Capability> {
             true,
         ),
         (
+            "run.forensics",
+            "Read-only anomaly report: repeated failing checks, attempt churn, idle requests, repeated completions and worktree backlog.",
+            false,
+        ),
+        (
             "run.cleanup",
-            "Preview/apply terminal worktree cleanup and optional safe merged-branch deletion.",
+            "Preview/apply worktree cleanup and optional safe merged-branch deletion; plan_hash is required only when branches or the integration are deleted.",
             true,
         ),
         (

@@ -17,9 +17,9 @@ impl Coordinator<'_> {
                     &self.run.config.runner.environment
                 )
             );
-            let (result, worktree, index) =
+            let (result, _worktree, index) =
                 self.invoke("roadmap", "roadmap", "", instruction, None)?;
-            if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+            if !self.attempt_changes(index)?.is_empty() {
                 bail!("scope_violation: roadmap planner changed files");
             }
             let m = result
@@ -96,6 +96,11 @@ impl Coordinator<'_> {
         }
         let mut phase_count = 0;
         loop {
+            if self.run.host.as_ref().is_some_and(|h| h.reconcile_pending)
+                && !self.run.has_outstanding_host_work()
+            {
+                self.reconcile_source()?;
+            }
             self.check()?;
             self.refresh_roadmap()?;
             let phase = self
@@ -162,7 +167,12 @@ impl Coordinator<'_> {
                 self.hooks(&phase, "before_implement")?;
             }
             loop {
-                self.execute_phase(&phase)?;
+                if let Err(error) = self.execute_phase(&phase) {
+                    if format!("{error:#}").starts_with("source_reconciled:") {
+                        return self.drive(false);
+                    }
+                    return Err(error);
+                }
                 if self.run.mode == "plan" {
                     self.deliver(true)?;
                     self.run.status = "plan_ready".into();
@@ -188,32 +198,17 @@ impl Coordinator<'_> {
                     continue;
                 }
                 let audit_head = self.run.accepted_head.clone();
-                let hooks_before = self
-                    .run
-                    .attempts
-                    .iter()
-                    .filter(|a| a.kind == "hook")
-                    .count();
                 self.hooks(&phase, "after_implement")?;
-                if self
-                    .run
-                    .attempts
-                    .iter()
-                    .filter(|a| a.kind == "hook")
-                    .count()
-                    != hooks_before
+                if self.run.accepted_head == audit_head {
+                    // No hook moved the verified revision: the phase wave already covers it.
+                    break;
+                }
+                if let Err(error) =
+                    self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
                 {
-                    if let Err(error) =
-                        self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
-                    {
-                        self.repair_failure(&phase, error)?;
-                        continue;
-                    }
+                    self.repair_failure(&phase, error)?;
                 }
-                if self.run.accepted_head != audit_head {
-                    continue;
-                }
-                break;
+                continue;
             }
             let snapshot = provider::inspect(
                 &self.project(),
@@ -225,12 +220,19 @@ impl Coordinator<'_> {
                 bail!("phase_incomplete: remaining native tasks");
             }
             self.run.completed_phases.push(phase.id.clone());
+            self.run.stale_phases.retain(|id| id != &phase.id);
+            if let Some(host) = self.run.host.as_mut() {
+                let prefix = format!("{}:", phase.id);
+                host.repair_signatures
+                    .retain(|k, _| !k.starts_with(&prefix));
+            }
             self.run
                 .phase_hashes
                 .insert(phase.id.clone(), snapshot.source_hash);
             self.run.stage = "advancing".into();
             self.save("phase_completed")?;
         }
+        self.verify_stale_phases()?;
         self.run.stage = if self.run.range.bounded() {
             "verifying_scope"
         } else {
@@ -304,7 +306,28 @@ impl Coordinator<'_> {
             bail!("acceptance_missing: no native references");
         }
         let mut all = vec![];
+        let tree = git::tree(&self.project())?;
         for (batch, refs) in required.chunks(32).enumerate() {
+            // An audit of the same acceptance ids against the same integration tree has
+            // the same inputs; a fully passed one is reused instead of asked again.
+            let ids: Vec<&str> = refs.iter().filter_map(|v| v["id"].as_str()).collect();
+            let key = paths::hash(serde_json::to_string(&serde_json::json!({
+                "phase": phase.id,
+                "scope": snapshot.metadata["scope"],
+                "tree": tree,
+                "ids": ids,
+            }))?);
+            if let Some(items) = self
+                .run
+                .host
+                .as_ref()
+                .and_then(|h| h.audit_cache.get(&key))
+                .cloned()
+            {
+                all.extend(items);
+                self.save("audit_reused")?;
+                continue;
+            }
             let mut partial = snapshot.clone();
             partial.metadata["acceptance"] = serde_json::json!(refs);
             let audit_task = if snapshot.metadata["scope"] == "milestone" {
@@ -312,7 +335,7 @@ impl Coordinator<'_> {
             } else {
                 format!("audit-{}-{}", phase.id, batch + 1)
             };
-            let (result, worktree, index) = self.invoke(
+            let (result, _worktree, index) = self.invoke(
                 "audit",
                 &audit_task,
                 &phase.id,
@@ -320,7 +343,7 @@ impl Coordinator<'_> {
                 Some(partial.clone()),
             )?;
             let verified = (|| -> Result<()> {
-                if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+                if !self.attempt_changes(index)?.is_empty() {
                     bail!("scope_violation: verifier changed files");
                 }
                 provider::check_audit(&partial, &result.audit)?;
@@ -331,6 +354,11 @@ impl Coordinator<'_> {
                 self.run.attempts[index].error = Some(format!("{error:#}"));
                 self.save("audit_rejected")?;
                 return Err(error);
+            }
+            if result.audit.iter().all(|a| a.passed)
+                && let Some(host) = self.run.host.as_mut()
+            {
+                host.audit_cache.insert(key, result.audit.clone());
             }
             all.extend(result.audit);
             self.run.attempts[index].status = "accepted".into();
@@ -403,6 +431,53 @@ impl Coordinator<'_> {
         if self.run.repair_rounds >= self.run.config.execution.max_repair_rounds {
             bail!("repair_budget_exhausted: selected scope still fails verification");
         }
+        // Wave paths differ every time, so a host-verification failure is identified by
+        // the failing command and exit code; audit failures by their requirement ids.
+        let failing = self
+            .run
+            .evidence
+            .iter()
+            .rev()
+            .find(|e| e.exit_code != 0 || !e.tree_unchanged)
+            .map(|e| serde_json::json!({"argv":e.argv,"cwd":e.cwd,"exit_code":e.exit_code}));
+        let failed: Vec<serde_json::Value> = audit
+            .iter()
+            .filter(|a| !a.passed)
+            .map(|a| {
+                if a.requirement == "host-verification" {
+                    serde_json::json!({"requirement":a.requirement,"check":failing})
+                } else {
+                    serde_json::json!({"requirement":a.requirement})
+                }
+            })
+            .collect();
+        let signature = format!(
+            "{}:{}",
+            phase.id,
+            paths::hash(serde_json::to_string(&failed)?)
+        );
+        let requirements: Vec<&str> = audit
+            .iter()
+            .filter(|a| !a.passed)
+            .map(|a| a.requirement.as_str())
+            .collect();
+        let seen = self
+            .run
+            .host
+            .as_mut()
+            .context("legacy_run_read_only")?
+            .repair_signatures
+            .entry(signature)
+            .or_insert(0);
+        *seen += 1;
+        if *seen > 1 {
+            self.save("repair_repeated")?;
+            bail!(
+                "needs_input: repair_repeated: phase {} failed the same way after a repair round ({}); inspect the evidence, then use run.revise for a wrong check or fix the native source before continuing",
+                phase.id,
+                requirements.join(", ")
+            );
+        }
         self.run.repair_rounds += 1;
         self.run
             .host
@@ -418,7 +493,12 @@ impl Coordinator<'_> {
         self.run.host.as_mut().unwrap().pending_repair = None;
         Ok(())
     }
+    /// Reopen one phase for planning and execution. Phases depending on it keep their
+    /// accepted work and plans; they only owe a fresh command gate before delivery.
     pub(super) fn reopen(&mut self, phase_id: &str) {
+        self.run.completed_phases.retain(|id| id != phase_id);
+        self.run.stale_phases.retain(|id| id != phase_id);
+        self.run.phase_hashes.remove(phase_id);
         let mut affected = vec![phase_id.to_string()];
         loop {
             let before = affected.len();
@@ -431,12 +511,46 @@ impl Coordinator<'_> {
                 break;
             }
         }
-        self.run
-            .completed_phases
-            .retain(|id| !affected.contains(id));
-        for id in affected {
-            self.run.phase_hashes.remove(&id);
+        for id in affected.into_iter().skip(1) {
+            self.mark_stale(&id);
         }
+    }
+    pub(super) fn mark_stale(&mut self, phase_id: &str) {
+        if self.run.completed_phases.iter().any(|id| id == phase_id)
+            && !self.run.stale_phases.iter().any(|id| id == phase_id)
+        {
+            self.run.stale_phases.push(phase_id.to_string());
+        }
+    }
+    /// Re-run only the command gates of completed phases whose tree changed underneath
+    /// them. Accepted work, plans and audits stay; a failure enters the normal repair path.
+    fn verify_stale_phases(&mut self) -> Result<()> {
+        self.run
+            .stale_phases
+            .retain(|id| self.run.completed_phases.contains(id));
+        while let Some(id) = self.run.stale_phases.first().cloned() {
+            let Some(phase) = self
+                .run
+                .milestone
+                .phases
+                .iter()
+                .find(|p| p.id == id)
+                .cloned()
+            else {
+                self.run.stale_phases.retain(|p| p != &id);
+                continue;
+            };
+            self.run.stage = "verifying_stale_phase".into();
+            self.save("stale_phase_verification")?;
+            if let Err(error) = self.verify(&self.project(), &self.checks(&phase, &[]), "phase") {
+                self.repair_failure(&phase, error)?;
+                self.reopen(&phase.id);
+                return self.drive(false);
+            }
+            self.run.stale_phases.retain(|p| p != &id);
+            self.save("stale_phase_verified")?;
+        }
+        Ok(())
     }
     pub(super) fn refresh_roadmap(&mut self) -> Result<()> {
         let path = provider::milestone_path(&self.project(), &self.run.milestone.id)?;
@@ -567,6 +681,7 @@ impl Coordinator<'_> {
     }
     pub(super) fn checks(&self, phase: &Phase, task: &[Check]) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.phase_verification.clone());
         x.extend(phase.verification.clone());
         x.extend_from_slice(task);
         if x.is_empty() {
@@ -580,11 +695,13 @@ impl Coordinator<'_> {
     }
     pub(super) fn task_checks(&self, task: &Task) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.task_verification.clone());
         x.extend(task.verification.clone());
         x
     }
     pub(super) fn checks_milestone(&self) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.milestone_verification.clone());
         x.extend(self.run.milestone.verification.clone());
         if x.is_empty() {
             for phase in &self.run.milestone.phases {
@@ -602,27 +719,6 @@ impl Coordinator<'_> {
                 "verification_uncommitted_input: code must be committed before host verification"
             );
         }
-        let identity =
-            crate::verification::input_identity(project, checks, label, &self.run.config).ok();
-        let receipts = self
-            .store
-            .root
-            .join("runs")
-            .join(&self.run.id)
-            .join("verification-receipts");
-        let receipt = identity
-            .as_ref()
-            .map(|key| receipts.join(format!("{key}.json")));
-        // Post-hook gates always execute: a hook can change state outside Git.
-        let reuse = self.run.config.execution.reuse_verification && label != "post-hook";
-        if reuse
-            && let (Some(key), Some(path)) = (&identity, &receipt)
-            && crate::verification::reusable(path, key)
-        {
-            self.run.verification_reuses += 1;
-            self.save("verification_reused")?;
-            return Ok(());
-        }
         let directory = self
             .store
             .root
@@ -630,80 +726,153 @@ impl Coordinator<'_> {
             .join(&self.run.id)
             .join(paths::id("verify"));
         let wave = crate::verification::Wave::new(directory, project, label, &self.run.config)?;
-        let mut steps = vec![];
-        if let Some(hook) = self.run.config.hooks.get("verification_prepare") {
+        let wave_id = wave
+            .directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let tree = git::tree(project)?;
+        // Long-lived integration checkouts carry build caches that fresh worktrees do not;
+        // evidence never crosses that boundary.
+        let class = if project.starts_with(&self.run.integration) {
+            "integration"
+        } else {
+            "worktree"
+        };
+        // Both switches must allow reuse: the alpha.15 boolean and the tree-keyed policy.
+        let reuse = self.run.config.execution.reuse_verification
+            && self.run.config.execution.verification_reuse == "same-tree";
+        let preparation = self.run.config.hooks.get("verification_prepare").cloned();
+        if let Some(hook) = &preparation {
             if !hook.idempotent {
                 bail!(
                     "verification_prepare_requires_idempotent: preparation must be safe to retry for its wave identity"
                 );
             }
-            steps.push((
-                Check {
+        }
+        let mut prepared = preparation.is_none();
+        for check in unique_checks(checks.to_vec()) {
+            self.check()?;
+            let key = paths::hash(serde_json::to_string(&serde_json::json!({
+                "tree": tree,
+                "class": class,
+                "argv": check.argv,
+                "cwd": check.cwd,
+                "environment": self.run.config.runner.environment,
+                "prepare": preparation.as_ref().map(|h| &h.argv),
+                "attempt_timeout_seconds": self.run.config.execution.attempt_timeout_seconds,
+                "max_log_bytes": self.run.config.execution.max_log_bytes,
+            }))?);
+            let hit = if reuse {
+                self.run
+                    .host
+                    .as_ref()
+                    .and_then(|h| h.verification_cache.get(&key))
+                    .cloned()
+            } else {
+                None
+            };
+            if let Some(pass) = hit {
+                let cwd = paths::inside(project, &check.cwd)?;
+                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at},"cache_key":key});
+                self.run.evidence.push(Evidence {
+                    argv: check.argv.clone(),
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    revision: wave.revision.clone(),
+                    exit_code: 0,
+                    log: pass.log.clone(),
+                    log_hash: pass.log_hash.clone(),
+                    finished_at: paths::now(),
+                    tree_unchanged: true,
+                    details: Some(details),
+                });
+                self.run.verification_reuses += 1;
+                self.save("verification_reused")?;
+                continue;
+            }
+            if !prepared {
+                let hook = preparation.as_ref().unwrap();
+                let step = Check {
                     argv: hook.argv.clone(),
                     cwd: ".".into(),
-                },
-                true,
-            ));
-        }
-        for check in unique_checks(checks.to_vec()) {
-            steps.push((check, false));
-        }
-        for (check, preparation) in steps {
-            self.check()?;
-            let result =
-                wave.execute(&check, preparation, &self.run.config, self.cancel.clone())?;
-            let details = result.evidence.details.clone().unwrap();
-            self.run.evidence.push(result.evidence);
-            self.save("verification")?;
-            if let Some(failure) = result.failure {
-                if failure == "source_changed" {
-                    bail!(
-                        "verification_mutated_tree: diagnostics {}",
-                        details["manifest"]
+                };
+                self.record_check(&wave, project, &step, true)?;
+                prepared = true;
+            }
+            let details = self.record_check(&wave, project, &check, false)?;
+            if reuse && details["tree_unchanged"] == true {
+                if let Some(host) = self.run.host.as_mut() {
+                    host.verification_cache.insert(
+                        key,
+                        VerificationPass {
+                            stage: label.into(),
+                            wave_id: wave_id.clone(),
+                            tree: tree.clone(),
+                            revision: wave.revision.clone(),
+                            manifest: details["manifest"].as_str().unwrap_or_default().into(),
+                            log: details["stdout"].as_str().unwrap_or_default().into(),
+                            log_hash: details["stdout_sha256"].as_str().unwrap_or_default().into(),
+                            finished_at: paths::now(),
+                        },
                     );
                 }
-                // Retain the existing actionable Node directory diagnosis without
-                // exposing arbitrary child output in a public error.
-                let stderr =
-                    fs::read_to_string(details["stderr"].as_str().unwrap()).unwrap_or_default();
-                let readiness = crate::verification_preflight::inspect_checks_with_environment(
-                    project,
-                    std::slice::from_ref(&check),
-                    &[],
-                    &self.run.config.runner.environment,
-                );
-                if stderr.contains("MODULE_NOT_FOUND")
-                    && readiness
-                        .diagnostics
-                        .iter()
-                        .any(|d| d.code == "node_test_directory_operand")
-                {
-                    bail!(
-                        "needs_input: verification_configuration: Node rejected a test directory operand; use run.revise; diagnostics {}",
-                        details["manifest"]
-                    );
-                }
-                bail!(
-                    "verification_failed: {label} {} {failure}, exit {}; diagnostics {}; stdout {}; stderr {}",
-                    if preparation { "preparation" } else { "check" },
-                    details["exit_code"],
-                    details["manifest"],
-                    details["stdout"],
-                    details["stderr"]
-                );
             }
         }
-        if reuse
-            && let (Some(key), Some(path)) = (&identity, &receipt)
-            && crate::verification::input_identity(project, checks, label, &self.run.config)
-                .ok()
-                .as_ref()
-                == Some(key)
-        {
-            // A receipt is an optimization; inability to memoize never fails a PASS.
-            let _ = crate::verification::complete_receipt(path, key, &wave.directory);
-        }
         Ok(())
+    }
+    /// Execute one check or preparation step, persist its evidence and fail on any
+    /// non-passing outcome. Returns the durable manifest details of a passing step.
+    fn record_check(
+        &mut self,
+        wave: &crate::verification::Wave,
+        project: &Path,
+        check: &Check,
+        preparation: bool,
+    ) -> Result<serde_json::Value> {
+        let label = wave.stage.clone();
+        let result = wave.execute(check, preparation, &self.run.config, self.cancel.clone())?;
+        let details = result.evidence.details.clone().unwrap();
+        self.run.evidence.push(result.evidence);
+        self.save("verification")?;
+        if let Some(failure) = result.failure {
+            if failure == "source_changed" {
+                bail!(
+                    "verification_mutated_tree: diagnostics {}",
+                    details["manifest"]
+                );
+            }
+            // Retain the existing actionable Node directory diagnosis without
+            // exposing arbitrary child output in a public error.
+            let stderr =
+                fs::read_to_string(details["stderr"].as_str().unwrap()).unwrap_or_default();
+            let readiness = crate::verification_preflight::inspect_checks_with_environment(
+                project,
+                std::slice::from_ref(check),
+                &[],
+                &self.run.config.runner.environment,
+            );
+            if stderr.contains("MODULE_NOT_FOUND")
+                && readiness
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == "node_test_directory_operand")
+            {
+                bail!(
+                    "needs_input: verification_configuration: Node rejected a test directory operand; use run.revise; diagnostics {}",
+                    details["manifest"]
+                );
+            }
+            bail!(
+                "verification_failed: {label} {} {failure}, exit {}; diagnostics {}; stdout {}; stderr {}",
+                if preparation { "preparation" } else { "check" },
+                details["exit_code"],
+                details["manifest"],
+                details["stdout"],
+                details["stderr"]
+            );
+        }
+        Ok(details)
     }
 }
 

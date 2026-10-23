@@ -96,6 +96,8 @@
   "arg.host_id": "Host identifier.",
   "arg.session_id": "Session identifier.",
   "arg.fresh_context": "Declare a fresh work context.",
+  "arg.discussion_auto": "Accept the recommended Smart Discuss defaults when a phase pauses on them.",
+  "arg.claim_next": "Claim the follow-up work for this host under derived sessions.",
   "arg.apply": "Apply the previewed operation.",
   "arg.plan_hash": "Hash of the accepted preview.",
   "arg.all": "List all capabilities.",

@@ -96,6 +96,8 @@
   "arg.host_id": "宿主标识。",
   "arg.session_id": "会话标识。",
   "arg.fresh_context": "声明使用新工作上下文。",
+  "arg.discussion_auto": "阶段因灰区暂停时接受推荐的 Smart Discuss 默认值。",
+  "arg.claim_next": "为该宿主以派生会话认领后续工作。",
   "arg.apply": "执行已预览的操作。",
   "arg.plan_hash": "已确认预览的哈希。",
   "arg.all": "列出全部能力。",

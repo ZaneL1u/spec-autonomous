@@ -71,6 +71,11 @@ pub fn work_context(root: &Path, run_id: &str, attempt_id: &str) -> Result<Value
     Ok(serde_json::to_value(work_packet::read_input(&dir)?)?)
 }
 pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
+    work_view_with(run, runtime, true)
+}
+/// `readiness=false` skips the verification preflight for responses whose caller already
+/// holds the current readiness (claims, heartbeats, revocations).
+pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Value> {
     let mut data = crate::progress::public_run(run);
     let mut work = vec![];
     if let Some(host) = &run.host {
@@ -102,7 +107,10 @@ pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
         }
     }
     data["work"] = json!(work);
-    if let Some(phase) = run.current_phase.as_ref()
+    if !readiness {
+        data["verification_readiness"] =
+            json!({"status":"not_computed","hint":"prepare or next return the current readiness"});
+    } else if let Some(phase) = run.current_phase.as_ref()
         && let Some(plan) = run.plans.get(phase)
     {
         let project = Path::new(&run.integration).join(&run.project_relative);
@@ -130,6 +138,7 @@ pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
         data["recovery_options"] = json!({"inspect":"state.get","revise_pending_verification":"run.revise","continue":"prepare","stop_active_work":"work.revoke","cleanup_terminal_work":"run.cleanup"});
     }
     data["starts_agents"] = json!(false);
+    data["host_capacity"] = json!({"max_concurrency":run.config.host.max_concurrency.min(run.config.execution.max_workers),"lease_seconds":run.config.host.lease_seconds,"capabilities":run.config.host.capabilities});
     data["host_action"] = json!(match run.status.as_str() {
         "awaiting_host" => "execute_prepared_work",
         "paused" => "inspect_or_resume",
@@ -139,7 +148,7 @@ pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
     });
     Ok(data)
 }
-pub fn next(root: &Path, id: Option<&str>) -> Result<Value> {
+pub fn next(root: &Path, id: Option<&str>, host: Option<&HostIdentity>) -> Result<Value> {
     let repo = Repository::discover(root)?;
     let Some(store) = Store::open(&repo, false)? else {
         return Ok(json!({"action":"prepare","reason":"no_run","starts_agents":false}));
@@ -163,9 +172,13 @@ pub fn next(root: &Path, id: Option<&str>) -> Result<Value> {
         "prepare"
     };
     let mut value = work_view(&run, &store.root)?;
-    // Read-only previews never hand out ownership tokens; prepare/claim owns them.
+    // Read-only previews hand a token back only to the host that already owns the
+    // request, so a host that lost its context can recover without re-preparing.
     for w in value["work"].as_array_mut().into_iter().flatten() {
-        w.as_object_mut().unwrap().remove("token");
+        let owned = host.is_some_and(|h| w["owner"]["host_id"] == h.host_id);
+        if !owned {
+            w.as_object_mut().unwrap().remove("token");
+        }
     }
     Ok(
         json!({"action":action,"run_id":run.id,"status":run.status,"stage":run.stage,"blocker":run.blocker,"work":value["work"],"verification_readiness":value["verification_readiness"],"recovery_options":value["recovery_options"],"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(&run)),"starts_agents":false}),
@@ -200,7 +213,7 @@ pub fn claim(
     run.attempts[index].status = "claimed".into();
     run.updated_at = paths::now();
     store.save(&run, "host_claimed")?;
-    work_view(&run, &store.root)
+    work_view_with(&run, &store.root, false)
 }
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -262,7 +275,7 @@ pub fn claim_batch(root: &Path, run_id: &str, requests: Vec<ClaimRequest>) -> Re
         run.updated_at = paths::now();
     }
     // Validate every returned packet before persisting any ownership changes.
-    let view = work_view(&run, &store.root)?;
+    let view = work_view_with(&run, &store.root, false)?;
     if changed {
         store.save(&run, "host_batch_claimed")?;
     }
@@ -295,7 +308,8 @@ pub fn revoke(
     root: &Path,
     run_id: &str,
     attempt_id: &str,
-    token: &str,
+    token: Option<&str>,
+    host: Option<&HostIdentity>,
     stopped: bool,
     reason: &str,
 ) -> Result<Value> {
@@ -306,7 +320,31 @@ pub fn revoke(
     let _lock = Lease::acquire(&repo)?;
     let mut store = Store::open(&repo, true)?.unwrap();
     let mut run = store.get(run_id)?;
-    let index = own(&run, attempt_id, token)?;
+    let index = match (token, host) {
+        (Some(token), _) => own(&run, attempt_id, token)?,
+        (None, Some(host)) => {
+            // The owning host may acknowledge a stop without the token it lost.
+            let meta = host_state(&run)?
+                .requests
+                .get(attempt_id)
+                .context("request_not_found")?;
+            if meta.revoked
+                || meta
+                    .owner
+                    .as_ref()
+                    .is_none_or(|o| o.host_id != host.host_id)
+            {
+                bail!(
+                    "request_ownership_mismatch: only the owning host may revoke without its token"
+                );
+            }
+            run.attempts
+                .iter()
+                .position(|a| a.id == attempt_id)
+                .context("request_not_found")?
+        }
+        (None, None) => bail!("invalid_arguments: work.revoke needs the token or the owning host"),
+    };
     if !pending(&run.attempts[index].status) {
         bail!("request_not_active");
     }
@@ -322,8 +360,15 @@ pub fn revoke(
     run.attempts[index].finished_at = Some(paths::now());
     run.updated_at = paths::now();
     store.save(&run, "host_revoked")?;
-    Ok(json!({"run_id":run_id,"request_id":attempt_id,"revoked":true}))
+    let reclaimed = crate::reclaim::reclaim(&repo, &store, &mut run)?;
+    if !reclaimed["removed"].as_array().is_none_or(Vec::is_empty) {
+        store.save(&run, "worktrees_reclaimed")?;
+    }
+    Ok(
+        json!({"run_id":run_id,"request_id":attempt_id,"revoked":true,"reclaimed":reclaimed["removed"]}),
+    )
 }
+#[allow(clippy::too_many_arguments)]
 pub fn apply_result(
     root: &Path,
     token: &str,
@@ -332,6 +377,7 @@ pub fn apply_result(
     cancel: Arc<AtomicBool>,
     observer: Observer<'_>,
     usage: Option<Value>,
+    claim_next: bool,
 ) -> Result<Value> {
     let repo = Repository::discover(root)?;
     let mut replay = false;
@@ -348,11 +394,8 @@ pub fn apply_result(
         }
         let hash = paths::hash(&bytes);
         let meta = host_state(&run)?.requests[&result.attempt_id].clone();
-        if meta.receipt_hash.is_none()
-            && now_ms().saturating_sub(meta.heartbeat_at_ms) > run.config.host.lease_seconds * 1000
-        {
-            bail!("lease_stale: refresh host liveness before submitting this result");
-        }
+        // A lapsed heartbeat is information, not a reason to refuse an owned receipt:
+        // ownership never transfers, so the token and identity already prove the sender.
         if let Some(old) = &meta.receipt_hash {
             if old != &hash {
                 bail!("receipt_conflict: request already has a different result");
@@ -401,7 +444,7 @@ pub fn apply_result(
                 .requests
                 .get_mut(&result.attempt_id)
                 .unwrap();
-            meta.owner = Some(owner);
+            meta.owner = Some(owner.clone());
             meta.receipt_hash = Some(hash.clone());
             meta.heartbeat_at_ms = now_ms();
             run.attempts[index].status = "receiving".into();
@@ -443,11 +486,119 @@ pub fn apply_result(
         cancel,
         observer,
     )?;
-    let mut result = work_view(&run, &repo.runtime()?)?;
+    // With claim_next the follow-up packets are claimed for the receipt's host under
+    // derived sessions, so it dispatches straight away instead of claiming each packet.
+    let mut result = if claim_next {
+        auto_claim(root, &run.id, &owner)?
+    } else {
+        work_view(&run, &repo.runtime()?)?
+    };
     if replay {
         result["receipt_replayed"] = json!(true);
     }
     Ok(result)
+}
+/// Session identity for one request derived from the host's own identity. Distinct per
+/// request, so uniqueness checks keep holding without a claim call per packet.
+pub fn derived_identity(host: &HostIdentity, request_id: &str) -> HostIdentity {
+    let suffix: String = request_id.chars().take(40).collect();
+    let budget = 120usize.saturating_sub(suffix.len() + 1);
+    let base: String = host.session_id.chars().take(budget).collect();
+    HostIdentity {
+        host_id: host.host_id.clone(),
+        session_id: format!("{base}-{suffix}"),
+        fresh_context: true,
+    }
+}
+/// Claim every unowned issued request for `host` under derived sessions and return the
+/// work view with tokens. Requests another host already owns are left alone.
+pub fn auto_claim(root: &Path, run_id: &str, host: &HostIdentity) -> Result<Value> {
+    paths::valid_id(&host.host_id)?;
+    paths::valid_id(&host.session_id)?;
+    let repo = Repository::discover(root)?;
+    let _lock = Lease::acquire(&repo)?;
+    let mut store = Store::open(&repo, true)?.unwrap();
+    let mut run = store.get(run_id)?;
+    let mut changed = false;
+    if !run.terminal() && !matches!(store.requested(run_id)?.as_str(), "pause" | "cancel") {
+        let candidates: Vec<String> = run
+            .attempts
+            .iter()
+            .filter(|a| a.status == "issued")
+            .map(|a| a.id.clone())
+            .collect();
+        for id in candidates {
+            let unowned = host_state(&run)?
+                .requests
+                .get(&id)
+                .is_some_and(|l| !l.revoked && l.owner.is_none());
+            if !unowned {
+                continue;
+            }
+            let owner = derived_identity(host, &id);
+            validate_owner(&run, &id, &owner)?;
+            validate_global_owner(&store, run_id, &owner)?;
+            let index = run.attempts.iter().position(|a| a.id == id).unwrap();
+            let meta = run.host.as_mut().unwrap().requests.get_mut(&id).unwrap();
+            meta.owner = Some(owner);
+            meta.heartbeat_at_ms = now_ms();
+            run.attempts[index].status = "claimed".into();
+            changed = true;
+        }
+    }
+    if changed {
+        run.updated_at = paths::now();
+        store.save(&run, "host_auto_claimed")?;
+    }
+    let mut view = work_view(&run, &store.root)?;
+    view["auto_claimed"] = json!(changed);
+    Ok(view)
+}
+/// One request's status, ownership and paths. The token is returned only to its owner.
+pub fn request_get(
+    root: &Path,
+    run_id: &str,
+    attempt_id: &str,
+    host: Option<&HostIdentity>,
+) -> Result<Value> {
+    let repo = Repository::discover(root)?;
+    let store = Store::open(&repo, false)?.context("run_not_found")?;
+    let run = store.get(run_id)?;
+    let lease = host_state(&run)?
+        .requests
+        .get(attempt_id)
+        .context("request_not_found")?;
+    let attempt = run
+        .attempts
+        .iter()
+        .find(|a| a.id == attempt_id)
+        .context("request_not_found")?;
+    let dir = paths::inside(&store.root, &format!("runs/{run_id}/attempts/{attempt_id}"))?;
+    let owned = host.is_some_and(|h| lease.owner.as_ref().is_some_and(|o| o.host_id == h.host_id));
+    let heartbeat_age_ms = now_ms().saturating_sub(lease.heartbeat_at_ms);
+    Ok(json!({
+        "run_id": run_id,
+        "request_id": attempt_id,
+        "kind": attempt.kind,
+        "task_id": attempt.task_id,
+        "phase_id": attempt.phase_id,
+        "status": attempt.status,
+        "owner": lease.owner,
+        "revoked": lease.revoked,
+        "pending": pending(&attempt.status),
+        "heartbeat_age_ms": heartbeat_age_ms,
+        "stale": heartbeat_age_ms > run.config.host.lease_seconds * 1000,
+        "has_receipt": lease.receipt_hash.is_some(),
+        "worktree": attempt.worktree,
+        "base_commit": attempt.base_commit,
+        "input_path": dir.join("input.json"),
+        "prompt_path": dir.join("prompt.md"),
+        "result_schema_path": dir.join("result.schema.json"),
+        "result_path": dir.join("host-result.json"),
+        "error": attempt.error,
+        "token": if owned { Some(&lease.token) } else { None },
+        "run_status": run.status,
+    }))
 }
 fn validate_global_owner(store: &Store, current: &str, owner: &HostIdentity) -> Result<()> {
     for run in store.list()?.iter().filter(|r| r.id != current) {

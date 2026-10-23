@@ -81,7 +81,7 @@ impl Report {
 }
 
 pub fn planning_guidance() -> &'static str {
-    "Plan coherent deliverables, combining related implementation and its tests in one task with multiple source_ids where native order permits. Do not split a small function into serial scaffolding/export/test/assertion tasks or create a separate test-only task merely to run checks already attached to implementation. Keep genuine independent native acceptance work and phase barriers intact. Declare every file needed to repair a task in writes; an empty write set has no declared repair scope, so declare explicit writes or request plan correction. Inspect the actual runtime versions, existing package scripts and check cwd before choosing verification argv. Use explicit Node test files or supported test discovery; a directory operand such as node --test test/ is version-sensitive and is not a portable test command. Argv executes without shell expansion. Check small fixture expectations independently, rather than copying an untested arithmetic guess. Future implementation/test files may be deferred; never call preflight a passed test or execute unbuilt future checks just to obtain an exit code."
+    "Plan coherent deliverables, combining related implementation and its tests in one task with multiple source_ids where native order permits. Do not split a small function into serial scaffolding/export/test/assertion tasks or create a separate test-only task merely to run checks already attached to implementation. Keep genuine independent native acceptance work and phase barriers intact. Declare every file needed to repair a task in writes; an empty write set has no declared repair scope, so declare explicit writes or request plan correction. Inspect the actual runtime versions, existing package scripts and check cwd before choosing verification argv. Use explicit Node test files or supported test discovery; a directory operand such as node --test test/ is version-sensitive and is not a portable test command. Argv executes without shell expansion. Check small fixture expectations independently, rather than copying an untested arithmetic guess. Future implementation/test files may be deferred; never call preflight a passed test or execute unbuilt future checks just to obtain an exit code. A check that needs a script MUST be a file listed in this task's writes (for example tests/check_value.py run as python3 tests/check_value.py); never embed source, base64 or compressed payloads in argv. Make sure caches such as __pycache__ or dist are git-ignored or disabled (PYTHONDONTWRITEBYTECODE=1), because a check that leaves untracked files fails as a mutated tree."
 }
 
 pub fn environment(root: &Path) -> serde_json::Value {
@@ -94,11 +94,98 @@ pub fn environment_with_overrides(
 ) -> serde_json::Value {
     let search = SearchEnvironment::new(overrides);
     let commands: std::collections::BTreeMap<_, _> =
-        ["node", "bun", "npm", "cargo", "python3", "git"]
+        ["node", "bun", "npm", "cargo", "python3", "go", "git"]
             .into_iter()
             .map(|name| (name, resolve_executable(root, name, &search)))
             .collect();
-    serde_json::json!({"os":env::consts::OS,"arch":env::consts::ARCH,"executables":commands,"runtime_versions":"inspect selected runtime before finalizing commands","argv_shell_expansion":false,"verification_executed":false})
+    // Real versions, package scripts, existing test files and ignore status let a
+    // planner choose runnable argv the first time instead of guessing.
+    let versions: BTreeMap<&str, String> = commands
+        .iter()
+        .filter_map(|(name, path)| {
+            let path = path.as_ref()?;
+            let flag = if *name == "go" {
+                "version"
+            } else {
+                "--version"
+            };
+            let output = std::process::Command::new(path)
+                .arg(flag)
+                .current_dir(root)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            let text = String::from_utf8_lossy(if output.stdout.is_empty() {
+                &output.stderr
+            } else {
+                &output.stdout
+            });
+            let line = text.lines().next()?.trim();
+            (!line.is_empty()).then(|| (*name, line.chars().take(120).collect()))
+        })
+        .collect();
+    let package_scripts: Vec<String> = fs::read_to_string(root.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value["scripts"]
+                .as_object()
+                .map(|scripts| scripts.keys().cloned().collect())
+        })
+        .unwrap_or_default();
+    let manifests: Vec<&str> = [
+        "package.json",
+        "pyproject.toml",
+        "setup.py",
+        "requirements.txt",
+        "go.mod",
+        "Cargo.toml",
+        "Makefile",
+    ]
+    .into_iter()
+    .filter(|name| root.join(name).is_file())
+    .collect();
+    let tracked = crate::git::command(root, &["ls-files", "-z"], None).unwrap_or_default();
+    let mut test_files: Vec<&str> = tracked
+        .split('\0')
+        .filter(|path| {
+            let lower = path.to_ascii_lowercase();
+            let file = lower.rsplit('/').next().unwrap_or(&lower);
+            lower.starts_with("tests/")
+                || lower.starts_with("test/")
+                || lower.starts_with("spec/")
+                || lower.contains("/tests/")
+                || lower.contains("/test/")
+                || file.ends_with("_test.go")
+                || file.ends_with("_test.py")
+                || file.starts_with("test_") && file.ends_with(".py")
+                || file.contains(".test.")
+                || file.contains(".spec.")
+        })
+        .collect();
+    let test_file_count = test_files.len();
+    test_files.truncate(100);
+    let ignored: BTreeMap<&str, bool> = [
+        "node_modules",
+        "dist",
+        "build",
+        "target",
+        "__pycache__",
+        ".pytest_cache",
+        "coverage",
+    ]
+    .into_iter()
+    .map(|dir| {
+        (
+            dir,
+            // Directory patterns such as `dist/` only match a path given as a directory.
+            crate::git::command(root, &["check-ignore", "--", dir, &format!("{dir}/")], None)
+                .is_ok(),
+        )
+    })
+    .collect();
+    serde_json::json!({"os":env::consts::OS,"arch":env::consts::ARCH,"executables":commands,"runtime_versions":versions,"package_scripts":package_scripts,"manifests":manifests,"test_files":test_files,"test_file_count":test_file_count,"ignored_directories":ignored,"argv_shell_expansion":false,"verification_executed":false})
 }
 
 pub fn inspect_checks(root: &Path, checks: &[Check], planned_writes: &[String]) -> Report {
@@ -290,11 +377,42 @@ fn inspect_into(
                 .join(name)
                 .to_string_lossy()
                 .into_owned();
-            let future = name.contains('/')
-                && paths::relative(&relative).is_ok()
-                && future_path(&relative, writes, false);
+            // A script this task will write is a declared future output, whether or not
+            // it is named with a directory prefix or already has an execute bit.
+            let future =
+                paths::relative(&relative).is_ok() && future_path(&relative, writes, false);
             deferred |= future;
             report.note(if future { "check_executable_deferred" } else { "check_executable_missing" }, if future { "info" } else { "error" }, format!("Executable {name:?} {}.", if future { "is a declared future output; availability and permissions must be rechecked before execution" } else { "cannot be resolved as an executable from cwd/PATH" }), task, Some(index));
+        }
+        if let Some(operand) = script_operand(&check.argv) {
+            let target = cwd.join(operand);
+            if !target.exists() {
+                let relative = Path::new(&check.cwd)
+                    .join(operand)
+                    .to_string_lossy()
+                    .into_owned();
+                let future =
+                    paths::relative(&relative).is_ok() && future_path(&relative, writes, false);
+                deferred |= future;
+                report.note(
+                    if future {
+                        "check_script_deferred"
+                    } else {
+                        "check_script_missing"
+                    },
+                    if future { "info" } else { "error" },
+                    format!(
+                        "Script {operand:?} {}.",
+                        if future {
+                            "is covered by planned writes; execution remains pending"
+                        } else {
+                            "does not exist and is not covered by task/prerequisite writes"
+                        }
+                    ),
+                    task,
+                    Some(index),
+                );
+            }
         }
         if is_node(check.argv.first().map(String::as_str).unwrap_or("")) {
             for operand in node_test_operands(&check.argv) {
@@ -353,6 +471,34 @@ fn inspect_into(
             .into(),
         });
     }
+}
+/// The script file an interpreter will run, when argv names one directly. Inline
+/// code (-c/-e), module mode (-m) and unknown options yield None.
+fn script_operand(argv: &[String]) -> Option<&str> {
+    let name = Path::new(argv.first()?)
+        .file_name()
+        .and_then(OsStr::to_str)?
+        .to_ascii_lowercase();
+    let interpreter = ["python", "python3", "bash", "sh", "zsh", "ruby", "perl"]
+        .iter()
+        .any(|i| name == *i || name.starts_with(&format!("{i}.")) || name.starts_with("python3."));
+    if !interpreter {
+        return None;
+    }
+    let mut args = argv.iter().skip(1);
+    while let Some(arg) = args.next() {
+        if ["-c", "-e", "-m", "-"].contains(&arg.as_str()) {
+            return None;
+        }
+        if arg == "--" {
+            return args.next().map(String::as_str);
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        return Some(arg.as_str());
+    }
+    None
 }
 fn is_node(name: &str) -> bool {
     Path::new(name)

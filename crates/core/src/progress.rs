@@ -58,12 +58,23 @@ pub fn snapshot(path: &Path) -> Result<Value> {
             done.insert(format!("{}/{}", run.milestone.id, task));
         }
     }
+    // Resolve ownership through one index instead of scanning every run per worktree.
+    let mut owners: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (index, run) in runs.iter().enumerate() {
+        owners.entry(run.integration.as_str()).or_insert(index);
+        for intent in &run.intents {
+            owners.entry(intent.worktree.as_str()).or_insert(index);
+        }
+        for attempt in &run.attempts {
+            owners.entry(attempt.worktree.as_str()).or_insert(index);
+        }
+    }
     for wt in &first {
         let mut row = json!({"id":paths::hash(&wt.path),"path":wt.path,"head":wt.head,"branch":wt.branch,"locked":wt.locked,"prunable":wt.prunable,"kind":"external","status":"unknown"});
         if !Path::new(&wt.path).exists() {
             row["status"] = json!("prunable");
         }
-        for run in &runs {
+        for run in owners.get(wt.path.as_str()).into_iter().map(|&i| &runs[i]) {
             if run.integration == wt.path {
                 row["kind"] = json!("managed-integration");
                 row["run_id"] = json!(run.id);
@@ -287,9 +298,24 @@ pub fn summary(run: &Run) -> Value {
             .entry(format!("{}:{}", attempt.kind, attempt.status))
             .or_default() += 1;
     }
+    let reused = run
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.details
+                .as_ref()
+                .is_some_and(|d| d.get("reused_from").is_some())
+        })
+        .count();
+    let executed = run.evidence.len() - reused;
     let measured: Vec<_> = run
         .evidence
         .iter()
+        .filter(|e| {
+            e.details
+                .as_ref()
+                .is_none_or(|d| d.get("reused_from").is_none())
+        })
         .filter_map(|e| e.details.as_ref()?.get("duration_ms")?.as_u64())
         .collect();
     let duration_ms = measured
@@ -297,7 +323,7 @@ pub fn summary(run: &Run) -> Value {
         .fold(0u64, |total, next| total.saturating_add(*next));
     let unique_checkouts: std::collections::BTreeSet<_> =
         run.attempts.iter().map(|a| &a.worktree).collect();
-    let overhead = json!({"verification_reuses":run.verification_reuses,"attempt_checkouts":unique_checkouts.len(),"read_only_attempts":run.attempts.iter().filter(|a|matches!(a.kind.as_str(),"plan-tasks"|"audit")).count(),"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==run.evidence.len(){"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
+    let overhead = json!({"verification_reuses":run.verification_reuses,"attempt_checkouts":unique_checkouts.len(),"read_only_attempts":run.attempts.iter().filter(|a|matches!(a.kind.as_str(),"plan-tasks"|"audit")).count(),"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"executed_checks":executed,"reused_checks":reused,"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==executed{"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
     json!({"overhead":overhead,"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
 }
 pub fn public_run(run: &Run) -> Value {

@@ -67,13 +67,55 @@ idempotent = true
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。
 
-同波次完全相同的 argv/cwd 只执行一次。任务在真正的集成候选上运行权威门禁，无基线漂移时直接使用已完成的 worker，不再先跑一套 worker 门禁。不同 checkout、提交和阶段不复用 PASS。审计等待续跑可复用同 checkout、提交、阶段、argv/cwd、配置、环境及可执行文件内容完全一致且全部证据仍完整的成功波次；失败和未完成波次不复用。实际 after_implement hook 会触发新的 post-hook 验证。外部服务、可变外部夹具或依赖目录需要每次检查时，设置 execution.reuse_verification=false。
+同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
+
+## 续跑不清零
+
+续跑先对账原始检出：若其 HEAD 只是吸收了已接受的集成历史（例如用户把原分支 fast-forward 到集成分支），只更新记录的原始提交，不合并、不重新规划、不重新验证。否则合并原始改动，并只按原始一侧新增的文件分类：命中某 phase 原生源目录的改动只重开该 phase（重新规划其新增任务），依赖它的 phase 保留已接受工作与计划，进入 `stale_phases`；其他文件的改动把所有已完成 phase 标为 stale。stale phase 在全部选中 phase 完成后、交付前只重跑命令门（`stale_phase_verification` 事件），同树命中复用则不实际执行；失败走既有修复路径。审计结论不因外部代码改动重做，因为原生任务与验收引用未变。handoff 后用户直接在集成分支提交的情况按同一规则处理。
+
+### 源变化不丢弃在途工作
+
+运行中若原始检出的规范文件发生变化，而宿主仍持有或正在集成工作，协调器记录 `source_drift_deferred` 并继续：在途 attempt 照常提交并对照当前集成版本验证集成，期间不签发新任务；全部回执落地后再合并原始改动（`source_reconciled`）并重新进入循环。只有在没有任何在途工作时，源漂移才会立刻暂停。续跑时若原始检出已前进而在途工作尚未结束，同样记录 `source_reconcile_deferred` 而不是要求撤销。
+
+### 计划增量扩展
+
+原生跟踪文件追加了新任务（收敛修复或用户编辑）时，不再整体重新规划：已接受的计划保留，只把未覆盖的新任务交给 planner（packet 的 `snapshot.tasks` 只含新增任务，`metadata.existing_plan` 列出已有任务），返回的任务追加到计划末尾并默认依赖原计划的叶子任务（`plan_extended`，提交 `sa: extend execution plan`）。只有当计划覆盖的源任务被删除时才会整体重新规划。
+
+### 审计复用与重复失败
+
+完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
+
+### 分阶段检查与规划护栏
+
+`[[task_verification]]`、`[[phase_verification]]`、`[[milestone_verification]]` 分别只在任务候选、phase 门槛和里程碑门槛执行；`[[verification]]` 保持原语义（每个阶段）。昂贵的全量套件放到 phase 或 milestone 级，worker/combined 只跑快速检查，combined 对已完成任务检查的累加也只涉及任务级命令。
+
+检查 argv 中单个元素超过 1024 字节，或包含 base64 / b85decode / zlib.decompress 等编码载荷，会被 `invalid_command: inline_script_argv` 拒绝；规划指引要求脚本必须是任务 `writes` 中声明的文件。preflight 把 `writes` 中将创建的脚本（`check_script_deferred`）和可执行文件（`check_executable_deferred`，不再要求带目录前缀或执行位）视为延后而不是缺失；不在 writes 中且不存在的脚本操作数报 `check_script_missing`。
+
+规划包的 `verification_environment` 现在包含实际运行时版本（node、python3、go、cargo、bun、npm、git）、`package.json` scripts、项目清单文件、已有测试文件（最多 100 条，附总数）以及常见缓存目录是否被 git 忽略；`previous_planning_failures` 列出该规划单元历史上全部被拒绝的候选（最多 10 条）及其诊断代码。
+
+预算硬上限：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72 小时`，超出需显式 `[execution] unsafe_budgets = true`；已有 run 的账本配置同样受限，可用 `prepare --run-id … --reload-config` 读取修改后的项目配置。doctor 对超过默认值两倍的 `max_attempts`、`max_repair_rounds`、`run_timeout_seconds`、`no_progress_limit` 以及 `unsafe_budgets=true` 输出 `budget_warning`。
+
+### 自动回收 worktree 与账本分表
+
+attempt 进入 integrated / superseded / revoked / operator_resolved、非 implement 的 accepted，或是某任务较旧的 failed（每个未完成任务保留最新 `retain_failed_worktrees` 个，默认 1）后，协调器在每次收尾时先把 worker 相对 base_commit 的补丁写入 `runs/<run>/attempts/<attempt>/patch.diff` 并记录 `patch_hash`，再 `git worktree remove --force` 其检出；分支引用、输入/结果/证据全部保留，attempt 标记 `worktree_state = reclaimed`。已接受或已放弃的候选（`intent-*`）和对账（`reconcile-*`）检出同样回收。integration、原始检出、持有租约或已提交回执的工作从不回收。`[execution] reclaim_worktrees = "never"` 关闭自动回收。 alpha.15 引入的 `automatic_cleanup = false` 同样关闭自动回收与交接时维护，`reuse_verification = false` 等价于 `verification_reuse = "none"`。交接时维护只回收无主、干净、无 ignored 数据的已关闭只读检出，结果写入 `runs/<run>/maintenance.json`；规划与审计包会复用一个已关闭的干净只读检出而不是每次新建。重试指纹改读持久化的 `patch_hash`，不再依赖检出。
+
+`run.cleanup` 不再因「含 ignored 文件」保留已关闭的 worktree：证据在 `runs/` 下，构建产物不是证据。
+
+账本 schema 4 把 attempts 和 evidence 拆成 `run_attempts` / `run_evidence` 行：心跳、单条验证或一次状态变更只写一行，而不是整体重写几 MB 的 run 载荷。首次以新版本写入时在同一事务内从 schema 2/3 的整体载荷迁移，迁移前先做 `VACUUM INTO` 备份；旧版 CLI 以只读方式仍能读取旧格式，但拒绝写入新版账本。JSON/MCP 的 run 形状不变。
+
+### run.forensics
+
+只读的 `run.forensics {run_id}` 返回异常列表与度量：同一命令多次失败（`repeated_failing_check`）、单任务 attempt 过多（`task_attempt_churn`）、超过两小时无心跳的在途请求（`idle_outstanding_request`）、phase 被重复完成、频繁源对账、反复 handoff、待合并源、stale phase、worktree 积压、修复轮签名，以及尝试分布、执行/复用检查数、事件数、账本跨度。它不修改任何状态；先看它，再决定 revoke、revise 还是继续。
+
+### 宿主能力声明
+
+`[host] capabilities` 表（例如 `isolation = "worktree"`、`background_dispatch = "true"`）与 `max_concurrency`、`lease_seconds` 一起作为 `host_capacity` 出现在 prepare / apply-result / next 的响应里，skill 不再要求宿主自行评估能力。
 
 ## 失败诊断与进度
 
 每个检查保存 `result.json`，包含阶段、准备/检查步骤、命令、目录、提交、耗时、退出码、失败类型，以及 stdout/stderr 文件和哈希。公共错误只提供诊断位置，避免把任意原始输出复制到会话。超时、取消、无法启动、日志限额、断言失败和源码变化会分开标注。
 
-progress 的 overhead 展示尝试类型/状态、验证次数、历史失败、修订次数，以及有记录部分的验证耗时。旧证据没有耗时，因此必须看 duration_coverage，不能把 partial 当完整总耗时。
+progress 的 overhead 展示尝试类型/状态、验证次数（`verification_checks`，含复用）、实际执行次数（`executed_checks`）、复用次数（`reused_checks`）、历史失败、修订次数，以及有记录部分的验证耗时。旧证据没有耗时，因此必须看 duration_coverage，不能把 partial 当完整总耗时。
 
 显式包含独立执行仓库：
 

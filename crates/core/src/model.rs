@@ -206,6 +206,13 @@ pub struct Attempt {
     pub evidence: Vec<Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<serde_json::Value>,
+    /// sha256 of the worker patch against base_commit, persisted before its worktree is
+    /// reclaimed so retry fingerprints never need the checkout again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hash: Option<String>,
+    /// `reclaimed` once the worktree directory was removed; the branch and patch stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_state: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationIntent {
@@ -245,6 +252,10 @@ pub struct Run {
     pub config: crate::config::Config,
     #[serde(default)]
     pub completed_phases: Vec<String>,
+    /// Completed phases whose command gates must run again before delivery because the
+    /// tree changed underneath them; their accepted work and plans are retained.
+    #[serde(default)]
+    pub stale_phases: Vec<String>,
     #[serde(default)]
     pub phase_hashes: BTreeMap<String, String>,
     #[serde(default)]
@@ -277,15 +288,23 @@ impl Run {
         format!("{phase}/{task}")
     }
     pub fn has_outstanding_host_work(&self) -> bool {
+        // Index the latest success per unit once instead of rescanning per attempt.
+        let mut latest_success = BTreeMap::<(&str, &str, &str), usize>::new();
+        for (index, attempt) in self.attempts.iter().enumerate() {
+            if matches!(attempt.status.as_str(), "accepted" | "integrated") {
+                latest_success.insert((&attempt.kind, &attempt.task_id, &attempt.phase_id), index);
+            }
+        }
         self.attempts.iter().enumerate().any(|(index, attempt)| {
             matches!(attempt.status.as_str(), "issued" | "claimed" | "receiving")
                 || (attempt.status == "submitted"
-                    && !self.attempts.iter().skip(index + 1).any(|other| {
-                        other.kind == attempt.kind
-                            && other.task_id == attempt.task_id
-                            && other.phase_id == attempt.phase_id
-                            && matches!(other.status.as_str(), "accepted" | "integrated")
-                    }))
+                    && !latest_success
+                        .get(&(
+                            attempt.kind.as_str(),
+                            attempt.task_id.as_str(),
+                            attempt.phase_id.as_str(),
+                        ))
+                        .is_some_and(|&success| success > index))
         })
     }
 }
@@ -308,6 +327,32 @@ pub struct HostState {
     /// Earlier failures stay in history, but do not consume the revised task's retry budget.
     #[serde(default)]
     pub task_retry_epochs: BTreeMap<String, usize>,
+    /// Passing checks keyed by tree, checkout class, command and environment identity.
+    /// Only identical keys reuse evidence; failures are never stored.
+    #[serde(default)]
+    pub verification_cache: BTreeMap<String, VerificationPass>,
+    /// Fully passed audits keyed by phase, scope, integration tree and acceptance ids.
+    #[serde(default)]
+    pub audit_cache: BTreeMap<String, Vec<AuditItem>>,
+    /// The original source changed while host work was outstanding; merge it once that
+    /// work has been received instead of revoking it.
+    #[serde(default)]
+    pub reconcile_pending: bool,
+    /// Repair rounds per `phase:failure-signature`; the same failure recurring after a
+    /// repair stops the loop instead of spending the whole budget on it.
+    #[serde(default)]
+    pub repair_signatures: BTreeMap<String, u32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationPass {
+    pub stage: String,
+    pub wave_id: String,
+    pub tree: String,
+    pub revision: String,
+    pub manifest: String,
+    pub log: String,
+    pub log_hash: String,
+    pub finished_at: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkLease {

@@ -298,7 +298,7 @@ fn cleanup_invoked_inside_a_worker_retains_its_current_directory() {
 }
 
 #[test]
-fn active_cleanup_preserves_live_recovery_references_and_ignored_artifacts() {
+fn active_cleanup_preserves_live_recovery_references_and_reclaims_closed_ignored_output() {
     use spec_autonomous_core::cleanup::{CleanupScope, cleanup_reviewed};
     let mut f = Fixture::new();
     f.run.status = "awaiting_host".into();
@@ -338,9 +338,11 @@ fn active_cleanup_preserves_live_recovery_references_and_ignored_artifacts() {
         ..Default::default()
     };
     let preview = cleanup_reviewed(&f.repo.root, &f.run.id, false, scope, None).unwrap();
+    // The closed integrated worktree and the failed worktree of a completed task are
+    // eligible; ignored build output in a closed checkout is not evidence.
     assert_eq!(
         preview["worktrees"].as_array().unwrap().len(),
-        1,
+        2,
         "{preview}"
     );
     let lock = spec_autonomous_core::state::Lease::acquire(&f.repo).unwrap();
@@ -364,8 +366,12 @@ fn active_cleanup_preserves_live_recovery_references_and_ignored_artifacts() {
         preview["plan_hash"].as_str(),
     )
     .unwrap();
-    assert_eq!(result["removed"], json!([closed.worktree]));
-    for a in [accepted, live, referenced, ignored, retry] {
+    assert_eq!(
+        result["removed"],
+        json!([closed.worktree, ignored.worktree]),
+        "{result}"
+    );
+    for a in [accepted, live, referenced, retry] {
         assert!(Path::new(&a.worktree).exists());
     }
     assert!(Path::new(&f.run.integration).exists());

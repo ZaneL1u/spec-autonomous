@@ -198,14 +198,27 @@ impl Coordinator<'_> {
             }
             let actual = git::head(integration)?;
             if actual != self.run.accepted_head {
+                // Native work landed directly on the integration branch. Keep completed
+                // phases and plans; reopen only phases whose source changed and re-gate the rest.
+                let changed = git::command(
+                    integration,
+                    &[
+                        "diff",
+                        "--name-only",
+                        "-z",
+                        &self.run.accepted_head,
+                        &actual,
+                        "--",
+                    ],
+                    None,
+                )?;
                 self.run.accepted_head = actual;
-                self.run.plans.clear();
-                self.run.completed_phases.clear();
-                self.run.phase_hashes.clear();
-                if let Some(host) = self.run.host.as_mut() {
-                    host.pending_repair = None;
-                    host.source_revisions.clear();
-                }
+                let files: Vec<String> = changed
+                    .split('\0')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                self.invalidate_for_changes(&files);
             }
         }
         if git::head(Path::new(&self.run.integration))? != self.run.accepted_head {
@@ -214,28 +227,92 @@ impl Coordinator<'_> {
         self.reconcile_source()?;
         self.save("reconciled")
     }
+    /// Classify changed paths against phase sources. A changed native source reopens only
+    /// its own phase for planning; any other change marks completed phases stale so their
+    /// command gates run again before delivery. Accepted work and plans are never cleared.
+    fn invalidate_for_changes(&mut self, files: &[String]) {
+        let source_prefix = |run: &Run, phase: &Phase| -> String {
+            let dir = if run.milestone.framework == Framework::Openspec {
+                format!("openspec/changes/{}", phase.source.selector)
+            } else {
+                phase.source.selector.clone()
+            };
+            let dir = if run.project_relative == "." {
+                dir
+            } else {
+                format!("{}/{dir}", run.project_relative)
+            };
+            format!("{dir}/")
+        };
+        let prefixes: Vec<(String, String)> = self
+            .run
+            .milestone
+            .phases
+            .iter()
+            .map(|p| (p.id.clone(), source_prefix(&self.run, p)))
+            .collect();
+        let native: Vec<String> = prefixes
+            .iter()
+            .filter(|(_, prefix)| files.iter().any(|path| path.starts_with(prefix)))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let foreign = files
+            .iter()
+            .any(|path| !prefixes.iter().any(|(_, prefix)| path.starts_with(prefix)));
+        // The recorded plan stays: execution extends it for appended native tasks and
+        // only replans when source tasks disappeared.
+        for phase in native {
+            self.reopen(&phase);
+        }
+        if foreign {
+            // Declared read/write sets narrow the stale set; unknown coverage marks every
+            // completed phase stale. Accepted work is kept either way.
+            let affected = plan::affected_phases(&self.run, files);
+            for id in affected {
+                self.mark_stale(&id);
+            }
+            if let Some(host) = self.run.host.as_mut() {
+                host.pending_repair = None;
+            }
+        }
+    }
     pub(super) fn reconcile_source(&mut self) -> Result<()> {
         let origin = Path::new(&self.run.origin);
         let current = git::head(origin)?;
         if current == self.run.origin_head {
+            if let Some(host) = self.run.host.as_mut() {
+                host.reconcile_pending = false;
+            }
             return Ok(());
         }
         if !git::clean(origin)? {
             bail!("dirty_checkout: commit native changes before resuming");
         }
-        let outstanding: Vec<_> = self
-            .run
-            .attempts
-            .iter()
-            .filter(|a| matches!(a.status.as_str(), "issued" | "claimed" | "receiving"))
-            .map(|a| format!("{}({})", a.id, a.status))
-            .collect();
-        if !outstanding.is_empty() {
+        if !git::ancestor(origin, &self.run.origin_head, &current) {
             bail!(
-                "source_drift: outstanding host work blocks new source; stop the host and revoke [{}] with work.revoke before retrying run {}",
-                outstanding.join(", "),
-                self.run.id
+                "needs_input: original history was rewritten; preserve the integration branch and choose a new baseline"
             );
+        }
+        if git::ancestor(origin, &current, &self.run.accepted_head) {
+            // The original checkout only absorbed accepted integration history (for example a
+            // user fast-forward). Nothing foreign exists to merge or to invalidate.
+            self.run.origin_head = current;
+            self.run.origin_sources.clear();
+            self.capture_sources()?;
+            if let Some(host) = self.run.host.as_mut() {
+                host.reconcile_pending = false;
+            }
+            return self.save("origin_advanced");
+        }
+        if self.run.has_outstanding_host_work() {
+            // Issued, claimed and submitted work is integrated against the current
+            // integration revision first; the merge waits instead of revoking it.
+            let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+            if !host.reconcile_pending {
+                host.reconcile_pending = true;
+                self.save("source_reconcile_deferred")?;
+            }
+            return Ok(());
         }
         for attempt in &mut self.run.attempts {
             if attempt.status == "submitted" {
@@ -254,19 +331,15 @@ impl Coordinator<'_> {
                 }
             }
         }
-        if !git::ancestor(origin, &self.run.origin_head, &current) {
-            bail!(
-                "needs_input: original history was rewritten; preserve the integration branch and choose a new baseline"
-            );
-        }
+        // Only changes on the original side since it diverged from accepted integration
+        // history count as foreign; accepted commits the user pulled in are not.
         let changed = git::command(
             origin,
             &[
                 "diff",
                 "--name-only",
                 "-z",
-                &self.run.origin_head,
-                &current,
+                &format!("{}...{current}", self.run.accepted_head),
                 "--",
             ],
             None,
@@ -301,59 +374,12 @@ impl Coordinator<'_> {
             )?;
             self.run.milestone = m;
         }
-        let files: Vec<_> = changed.split('\0').filter(|s| !s.is_empty()).collect();
-        let source_prefix = |phase: &Phase| -> String {
-            let dir = if self.run.milestone.framework == Framework::Openspec {
-                format!("openspec/changes/{}", phase.source.selector)
-            } else {
-                phase.source.selector.clone()
-            };
-            if self.run.project_relative == "." {
-                dir
-            } else {
-                format!("{}/{dir}", self.run.project_relative)
-            }
-        };
-        let all_native = files.iter().all(|path| {
-            self.run
-                .milestone
-                .phases
-                .iter()
-                .any(|p| path.starts_with(&format!("{}/", source_prefix(p))))
-        });
-        if all_native {
-            let affected: Vec<_> = self
-                .run
-                .milestone
-                .phases
-                .iter()
-                .filter(|p| {
-                    files
-                        .iter()
-                        .any(|path| path.starts_with(&format!("{}/", source_prefix(p))))
-                })
-                .map(|p| p.id.clone())
-                .collect();
-            for phase in affected {
-                self.reopen(&phase);
-                self.run.plans.remove(&phase);
-            }
-        } else {
-            let affected = plan::affected_phases(
-                &self.run,
-                &files.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>(),
-            );
-            for phase in affected {
-                self.reopen(&phase);
-                self.run.plans.remove(&phase);
-                if let Some(host) = self.run.host.as_mut() {
-                    host.source_revisions.remove(&phase);
-                }
-            }
-            if let Some(host) = self.run.host.as_mut() {
-                host.pending_repair = None;
-            }
-        }
+        let files: Vec<String> = changed
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        self.invalidate_for_changes(&files);
         let mut range = self.run.range.clone();
         if range.only.is_some() {
             range.only = self.run.selected_phases.first().cloned();
@@ -380,6 +406,9 @@ impl Coordinator<'_> {
         git::advance(Path::new(&self.run.integration), &target)?;
         self.run.accepted_head = target;
         self.run.intents.last_mut().unwrap().state = "accepted".into();
+        if let Some(host) = self.run.host.as_mut() {
+            host.reconcile_pending = false;
+        }
         self.save("source_reconciled")
     }
 }

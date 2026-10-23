@@ -213,6 +213,13 @@ pub fn parse_inventory(text: &str) -> Result<Vec<Worktree>> {
 pub fn head(root: &Path) -> Result<String> {
     Ok(command(root, &["rev-parse", "HEAD"], None)?.trim().into())
 }
+/// Content identity of the committed tree; equal trees have identical tracked contents
+/// regardless of commit history.
+pub fn tree(root: &Path) -> Result<String> {
+    Ok(command(root, &["rev-parse", "HEAD^{tree}"], None)?
+        .trim()
+        .into())
+}
 pub fn clean(root: &Path) -> Result<bool> {
     Ok(command(
         root,
@@ -263,6 +270,23 @@ pub fn changed(root: &Path, base: &str) -> Result<Vec<String>> {
 pub fn patch(root: &Path, base: &str) -> Result<String> {
     command(root, &["add", "--all"], None)?;
     command(root, &["diff", "--cached", "--binary", base, "--"], None)
+}
+/// Paths touched by a stored binary patch, from its `diff --git a/<path> b/<path>` headers.
+pub fn patch_files(patch: &str) -> Vec<String> {
+    let mut files = vec![];
+    for line in patch.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git a/") {
+            let path = match rest.rfind(" b/") {
+                Some(split) if rest[split + 3..] == rest[..split] => rest[..split].to_string(),
+                Some(split) => rest[split + 3..].to_string(),
+                None => rest.to_string(),
+            };
+            if !files.contains(&path) {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 pub fn apply(root: &Path, patch: &str) -> Result<()> {
     if !patch.trim().is_empty() {

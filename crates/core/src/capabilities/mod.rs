@@ -19,6 +19,7 @@ use std::{
 pub mod catalog;
 mod checks;
 mod documents;
+mod forensics;
 mod git_tools;
 mod lifecycle;
 mod queries;
@@ -108,13 +109,27 @@ pub fn guard_project_idle(root: &Path) -> Result<()> {
     }
     Ok(())
 }
+fn host_arg(args: &Value) -> Result<Option<crate::model::HostIdentity>> {
+    match args.get("host") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => Ok(Some(serde_json::from_value(value.clone()).context(
+            "invalid_arguments: host must be {host_id, session_id, fresh_context}",
+        )?)),
+    }
+}
 pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
     catalog::validate(name, args)?;
     let root = crate::detect(root, None)?.root;
     let mut result = match name {
         "inspect" => queries::inspect(&root, args)?,
         "progress" => crate::progress::with_related(&root, args)?,
-        "next" => engine::next(&root, args["run_id"].as_str())?,
+        "next" => engine::next(&root, args["run_id"].as_str(), host_arg(args)?.as_ref())?,
+        "request.get" => engine::request_get(
+            &root,
+            text(args, "run_id")?,
+            text(args, "request_id")?,
+            host_arg(args)?.as_ref(),
+        )?,
         "discussion.next" => {
             crate::discussion::next(&root, text(args, "run_id")?, args["phase_id"].as_str())?
         }
@@ -186,7 +201,49 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
                     &mut observer,
                 )?
             };
-            engine::work_view(&run, &Repository::discover(&root)?.runtime()?)?
+            let mut run = run;
+            if args["discussion_auto"] == true
+                && run.status == "needs_input"
+                && run
+                    .blocker
+                    .as_deref()
+                    .is_some_and(|b| b.starts_with("discussion_required"))
+                && let Some(phase) = run.current_phase.clone()
+            {
+                // The caller accepted the recommended defaults up front: apply them and
+                // continue in the same call instead of a second round trip.
+                let cards = crate::discussion::next(&root, &run.id, Some(&phase))?;
+                crate::discussion::apply(
+                    &root,
+                    &run.id,
+                    Some(&phase),
+                    cards["source_hash"].as_str().unwrap_or_default(),
+                    &[],
+                    true,
+                )?;
+                run = engine::resume_with(
+                    &root,
+                    &run.id,
+                    engine::ResumeOptions::default(),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut |_: &crate::model::Run, _: &str| {},
+                )?;
+            }
+            let mut view = if let Some(host) = host_arg(args)? {
+                engine::auto_claim(&root, &run.id, &host)?
+            } else {
+                engine::work_view(&run, &Repository::discover(&root)?.runtime()?)?
+            };
+            if run.status == "needs_input"
+                && run
+                    .blocker
+                    .as_deref()
+                    .is_some_and(|b| b.starts_with("discussion_required"))
+                && let Some(phase) = run.current_phase.as_deref()
+            {
+                view["discussion"] = crate::discussion::next(&root, &run.id, Some(phase))?;
+            }
+            view
         }
         "apply-result" | "task.complete" => {
             let result = serde_json::from_value(args["result"].clone())?;
@@ -199,6 +256,7 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
                 Arc::new(AtomicBool::new(false)),
                 &mut |_, _| {},
                 args.get("usage").cloned().filter(|value| !value.is_null()),
+                args["claim_next"] == true,
             )?
         }
         "work.claim" | "task.claim" => engine::claim(
@@ -223,7 +281,8 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
             &root,
             text(args, "run_id")?,
             text(args, "request_id")?,
-            text(args, "token")?,
+            args["token"].as_str(),
+            host_arg(args)?.as_ref(),
             args["host_stopped"] == true,
             text(args, "reason")?,
         )?,
@@ -233,6 +292,7 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         "run.pause" => engine::host_control(&root, text(args, "run_id")?, "pause")?,
         "run.cancel" => engine::host_control(&root, text(args, "run_id")?, "cancel")?,
         "run.revise" => crate::run_revision::revise(&root, args)?,
+        "run.forensics" => forensics::run_forensics(&root, text(args, "run_id")?)?,
         "run.cleanup" => crate::cleanup::cleanup_reviewed(
             &root,
             text(args, "run_id")?,

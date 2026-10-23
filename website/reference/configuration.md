@@ -34,13 +34,30 @@ lease_seconds = 1800
 | `max_context_bytes` | 内联工作包上下文上限，超出时改用 hash 引用 |
 | `max_source_bytes` | 原生来源快照预算 |
 | `max_planner_tasks` | planner 单批原生任务上限 |
+| `verification_reuse` | `same-tree`（默认）在同一源码树、同命令、同环境、同检出类别上复用已通过的验证证据；`none` 每个波次重新执行 |
+| `unsafe_budgets` | 默认 `false`：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 259200`（72 小时）；设为 `true` 才允许超出，doctor 会告警 |
+| `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
+| `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支 |
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
 
+## 分阶段验证命令
+
+| 配置 | 运行阶段 |
+| --- | --- |
+| `verification` | 每个阶段：worker、combined、phase、post-hook、milestone |
+| `task_verification` | 只在任务候选验证时（worker、combined） |
+| `phase_verification` | 只在 phase 门槛（phase、post-hook、stale 复验） |
+| `milestone_verification` | 只在里程碑门槛 |
+
+把快速的单元测试放进 `task_verification`，把 `make race`、全量集成这类昂贵套件放进 `phase_verification` 或 `milestone_verification`，每个任务就不再重复跑整套。规划器拿到的「项目级检查」是 `verification` 与 `task_verification` 之和。
+
+检查的 argv 不能内嵌脚本：单个元素超过 1024 字节，或含 base64 / b85decode / zlib.decompress 这类编码载荷，会被 `invalid_command: inline_script_argv` 拒绝。需要脚本时，把它写成任务 `writes` 里声明的文件再执行；preflight 会把尚不存在但已声明的脚本和可执行文件视为 deferred 而不是缺失。
+
 ## `host`
 
-`max_concurrency` 表示宿主确认能同时管理多少个 fresh session。没有声明时保守串行。
+`max_concurrency` 表示宿主确认能同时管理多少个 fresh session。没有声明时保守串行。 `lease_seconds` 是心跳租约（现在只用于 `stale` 信息）。`[host.capabilities]` 可声明宿主能力（如 `isolation = "worktree"`、`background_dispatch = "true"`），随 `host_capacity` 返回给宿主。
 
 `lease_seconds` 用于判断工作包心跳是否过期。过期只代表状态未知，不代表 Agent 已停止，也不会自动转让所有权。
 

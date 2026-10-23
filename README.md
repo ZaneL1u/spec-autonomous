@@ -10,6 +10,7 @@
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
+- [宿主协议：认领、令牌、回执与停止条件](docs/host-protocol.md)
 - [测试和独立 mock 宿主](docs/testing.md)
 - [本轮验收](docs/validation/host-driven.md)
 - [从 alpha.1 迁移](docs/migration-alpha2.md)
