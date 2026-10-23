@@ -309,18 +309,17 @@ impl Coordinator<'_> {
             paths::inside(&worker, file)?;
         }
         git::commit(&worker, &format!("sa: worker candidate {}", task.id))?;
-        self.verify(
-            &worker.join(&self.run.project_relative),
-            &self.task_checks(task),
-            "worker",
-        )?;
-        if !git::clean(&worker)? {
-            bail!("verification_mutated_tree: worker tests changed tracked or unignored files");
-        }
         let intent_id = paths::id("intent");
-        let (candidate, _) = self
-            .repo
-            .add_worktree(&intent_id, &self.run.accepted_head)?;
+        // A completed serial worker already is the exact integration candidate.
+        // Only concurrent/baseline drift needs another isolated merge checkout.
+        let direct = attempt.base_commit == self.run.accepted_head;
+        let candidate = if direct {
+            worker.clone()
+        } else {
+            self.repo
+                .add_worktree(&intent_id, &self.run.accepted_head)?
+                .0
+        };
         provider::copy_ignored_context(
             &self.project(),
             &candidate.join(&self.run.project_relative),
@@ -338,7 +337,9 @@ impl Coordinator<'_> {
         });
         let intent_index = self.run.intents.len() - 1;
         self.save("integration_intent")?;
-        git::apply(&candidate, &git::patch(&worker, &attempt.base_commit)?)?;
+        if !direct {
+            git::apply(&candidate, &git::patch(&worker, &attempt.base_commit)?)?;
+        }
         failpoint("after_candidate_patch");
         let head = git::commit(
             &candidate,
@@ -359,11 +360,15 @@ impl Coordinator<'_> {
                 combined.extend(accepted.verification.clone());
             }
         }
-        self.verify(
+        if let Err(error) = self.verify(
             &candidate.join(&self.run.project_relative),
             &combined,
             "combined",
-        )?;
+        ) {
+            self.run.intents[intent_index].state = "abandoned".into();
+            self.save("candidate_verification_failed")?;
+            return Err(error);
+        }
         if !git::clean(&candidate)? {
             bail!("verification_mutated_tree: combined tests changed tracked or unignored files");
         }
@@ -482,10 +487,9 @@ impl Coordinator<'_> {
         if changed != vec![expected] {
             bail!("scope_violation: convergence changed other files");
         }
-        git::apply(
-            Path::new(&self.run.integration),
-            &git::patch(&worker, &self.run.accepted_head)?,
-        )?;
+        let patch = git::patch(&worker, &self.run.accepted_head)?;
+        git::commit(&worker, "sa: preserve native convergence candidate")?;
+        git::apply(Path::new(&self.run.integration), &patch)?;
         self.run.accepted_head = git::commit(
             Path::new(&self.run.integration),
             "sa: append in-scope convergence tasks",

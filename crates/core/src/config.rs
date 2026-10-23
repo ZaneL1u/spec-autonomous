@@ -33,6 +33,10 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Execution {
+    /// Reuse complete same-input verification while waiting for semantic work.
+    pub reuse_verification: bool,
+    /// Reclaim closed, unreferenced, clean checkouts at host handoffs.
+    pub automatic_cleanup: bool,
     pub mode: String,
     pub max_workers: usize,
     pub max_attempts: u32,
@@ -51,9 +55,9 @@ pub struct Execution {
     /// Lift the retry, repair-round and run-deadline caps. Off by default because runs
     /// with those budgets looped for days before anyone looked.
     pub unsafe_budgets: bool,
-    /// `terminal` removes an attempt's worktree once it is integrated, superseded,
-    /// revoked, accepted (non-implement) or an older failure, after its patch is stored;
-    /// `never` keeps every worktree for manual run.cleanup.
+    /// `terminal` removes a writing attempt's worktree once it is integrated, superseded,
+    /// revoked or an older failure, after its patch is stored; `never` keeps every
+    /// worktree for manual run.cleanup. `automatic_cleanup = false` also disables it.
     pub reclaim_worktrees: String,
     /// Newest failed worktrees kept per task for inspection while the task is open.
     pub retain_failed_worktrees: u32,
@@ -107,6 +111,8 @@ impl Default for Config {
 impl Default for Execution {
     fn default() -> Self {
         Self {
+            reuse_verification: true,
+            automatic_cleanup: true,
             mode: "autonomous".into(),
             max_workers: 3,
             max_attempts: 3,

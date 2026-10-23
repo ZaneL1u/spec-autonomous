@@ -147,7 +147,10 @@ fn plan(repo: &Repository, run: &Run, runs: &[Run], delete_branches: bool) -> Re
         let process_active = a.pid.is_some_and(|pid| !process::identity(pid).is_empty());
         let reason = if lease_active || process_active {
             Some("owner_not_stopped")
-        } else if !run.terminal() && a.status == "accepted" {
+        } else if !run.terminal()
+            && a.status == "accepted"
+            && !matches!(a.kind.as_str(), "native-planning" | "converge")
+        {
             Some("recovery_worktree_retained")
         } else if !run.terminal()
             && a.kind == "implement"
@@ -179,7 +182,12 @@ fn plan(repo: &Repository, run: &Run, runs: &[Run], delete_branches: bool) -> Re
     }
     for intent in &run.intents {
         let candidate = Candidate {
-            branch: format!("codex/sa/{}", intent.id),
+            branch: run
+                .attempts
+                .iter()
+                .find(|a| a.worktree == intent.worktree)
+                .map(|a| a.branch.clone())
+                .unwrap_or_else(|| format!("codex/sa/{}", intent.id)),
             reason: if matches!(intent.state.as_str(), "accepted" | "abandoned") {
                 None
             } else {
@@ -392,6 +400,35 @@ fn execute(
             .filter_map(|r| r["path"].as_str())
             .collect::<Vec<_>>()
     );
+    result["retained_details"] = json!(retained);
+    Ok(result)
+}
+
+/// Called only by a coordinator already holding the repository writer lease.
+/// Unlike explicit terminal cleanup, automatic maintenance always retains ignored data.
+pub(crate) fn at_handoff(repo: &Repository, run: &Run, runs: &[Run]) -> Result<Value> {
+    let mut result = plan(repo, run, runs, false)?;
+    let mut removed = vec![];
+    let mut retained = result["retained_details"].as_array().unwrap().clone();
+    for item in result["worktrees"].as_array().unwrap() {
+        let path = item["path"].as_str().unwrap();
+        let checkout = Path::new(path);
+        let ignored = git::command(
+            checkout,
+            &["ls-files", "--others", "--ignored", "--exclude-standard"],
+            None,
+        )?;
+        if !ignored.is_empty() {
+            retained.push(json!({"path":path,"reason":"ignored_artifacts_retained"}));
+        } else if git::head(checkout).is_ok_and(|h| h == item["head"])
+            && git::command(&repo.root, &["worktree", "remove", "--", path], None).is_ok()
+        {
+            removed.push(path.to_owned());
+        } else {
+            retained.push(json!({"path":path,"reason":"worktree_changed_or_remove_failed"}));
+        }
+    }
+    result["removed"] = json!(removed);
     result["retained_details"] = json!(retained);
     Ok(result)
 }

@@ -45,7 +45,7 @@ progress 的 resource_summary 给出工作树数量、状态分布和压力提�
 
 | 变量 | 含义 |
 | --- | --- |
-| `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的报告/临时准备目录，位于 Git common runtime 中 |
+| `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的 artifacts 报告/临时准备目录，与正在写入的进程日志分开 |
 | `SA_VERIFY_WAVE_ID` | 波次唯一 ID，可用于生成独立测试资源名称 |
 | `SA_VERIFY_STAGE` | worker、combined、phase 等真实执行阶段 |
 | `SA_VERIFY_REVISION` | 正在验证的源码提交 |
@@ -61,7 +61,7 @@ argv = ["node", "scripts/prepare-verification.mjs"]
 idempotent = true
 ```
 
-钩子每波次执行一次，先于检查，使用同一组环境变量。它应只准备该波次拥有的资源，将连接信息或资源凭据放在受保护的波次目录中，检查读取这些文件；子进程修改环境不会自动传回协调器。以波次 ID 保证幂等，worker 与 combined 使用不同数据库或可重建夹具，禁止复用已被消费的状态。准备失败则不运行后续检查。不得修改被验证源码。
+钩子每波次执行一次，先于检查，使用同一组环境变量。它应只准备该波次拥有的资源，将连接信息或资源凭据放在受保护的波次目录中，检查读取这些文件；子进程修改环境不会自动传回协调器。以波次 ID 保证幂等，不同候选/阶段使用不同数据库或可重建夹具，禁止复用已被消费的状态。准备失败则不运行后续检查。不得修改被验证源码。
 
 这是准备契约，不是通用数据库管理器。数据库销毁、VM 所有权及凭据保护仍由项目的准备脚本负责。本次不会替现有业务脚本自动重置数据库。
 
@@ -97,7 +97,7 @@ idempotent = true
 
 ### 自动回收 worktree 与账本分表
 
-attempt 进入 integrated / superseded / revoked / operator_resolved、非 implement 的 accepted，或是某任务较旧的 failed（每个未完成任务保留最新 `retain_failed_worktrees` 个，默认 1）后，协调器在每次收尾时先把 worker 相对 base_commit 的补丁写入 `runs/<run>/attempts/<attempt>/patch.diff` 并记录 `patch_hash`，再 `git worktree remove --force` 其检出；分支引用、输入/结果/证据全部保留，attempt 标记 `worktree_state = reclaimed`。已接受或已放弃的候选（`intent-*`）和对账（`reconcile-*`）检出同样回收。integration、原始检出、持有租约或已提交回执的工作从不回收。`[execution] reclaim_worktrees = "never"` 关闭自动回收。重试指纹改读持久化的 `patch_hash`，不再依赖检出。
+attempt 进入 integrated / superseded / revoked / operator_resolved、非 implement 的 accepted，或是某任务较旧的 failed（每个未完成任务保留最新 `retain_failed_worktrees` 个，默认 1）后，协调器在每次收尾时先把 worker 相对 base_commit 的补丁写入 `runs/<run>/attempts/<attempt>/patch.diff` 并记录 `patch_hash`，再 `git worktree remove --force` 其检出；分支引用、输入/结果/证据全部保留，attempt 标记 `worktree_state = reclaimed`。已接受或已放弃的候选（`intent-*`）和对账（`reconcile-*`）检出同样回收。integration、原始检出、持有租约或已提交回执的工作从不回收。`[execution] reclaim_worktrees = "never"` 关闭自动回收。 alpha.15 引入的 `automatic_cleanup = false` 同样关闭自动回收与交接时维护，`reuse_verification = false` 等价于 `verification_reuse = "none"`。交接时维护只回收无主、干净、无 ignored 数据的已关闭只读检出，结果写入 `runs/<run>/maintenance.json`；规划与审计包会复用一个已关闭的干净只读检出而不是每次新建。重试指纹改读持久化的 `patch_hash`，不再依赖检出。
 
 `run.cleanup` 不再因「含 ignored 文件」保留已关闭的 worktree：证据在 `runs/` 下，构建产物不是证据。
 
@@ -126,3 +126,8 @@ spec-autonomous progress --all-worktrees --related-path /path/to/executor --json
 最多 16 个路径，以 Git common directory 去重，不递归寻找其他仓库。主仓与 related_repositories 分开计数，后者保留自己的分页和错误。MCP/能力输入为 `repository_paths`。
 
 已声明但没有 run 的里程碑显示为 `not_started`，并读取原生 tasks.md 的勾选情况；勾选不推断已验证完成。自定义任务文件、不可读取源或归档源显示不可用，不启动原生工具补写状态。
+
+
+默认 execution.automatic_cleanup=true：协调器持锁交接时仅回收归属明确、已关闭且无依赖/脏文件/锁/ignored 数据的资源；不删除分支。查看 runs/<run>/maintenance.json 获取移除清单及保留原因。execution.automatic_cleanup=false 保留工作树用于取证。只读规划和审计复用关闭的安全检出，仍要求每次 fresh-context 身份；工作树当前内容不再是旧回执的历史证据，应通过记录的 base_commit 和不可变输入/结果读取历史。
+
+资源预算随活跃 run 和宿主容量计算。单 run、单 worker 的提示预算为 7 个（用户工作区、integration、review、worker/临时集成及恢复余量）；正常顺序执行通常少于此值。它是积压告警而非强删上限；未知证据、活跃 owner、dirty/locked/ignored 数据允许超出并明确报告。

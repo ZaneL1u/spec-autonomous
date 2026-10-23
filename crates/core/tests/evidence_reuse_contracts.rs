@@ -216,13 +216,12 @@ fn identical_trees_reuse_evidence_across_stages_and_skip_the_empty_post_hook_wav
     assert_eq!(audit["work"][0]["kind"], "audit");
     let run = saved(root, id);
     assert_eq!(run.completed_tasks.len(), 1);
-    // Worker executes; the candidate tree is identical, so combined reuses it.
-    let worker = by_stage(&run, "worker");
-    assert_eq!(worker.len(), 2);
-    assert!(worker.iter().all(|e| reused_from(e).is_none()));
+    // A serial worker is its own candidate: one combined wave executes on it and no
+    // worker-only wave exists to repeat.
+    assert!(by_stage(&run, "worker").is_empty());
     let combined = by_stage(&run, "combined");
     assert_eq!(combined.len(), 2);
-    assert!(combined.iter().all(|e| reused_from(e) == Some("worker")));
+    assert!(combined.iter().all(|e| reused_from(e).is_none()));
     assert!(
         combined
             .iter()
@@ -232,7 +231,7 @@ fn identical_trees_reuse_evidence_across_stages_and_skip_the_empty_post_hook_wav
     let phase = by_stage(&run, "phase");
     assert_eq!(phase.len(), 2);
     assert!(phase.iter().all(|e| reused_from(e).is_none()));
-    assert_eq!(stages(&counter), ["worker", "phase"]);
+    assert_eq!(stages(&counter), ["combined", "phase"]);
 
     let milestone = answer_audit(root, &audit["work"][0]);
     assert_eq!(milestone["work"][0]["kind"], "audit", "{milestone}");
@@ -241,7 +240,7 @@ fn identical_trees_reuse_evidence_across_stages_and_skip_the_empty_post_hook_wav
     let gate = by_stage(&run, "milestone");
     assert_eq!(gate.len(), 2);
     assert!(gate.iter().all(|e| reused_from(e) == Some("phase")));
-    assert_eq!(stages(&counter), ["worker", "phase"]);
+    assert_eq!(stages(&counter), ["combined", "phase"]);
     for e in &run.evidence {
         let d = e.details.as_ref().unwrap();
         if d.get("reused_from").is_some() {
@@ -257,9 +256,10 @@ fn identical_trees_reuse_evidence_across_stages_and_skip_the_empty_post_hook_wav
     // Every host round trip re-enters the phase and milestone gates; with identical
     // trees those re-entries are all reuses, so only four checks ever executed.
     assert_eq!(overhead["executed_checks"], 4, "{overhead}");
-    assert_eq!(overhead["reused_checks"], 8);
-    assert_eq!(overhead["verification_checks"], 12);
-    assert_eq!(stages(&counter), ["worker", "phase"]);
+    assert_eq!(overhead["reused_checks"], 6);
+    assert_eq!(overhead["verification_checks"], 10);
+    assert_eq!(overhead["verification_reuses"], 6);
+    assert_eq!(stages(&counter), ["combined", "phase"]);
     assert_eq!(overhead["duration_coverage"], "complete");
 }
 
@@ -286,7 +286,7 @@ fn verification_reuse_none_executes_every_wave() {
     let audit = submit(root, request, receipt(&packet));
     let run = saved(root, audit["id"].as_str().unwrap());
     assert!(run.evidence.iter().all(|e| reused_from(e).is_none()));
-    assert_eq!(stages(&counter), ["worker", "combined", "phase"]);
+    assert_eq!(stages(&counter), ["combined", "phase"]);
     assert!(
         Config::load(root).is_ok(),
         "none is a valid verification_reuse value"
@@ -555,7 +555,7 @@ fn source_drift_while_work_is_outstanding_defers_the_merge_instead_of_revoking()
         "the accepted plan was extended, not replanned"
     );
     assert!(run.attempts.iter().all(|a| a.status != "revoked"));
-    assert_eq!(stages(&counter), ["worker", "phase"]);
+    assert_eq!(stages(&counter), ["combined", "phase"]);
 }
 
 #[test]

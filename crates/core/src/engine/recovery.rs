@@ -265,7 +265,10 @@ impl Coordinator<'_> {
             self.reopen(&phase);
         }
         if foreign {
-            for id in self.run.completed_phases.clone() {
+            // Declared read/write sets narrow the stale set; unknown coverage marks every
+            // completed phase stale. Accepted work is kept either way.
+            let affected = plan::affected_phases(&self.run, files);
+            for id in affected {
                 self.mark_stale(&id);
             }
             if let Some(host) = self.run.host.as_mut() {

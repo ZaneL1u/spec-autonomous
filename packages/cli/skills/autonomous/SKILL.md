@@ -28,5 +28,6 @@ MCP: sa_doctor, sa_inspect, sa_prepare, sa_apply_result, sa_next, sa_progress; s
 - `verification_preflight_failed`: prepare with the same `run_id` issues a corrected planner packet. `repair_repeated` or any `needs_input`: stop and report; the same failure twice is an operator decision, not a retry.
 - Source edits made while work is outstanding are merged after the receipts land; nothing needs revoking for them.
 - At a terminal result: `run.cleanup` with `apply: true`; add `delete_branches: true` only within the user's scope after reviewing the preview and its `plan_hash`. Report retained dirty, locked or unknown resources honestly; never force-delete them.
+- A fresh context means a unique host session, not a new disk checkout: read-only planning and audit packets may reuse a closed, clean checkout, writing workers stay isolated. Use the returned project/worktree assignments as given.
 - Preserve the user's framework, run ID, scope and budgets. Native mode hands the framework workflow back after roadmap planning.
 </rules>

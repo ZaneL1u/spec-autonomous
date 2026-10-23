@@ -207,14 +207,14 @@ fn stage_scoped_project_checks_run_only_at_their_stage() {
     let input = packet(root, &request);
     let audit = submit(root, &request, receipt(&input));
     assert_eq!(audit["work"][0]["kind"], "audit", "{audit}");
-    // Task-scope checks ran with the worker (combined reused them); the phase gate ran
-    // its own scope once; nothing milestone-scoped yet.
-    assert_eq!(stages(&counter), ["worker:task", "phase:phase"]);
+    // Task-scope checks ran once on the worker candidate (combined wave); the phase gate
+    // ran its own scope once; nothing milestone-scoped yet.
+    assert_eq!(stages(&counter), ["combined:task", "phase:phase"]);
     let milestone = answer_audit(root, &audit["work"][0]);
     assert_eq!(milestone["work"][0]["kind"], "audit", "{milestone}");
     assert_eq!(
         stages(&counter),
-        ["worker:task", "phase:phase", "milestone:milestone"]
+        ["combined:task", "phase:phase", "milestone:milestone"]
     );
     let done = answer_audit(root, &milestone["work"][0]);
     assert_eq!(done["status"], "completed", "{done}");
@@ -226,8 +226,9 @@ fn stage_scoped_project_checks_run_only_at_their_stage() {
             .map(|e| e.argv.join(" "))
             .collect()
     };
-    assert!(argv_at("worker").iter().any(|a| a.contains(":task")));
-    assert!(argv_at("worker").iter().all(|a| !a.contains(":phase")));
+    assert!(argv_at("worker").is_empty());
+    assert!(argv_at("combined").iter().any(|a| a.contains(":task")));
+    assert!(argv_at("combined").iter().all(|a| !a.contains(":phase")));
     assert!(argv_at("phase").iter().any(|a| a.contains(":phase")));
     assert!(argv_at("phase").iter().all(|a| !a.contains(":task")));
     assert!(

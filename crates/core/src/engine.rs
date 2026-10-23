@@ -25,6 +25,7 @@ use std::{
 mod execution;
 mod host;
 mod lifecycle;
+mod maintenance;
 mod planning;
 mod recovery;
 pub use host::{
@@ -213,6 +214,7 @@ pub fn start(
     let accepted = git::commit(&integration, "sa: preserve native planning context")?;
     let now = paths::now();
     let run = Run {
+        verification_reuses: 0,
         schema_version: SCHEMA,
         id,
         milestone: start.milestone,
@@ -591,6 +593,39 @@ impl Coordinator<'_> {
                 let _ = error;
             }
         }
+        if self.run.config.execution.automatic_cleanup {
+            match self
+                .store
+                .list()
+                .and_then(|runs| crate::cleanup::at_handoff(&self.repo, &self.run, &runs))
+            {
+                Ok(result) => {
+                    let _ = paths::atomic_write(
+                        &self
+                            .store
+                            .root
+                            .join("runs")
+                            .join(&self.run.id)
+                            .join("maintenance.json"),
+                        serde_json::to_vec_pretty(&result)?,
+                    );
+                }
+                Err(error) => {
+                    // Maintenance never turns verified work into a failed task.
+                    let _ = paths::atomic_write(
+                        &self
+                            .store
+                            .root
+                            .join("runs")
+                            .join(&self.run.id)
+                            .join("maintenance.json"),
+                        serde_json::to_vec_pretty(
+                            &serde_json::json!({"error":error.to_string(),"evidence_retained":true}),
+                        )?,
+                    );
+                }
+            }
+        }
         let body = format!(
             "# {}\n\nRun: {}\nStatus: {}\nStage: {}\nCheckout: {}\nAccepted revision: {}\nSelected phases: {}\nCompleted phases: {}\nVerified tasks: {}\nAttempts: {}\nElapsed ms: {}\nUsage: unavailable\n\n{}\n\n## Evidence\n\n{}\n",
             self.run.milestone.goal,
@@ -637,7 +672,16 @@ impl Coordinator<'_> {
             &self.run.id[..self.run.id.len().min(12)],
             &id[..20]
         );
-        let (worktree, branch) = self.repo.add_worktree(&name, &self.run.accepted_head)?;
+        // Read-only planning and audit packets reuse a closed clean checkout when one
+        // exists; writing workers always get their own.
+        let (worktree, branch) = if matches!(kind, "plan-tasks" | "audit") {
+            match self.review_checkout()? {
+                Some(checkout) => checkout,
+                None => self.repo.add_worktree(&name, &self.run.accepted_head)?,
+            }
+        } else {
+            self.repo.add_worktree(&name, &self.run.accepted_head)?
+        };
         provider::copy_ignored_context(
             &self.project(),
             &worktree.join(&self.run.project_relative),

@@ -664,6 +664,7 @@ impl Coordinator<'_> {
                         bail!("no_progress: unchanged native artifact");
                     }
                     let patch = git::patch(&worktree, &self.run.accepted_head)?;
+                    git::commit(&worktree, "sa: preserve native artifact candidate")?;
                     git::apply(Path::new(&self.run.integration), &patch)?;
                     self.run.accepted_head = git::commit(
                         Path::new(&self.run.integration),
@@ -739,7 +740,9 @@ impl Coordinator<'_> {
         } else {
             "worktree"
         };
-        let reuse = self.run.config.execution.verification_reuse == "same-tree";
+        // Both switches must allow reuse: the alpha.15 boolean and the tree-keyed policy.
+        let reuse = self.run.config.execution.reuse_verification
+            && self.run.config.execution.verification_reuse == "same-tree";
         let preparation = self.run.config.hooks.get("verification_prepare").cloned();
         if let Some(hook) = &preparation {
             if !hook.idempotent {
@@ -784,6 +787,7 @@ impl Coordinator<'_> {
                     tree_unchanged: true,
                     details: Some(details),
                 });
+                self.run.verification_reuses += 1;
                 self.save("verification_reused")?;
                 continue;
             }

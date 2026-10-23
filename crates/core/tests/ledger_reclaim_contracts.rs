@@ -240,11 +240,8 @@ fn closed_worktrees_are_reclaimed_after_their_patch_is_stored() {
     let planner = first["work"][0].clone();
     let planned = answer_plan(root, &planner);
     let implement = planned["work"][0].clone();
-    let planner_worktree = planner["worktree"].as_str().unwrap().to_string();
-    assert!(
-        !Path::new(&planner_worktree).exists(),
-        "an accepted planner worktree is reclaimed at once"
-    );
+    // Accepted read-only checkouts stay for review reuse; this pass owns writing work.
+    assert!(Path::new(planner["worktree"].as_str().unwrap()).exists());
     let worktree = Path::new(implement["worktree"].as_str().unwrap());
     put(worktree, "src/value.txt", "42");
     fs::create_dir_all(worktree.join("dist")).unwrap();
@@ -276,7 +273,7 @@ fn closed_worktrees_are_reclaimed_after_their_patch_is_stored() {
     for intent in run.intents.iter().filter(|i| i.state == "accepted") {
         assert!(
             !Path::new(&intent.worktree).exists(),
-            "accepted candidate checkouts are reclaimed"
+            "the serial candidate is the worker checkout and goes with it"
         );
     }
     let pending = run
@@ -293,8 +290,8 @@ fn closed_worktrees_are_reclaimed_after_their_patch_is_stored() {
             .unwrap()
             .matches("worktree ")
             .count()
-            <= 3,
-        "root, integration and the live audit worktree only"
+            <= 4,
+        "root, integration, the reusable read-only checkout and the live audit"
     );
 }
 

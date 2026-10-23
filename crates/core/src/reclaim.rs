@@ -23,7 +23,8 @@ fn closed(status: &str) -> bool {
 pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value> {
     let mut removed = vec![];
     let mut retained = vec![];
-    if run.config.execution.reclaim_worktrees == "never" {
+    if run.config.execution.reclaim_worktrees == "never" || !run.config.execution.automatic_cleanup
+    {
         return Ok(json!({"removed":removed,"retained":retained,"policy":"never"}));
     }
     let runtime = repo.runtime()?;
@@ -57,13 +58,21 @@ pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value>
         {
             continue;
         }
+        // Accepted read-only checkouts (planning, audit, native planning) stay for
+        // review reuse and handoff maintenance; this pass owns writing work.
         let eligible = closed(&attempt.status)
-            || (attempt.status == "accepted" && attempt.kind != "implement")
             || (attempt.status == "failed" && !keep_failed_ids.contains(&attempt.id));
         if !eligible || live_lease(run, &attempt.id) {
             continue;
         }
         if !Path::new(&attempt.worktree).exists() {
+            // Someone else removed the checkout; the stored patch still fixes the fingerprint.
+            if attempt.patch_hash.is_none()
+                && let Ok(dir) = store.attempt_dir(&run.id, &attempt.id)
+                && let Ok(patch) = fs::read(dir.join("patch.diff"))
+            {
+                run.attempts[index].patch_hash = Some(paths::hash(patch));
+            }
             run.attempts[index].worktree_state = Some("reclaimed".into());
             continue;
         }
@@ -98,10 +107,13 @@ pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value>
     }
     for index in 0..run.intents.len() {
         let intent = run.intents[index].clone();
+        // A direct candidate shares the worker checkout; the attempt pass owns that one
+        // so its patch is stored before anything is removed.
         if !matches!(intent.state.as_str(), "accepted" | "abandoned")
             || intent.worktree == run.integration
             || !Path::new(&intent.worktree).starts_with(&worktrees)
             || !Path::new(&intent.worktree).exists()
+            || run.attempts.iter().any(|a| a.worktree == intent.worktree)
         {
             continue;
         }
