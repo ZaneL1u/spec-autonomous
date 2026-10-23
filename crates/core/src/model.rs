@@ -243,6 +243,10 @@ pub struct Run {
     pub config: crate::config::Config,
     #[serde(default)]
     pub completed_phases: Vec<String>,
+    /// Completed phases whose command gates must run again before delivery because the
+    /// tree changed underneath them; their accepted work and plans are retained.
+    #[serde(default)]
+    pub stale_phases: Vec<String>,
     #[serde(default)]
     pub phase_hashes: BTreeMap<String, String>,
     #[serde(default)]
@@ -306,6 +310,21 @@ pub struct HostState {
     /// Earlier failures stay in history, but do not consume the revised task's retry budget.
     #[serde(default)]
     pub task_retry_epochs: BTreeMap<String, usize>,
+    /// Passing checks keyed by tree, checkout class, command and environment identity.
+    /// Only identical keys reuse evidence; failures are never stored.
+    #[serde(default)]
+    pub verification_cache: BTreeMap<String, VerificationPass>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationPass {
+    pub stage: String,
+    pub wave_id: String,
+    pub tree: String,
+    pub revision: String,
+    pub manifest: String,
+    pub log: String,
+    pub log_hash: String,
+    pub finished_at: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkLease {

@@ -34,6 +34,7 @@ lease_seconds = 1800
 | `max_context_bytes` | 内联工作包上下文上限，超出时改用 hash 引用 |
 | `max_source_bytes` | 原生来源快照预算 |
 | `max_planner_tasks` | planner 单批原生任务上限 |
+| `verification_reuse` | `same-tree`（默认）在同一源码树、同命令、同环境、同检出类别上复用已通过的验证证据；`none` 每个波次重新执行 |
 | `delivery` | `ff-original` 或保留交付分支 |
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。

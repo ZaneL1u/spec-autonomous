@@ -67,13 +67,17 @@ idempotent = true
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。
 
-同波次完全相同的 argv/cwd 只执行一次。worker 与 combined 仍分别执行，不跨阶段缓存 PASS；独立复验确实能发现环境和业务错误。
+同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
+
+## 续跑不清零
+
+续跑先对账原始检出：若其 HEAD 只是吸收了已接受的集成历史（例如用户把原分支 fast-forward 到集成分支），只更新记录的原始提交，不合并、不重新规划、不重新验证。否则合并原始改动，并只按原始一侧新增的文件分类：命中某 phase 原生源目录的改动只重开该 phase（重新规划其新增任务），依赖它的 phase 保留已接受工作与计划，进入 `stale_phases`；其他文件的改动把所有已完成 phase 标为 stale。stale phase 在全部选中 phase 完成后、交付前只重跑命令门（`stale_phase_verification` 事件），同树命中复用则不实际执行；失败走既有修复路径。审计结论不因外部代码改动重做，因为原生任务与验收引用未变。handoff 后用户直接在集成分支提交的情况按同一规则处理。
 
 ## 失败诊断与进度
 
 每个检查保存 `result.json`，包含阶段、准备/检查步骤、命令、目录、提交、耗时、退出码、失败类型，以及 stdout/stderr 文件和哈希。公共错误只提供诊断位置，避免把任意原始输出复制到会话。超时、取消、无法启动、日志限额、断言失败和源码变化会分开标注。
 
-progress 的 overhead 展示尝试类型/状态、验证次数、历史失败、修订次数，以及有记录部分的验证耗时。旧证据没有耗时，因此必须看 duration_coverage，不能把 partial 当完整总耗时。
+progress 的 overhead 展示尝试类型/状态、验证次数（`verification_checks`，含复用）、实际执行次数（`executed_checks`）、复用次数（`reused_checks`）、历史失败、修订次数，以及有记录部分的验证耗时。旧证据没有耗时，因此必须看 duration_coverage，不能把 partial 当完整总耗时。
 
 显式包含独立执行仓库：
 

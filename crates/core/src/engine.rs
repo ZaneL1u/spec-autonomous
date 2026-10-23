@@ -235,6 +235,7 @@ pub fn start(
         blocker: None,
         config,
         completed_phases: completed,
+        stale_phases: vec![],
         phase_hashes,
         plans: BTreeMap::new(),
         completed_tasks: vec![],
@@ -602,7 +603,11 @@ impl Coordinator<'_> {
     ) -> Result<(usize, PathBuf, PathBuf)> {
         self.check()?;
         let id = paths::id("attempt");
-        let name = format!("{}-{}", &self.run.id[..12], &id[..20]);
+        let name = format!(
+            "{}-{}",
+            &self.run.id[..self.run.id.len().min(12)],
+            &id[..20]
+        );
         let (worktree, branch) = self.repo.add_worktree(&name, &self.run.accepted_head)?;
         provider::copy_ignored_context(
             &self.project(),

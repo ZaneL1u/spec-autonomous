@@ -35,6 +35,9 @@ pub struct Execution {
     pub max_context_bytes: usize,
     pub max_source_bytes: usize,
     pub max_planner_tasks: usize,
+    /// `same-tree` reuses passing evidence for an identical tree, command, environment and
+    /// checkout class; `none` executes every check in every wave.
+    pub verification_reuse: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -94,6 +97,7 @@ impl Default for Execution {
             max_context_bytes: 128 * 1024,
             max_source_bytes: 2 * 1024 * 1024,
             max_planner_tasks: 32,
+            verification_reuse: "same-tree".into(),
         }
     }
 }
@@ -148,6 +152,9 @@ impl Config {
             || self.host.lease_seconds > 2_592_000
         {
             bail!("invalid_config: invalid host limits");
+        }
+        if !["same-tree", "none"].contains(&self.execution.verification_reuse.as_str()) {
+            bail!("invalid_config: verification_reuse must be same-tree or none");
         }
         let x = &self.execution;
         if x.max_workers == 0

@@ -213,6 +213,13 @@ pub fn parse_inventory(text: &str) -> Result<Vec<Worktree>> {
 pub fn head(root: &Path) -> Result<String> {
     Ok(command(root, &["rev-parse", "HEAD"], None)?.trim().into())
 }
+/// Content identity of the committed tree; equal trees have identical tracked contents
+/// regardless of commit history.
+pub fn tree(root: &Path) -> Result<String> {
+    Ok(command(root, &["rev-parse", "HEAD^{tree}"], None)?
+        .trim()
+        .into())
+}
 pub fn clean(root: &Path) -> Result<bool> {
     Ok(command(
         root,

@@ -1112,19 +1112,36 @@ fn coordinator_prepares_each_wave_once_and_preserves_independent_check_results()
         .get(completed["id"].as_str().unwrap())
         .unwrap();
     assert_eq!(run.completed_tasks.len(), 1);
-    for stage in ["worker", "combined"] {
-        let evidence: Vec<_> = run
-            .evidence
+    let stage = |name: &str| -> Vec<&Evidence> {
+        run.evidence
             .iter()
-            .filter(|e| e.details.as_ref().is_some_and(|d| d["stage"] == stage))
-            .collect();
-        assert_eq!(
-            evidence.len(),
-            3,
-            "one preparation and two unique checks: {stage}"
-        );
-        assert!(evidence.iter().all(|e| e.exit_code == 0));
-    }
+            .filter(|e| e.details.as_ref().is_some_and(|d| d["stage"] == name))
+            .collect()
+    };
+    let worker = stage("worker");
+    assert_eq!(
+        worker.len(),
+        3,
+        "one preparation and two unique executed checks"
+    );
+    assert!(worker.iter().all(|e| e.exit_code == 0));
+    assert!(
+        worker
+            .iter()
+            .all(|e| e.details.as_ref().unwrap().get("reused_from").is_none())
+    );
+    // The candidate tree equals the worker tree: both checks are reused and the
+    // preparation hook does not run for a wave that executes nothing.
+    let combined = stage("combined");
+    assert_eq!(combined.len(), 2, "{combined:?}");
+    assert!(combined.iter().all(|e| {
+        let d = e.details.as_ref().unwrap();
+        d["step"] == "check" && d["reused_from"]["stage"] == "worker"
+    }));
+    // The integration checkout is a different class and prepares its own wave.
+    let phase = stage("phase");
+    assert_eq!(phase.len(), 3);
+    assert_eq!(phase[0].details.as_ref().unwrap()["step"], "preparation");
 }
 
 #[test]
