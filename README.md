@@ -6,7 +6,7 @@
 
 [中文文档站](https://zanel1u.github.io/spec-autonomous/) · [快速开始](https://zanel1u.github.io/spec-autonomous/guide/quick-start)
 
-当前版本 `0.1.0-alpha.15`，通过公开 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，TypeScript 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
+当前版本 `0.1.0-alpha.16`，通过公开 GitHub 仓库和 Release 分发，npm registry 尚未发布。Rust CLI 使用 Clap，TypeScript 入口使用 Commander.js，并根据用户 locale 提供 English / 简体中文界面。
 
 - [架构与工作协议](docs/architecture.md)
 - [全部能力与 CLI/MCP 接口](docs/capabilities.md)
@@ -45,7 +45,7 @@ Git 入口没有安装脚本。第一次运行自动用 gh 下载并校验该版
 . "$HOME/.cargo/env"
 bun install --frozen-lockfile
 node scripts/pack-local.mts
-npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.15.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.16.tgz
 
 # 已有原生规范的项目：自动补齐缺失工具并绑定 Skills
 spec-autonomous init --agent codex

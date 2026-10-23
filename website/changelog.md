@@ -2,6 +2,17 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.1.0-alpha.16
+
+- 验证证据按源码树哈希复用：同树同命令同环境的检查只执行一次，phase/post-hook、里程碑门槛和审计等待不再重复跑；无 hook 改动时跳过 post-hook。与 alpha.15 的 `reuse_verification` 合并为同一开关，`verification_reuse = "none"` 或 `reuse_verification = false` 均可关闭。
+- 续跑不再清零已完成 phase 与计划：原始检出 fast-forward 被识别，外部改动按声明范围只重跑受影响 phase 的命令门，原生改动只重开本 phase。
+- 在途工作不因源漂移被撤销，合并延后到回执落地；追加的原生任务增量扩展计划；通过的审计按树缓存；同一失败在一轮修复后再次出现即 `needs_input: repair_repeated`。
+- 新增 `task_verification` / `phase_verification` / `milestone_verification` 分阶段检查；拒绝内嵌编码脚本的 argv；preflight 把任务将创建的脚本视为 deferred；规划包携带真实运行时版本、package scripts、测试文件与历史拒绝诊断。
+- 预算硬上限（`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72h`），`unsafe_budgets = true` 才可超出；doctor 对超默认两倍的预算告警。
+- 宿主协议：`prepare` / `apply-result --claim-next` 带 `host` 自动认领并返回令牌；`next` / `request.get` 向拥有者找回令牌；`work.revoke` 可用拥有者身份；协调器锁有界等待；心跳过期不再拒收；`run.revise` / `run.cleanup` 非破坏范围一步应用；discussion 卡片随 prepare 返回。skills 改为路由式说明，协议见 [宿主协议](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/host-protocol.md)。
+- 已关闭的写入 attempt 在补丁落盘后自动回收（`reclaim_worktrees` / `retain_failed_worktrees`，`automatic_cleanup = false` 一并关闭），只读规划/审计检出沿用 alpha.15 的复用与交接维护；账本 schema 4 把 attempts 与 evidence 拆成行并增量写入，首次写入迁移并备份；新增只读 `run.forensics` 与 `host_capacity`。
+- 升级须知：预算上限对已有 run 的账本配置同样生效；账本迁移后旧版 CLI 只能读取不能写入；已有 MCP 会话需在安全交接点重连。详见[长任务维护](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/long-running-runs.md)。
+
 ## 0.1.0-alpha.15
 
 - 串行且基线未变化时直接验证写入 worker 的集成候选，减少相同代码的重复门禁。
