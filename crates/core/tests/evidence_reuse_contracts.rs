@@ -138,9 +138,9 @@ fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {
     .unwrap()
 }
 fn answer_plan(root: &Path, request: &Value) -> Value {
-    let input = input(root, request);
-    let snapshot = input.snapshot.clone().unwrap();
-    let mut result = receipt(&input);
+    let packet = input(root, request);
+    let snapshot = packet.snapshot.clone().unwrap();
+    let mut result = receipt(&packet);
     result.plan = Some(Plan {
         schema_version: 1,
         phase_id: "P001".into(),
@@ -154,15 +154,15 @@ fn answer_plan(root: &Path, request: &Value) -> Value {
             writes: vec!["src/value.txt".into()],
             verification: vec![value_check()],
         }],
-        milestone: input.milestone,
+        milestone: packet.milestone,
     });
     submit(root, request, result)
 }
 fn answer_audit(root: &Path, request: &Value) -> Value {
     assert_eq!(request["kind"], "audit", "{request}");
-    let input = input(root, request);
-    let snapshot = input.snapshot.clone().unwrap();
-    let mut result = receipt(&input);
+    let packet = input(root, request);
+    let snapshot = packet.snapshot.clone().unwrap();
+    let mut result = receipt(&packet);
     result.audit = snapshot.metadata["acceptance"]
         .as_array()
         .unwrap()
@@ -209,8 +209,8 @@ fn identical_trees_reuse_evidence_across_stages_and_skip_the_empty_post_hook_wav
         "src/value.txt",
         "42",
     );
-    let input = input(root, request);
-    let audit = submit(root, request, receipt(&input));
+    let packet = input(root, request);
+    let audit = submit(root, request, receipt(&packet));
     let id = audit["id"].as_str().unwrap();
     assert_eq!(audit["status"], "awaiting_host", "{audit}");
     assert_eq!(audit["work"][0]["kind"], "audit");
@@ -282,8 +282,8 @@ fn verification_reuse_none_executes_every_wave() {
         "src/value.txt",
         "42",
     );
-    let input = input(root, request);
-    let audit = submit(root, request, receipt(&input));
+    let packet = input(root, request);
+    let audit = submit(root, request, receipt(&packet));
     let run = saved(root, audit["id"].as_str().unwrap());
     assert!(run.evidence.iter().all(|e| reused_from(e).is_none()));
     assert_eq!(stages(&counter), ["worker", "combined", "phase"]);
@@ -458,5 +458,440 @@ fn native_source_change_reopens_only_its_phase_and_marks_dependents_stale() {
     assert!(
         stages(&f.counter).is_empty(),
         "nothing re-verified before P001 lands"
+    );
+}
+
+fn answer_two_task_plan(root: &Path, request: &Value, second_check: Check) -> Value {
+    let packet = input(root, request);
+    let snapshot = packet.snapshot.clone().unwrap();
+    let mut result = receipt(&packet);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![
+            Task {
+                id: "value".into(),
+                description: "write value".into(),
+                source_ids: vec![snapshot.tasks[0].id.clone()],
+                depends_on: vec![],
+                reads: vec![],
+                writes: vec!["src/value.txt".into()],
+                verification: vec![value_check()],
+            },
+            Task {
+                id: "check-value".into(),
+                description: "verify value".into(),
+                source_ids: vec![snapshot.tasks[1].id.clone()],
+                depends_on: vec!["value".into()],
+                reads: vec!["src/value.txt".into()],
+                writes: vec![],
+                verification: vec![second_check],
+            },
+        ],
+        milestone: packet.milestone,
+    });
+    submit(root, request, result)
+}
+
+#[test]
+fn source_drift_while_work_is_outstanding_defers_the_merge_instead_of_revoking() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("stages.log");
+    let root = fixture(&counter, "same-tree", false);
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","view":"full"}),
+    )
+    .unwrap();
+    let planned = answer_plan(root, &first["work"][0]);
+    let request = planned["work"][0].clone();
+    assert_eq!(request["kind"], "implement");
+    let id = planned["id"].as_str().unwrap();
+    // The user edits the phase specification in the original checkout mid-flight.
+    put(
+        root,
+        "specs/feature/spec.md",
+        "# Specification\n- FR-001: src/value.txt contains 42.\n- FR-002: document the value.\n",
+    );
+    git::commit(root, "spec: refine acceptance while a worker runs").unwrap();
+    let resumed = api::invoke(root, "prepare", &json!({"run_id":id,"view":"full"})).unwrap();
+    assert_eq!(resumed["status"], "awaiting_host", "{resumed}");
+    assert_eq!(
+        resumed["work"][0]["request_id"], request["request_id"],
+        "the outstanding packet stays valid"
+    );
+    let run = saved(root, id);
+    assert!(run.host.as_ref().unwrap().reconcile_pending);
+    assert!(run.attempts.iter().all(|a| a.status != "revoked"));
+    put(
+        Path::new(request["worktree"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let packet = input(root, &request);
+    let after = submit(root, &request, receipt(&packet));
+    assert_eq!(after["status"], "awaiting_host", "{after}");
+    assert_eq!(
+        after["work"][0]["kind"], "audit",
+        "receipt integrated, then the merge, then the gate"
+    );
+    let run = saved(root, id);
+    assert_eq!(run.completed_tasks.len(), 1);
+    assert!(!run.host.as_ref().unwrap().reconcile_pending);
+    assert!(
+        run.intents
+            .iter()
+            .any(|i| i.task_id == "native-baseline" && i.state == "accepted")
+    );
+    assert_eq!(
+        run.attempts
+            .iter()
+            .filter(|a| a.kind == "plan-tasks")
+            .count(),
+        1,
+        "the accepted plan was extended, not replanned"
+    );
+    assert!(run.attempts.iter().all(|a| a.status != "revoked"));
+    assert_eq!(stages(&counter), ["worker", "phase"]);
+}
+
+#[test]
+fn revision_of_a_pending_task_does_not_block_on_unrelated_outstanding_work() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("stages.log");
+    let root = fixture(&counter, "same-tree", false);
+    let root = root.path();
+    put(
+        root,
+        "specs/feature/tasks.md",
+        "## Implementation\n- [ ] T001 Write value\n- [ ] T002 Verify value\n",
+    );
+    git::commit(root, "two native tasks").unwrap();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","view":"full"}),
+    )
+    .unwrap();
+    let wrong = Check {
+        argv: vec![
+            "node".into(),
+            "-e".into(),
+            "require('node:assert/strict').equal(24,27)".into(),
+        ],
+        cwd: ".".into(),
+    };
+    let planned = answer_two_task_plan(root, &first["work"][0], wrong);
+    let id = planned["id"].as_str().unwrap();
+    let request = planned["work"][0].clone();
+    assert_eq!(
+        request["task_id"], "value",
+        "value is outstanding while check-value is revised"
+    );
+    let mut patch = json!({"run_id":id,"reason":"The fixture arithmetic was a placeholder; the native requirement checks value 42.","task_checks":[{"phase_id":"P001","task_id":"check-value","checks":[value_check()]}]});
+    let preview = api::invoke(root, "run.revise", &patch).unwrap();
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert_eq!(preview["active_requests"].as_array().unwrap().len(), 1);
+    assert!(preview["blocking_requests"].as_array().unwrap().is_empty());
+    patch["apply"] = json!(true);
+    patch["plan_hash"] = preview["plan_hash"].clone();
+    let applied = api::invoke(root, "run.revise", &patch).unwrap();
+    assert_eq!(applied["applied"], true, "{applied}");
+    // The untouched worker finishes and is integrated normally.
+    put(
+        Path::new(request["worktree"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let packet = input(root, &request);
+    let next = submit(root, &request, receipt(&packet));
+    assert_eq!(
+        next["completed_tasks"].as_array().unwrap().len(),
+        1,
+        "{next}"
+    );
+    let second = next["work"][0].clone();
+    assert_eq!(second["task_id"], "check-value");
+    let packet = input(root, &second);
+    assert_eq!(
+        packet.task.as_ref().unwrap().verification,
+        vec![value_check()],
+        "revised checks reach the worker"
+    );
+    let done = submit(root, &second, receipt(&packet));
+    assert_eq!(
+        done["completed_tasks"].as_array().unwrap().len(),
+        2,
+        "{done}"
+    );
+    // A revision of the outstanding task itself still waits for that work.
+    let busy = api::invoke(root,"run.revise",&json!({"run_id":id,"reason":"cannot change accepted task","task_checks":[{"phase_id":"P001","task_id":"value","checks":[{"argv":["node","--version"],"cwd":"."}]}]})).unwrap_err();
+    assert!(busy.to_string().contains("revision_scope_violation"));
+}
+
+#[test]
+fn a_passed_audit_of_the_same_tree_is_reused_without_a_new_agent() {
+    let mut f = Resumable::new(&[("P001", "specs/feature", &[])]);
+    f.run.completed_phases.clear();
+    let integration = std::path::PathBuf::from(&f.run.integration);
+    let snapshot = spec_autonomous_core::provider::inspect(
+        &integration,
+        spec_autonomous_core::Framework::Speckit,
+        "specs/feature",
+        &f.run.config,
+    )
+    .unwrap();
+    let ids: Vec<&str> = snapshot.metadata["acceptance"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v["id"].as_str())
+        .collect();
+    assert!(!ids.is_empty());
+    let key = spec_autonomous_core::paths::hash(
+        serde_json::to_string(&json!({
+            "phase": "P001",
+            "scope": snapshot.metadata["scope"],
+            "tree": git::tree(&integration).unwrap(),
+            "ids": ids,
+        }))
+        .unwrap(),
+    );
+    f.run.host.as_mut().unwrap().audit_cache.insert(
+        key,
+        ids.iter()
+            .map(|id| AuditItem {
+                requirement: (*id).into(),
+                evidence: "src/value.txt".into(),
+                passed: true,
+            })
+            .collect(),
+    );
+    f.save();
+    let resumed = f.resume();
+    assert_eq!(resumed["status"], "awaiting_host", "{resumed}");
+    assert_eq!(
+        resumed["work"][0]["task_id"], "audit-milestone-P001-1",
+        "{resumed}"
+    );
+    let run = f.saved();
+    assert_eq!(run.completed_phases, ["P001"]);
+    assert!(
+        run.attempts
+            .iter()
+            .all(|a| !(a.kind == "audit" && a.task_id == "audit-P001-1")),
+        "the phase audit was answered from the cache"
+    );
+    assert_eq!(
+        stages(&f.counter),
+        ["phase"],
+        "the phase gate still executed on this tree"
+    );
+}
+
+#[test]
+fn appended_native_tasks_extend_the_accepted_plan_instead_of_replanning() {
+    let mut f = Resumable::new(&[("P001", "specs/feature", &[])]);
+    f.run.completed_phases.clear();
+    f.run.completed_tasks = vec!["P001/value".into()];
+    f.run.plans.insert(
+        "P001".into(),
+        Plan {
+            schema_version: 1,
+            phase_id: "P001".into(),
+            source_hash: "superseded-by-native-append".into(),
+            tasks: vec![Task {
+                id: "value".into(),
+                description: "write value".into(),
+                source_ids: vec!["T001".into()],
+                depends_on: vec![],
+                reads: vec![],
+                writes: vec!["src/value.txt".into()],
+                verification: vec![value_check()],
+            }],
+            milestone: Some(f.run.milestone.clone()),
+        },
+    );
+    f.save();
+    put(
+        &f.root,
+        "specs/feature/tasks.md",
+        "## Implementation\n- [x] T001 Write 42 in src/value.txt\n- [ ] T002 Record the value in docs/value.md\n",
+    );
+    git::commit(&f.root, "spec: append a native task").unwrap();
+    let resumed = f.resume();
+    assert_eq!(resumed["work"][0]["kind"], "plan-tasks", "{resumed}");
+    let request = resumed["work"][0].clone();
+    let packet = input(&f.root, &request);
+    let partial = packet.snapshot.clone().unwrap();
+    assert_eq!(partial.tasks.len(), 1, "only the appended task is planned");
+    assert_eq!(partial.tasks[0].id, "T002");
+    assert_eq!(partial.metadata["existing_plan"]["tasks"][0]["id"], "value");
+    assert_eq!(partial.metadata["existing_plan"]["tasks"][0]["done"], true);
+    let mut result = receipt(&packet);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: partial.source_hash.clone(),
+        tasks: vec![Task {
+            id: "record".into(),
+            description: "record the value".into(),
+            source_ids: vec!["T002".into()],
+            depends_on: vec![],
+            reads: vec!["src/value.txt".into()],
+            writes: vec!["docs/value.md".into()],
+            verification: vec![value_check()],
+        }],
+        milestone: packet.milestone.clone(),
+    });
+    let extended = submit(&f.root, &request, result);
+    assert_eq!(extended["work"][0]["kind"], "implement", "{extended}");
+    assert_eq!(extended["work"][0]["task_id"], "record");
+    let run = f.saved();
+    let plan = &run.plans["P001"];
+    assert_eq!(
+        plan.tasks.len(),
+        2,
+        "accepted task kept, appended task added"
+    );
+    assert_eq!(
+        plan.tasks[1].depends_on,
+        ["value"],
+        "appended work runs after the accepted plan"
+    );
+    assert_eq!(
+        run.completed_tasks,
+        ["P001/value"],
+        "accepted work is not reset"
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join("specs/feature/tasks.md"))
+            .unwrap()
+            .matches("[x]")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_same_failure_after_one_repair_round_stops_with_needs_input() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("stages.log");
+    let root = fixture(&counter, "same-tree", false);
+    let root = root.path();
+    let snapshot = spec_autonomous_core::provider::inspect(
+        root,
+        spec_autonomous_core::Framework::Speckit,
+        "specs/feature",
+        &Config::load(root).unwrap(),
+    )
+    .unwrap();
+    let mut milestone =
+        engine::source_milestone(spec_autonomous_core::Framework::Speckit, "specs/feature");
+    milestone.phases[0].verification = vec![Check {
+        argv: vec!["node".into(), "-e".into(), "process.exit(3)".into()],
+        cwd: ".".into(),
+    }];
+    let plan = Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        milestone: Some(milestone),
+        tasks: vec![Task {
+            id: "value".into(),
+            description: "write and verify value".into(),
+            source_ids: vec![snapshot.tasks[0].id.clone()],
+            depends_on: vec![],
+            reads: vec![],
+            writes: vec!["src/value.txt".into()],
+            verification: vec![value_check()],
+        }],
+    };
+    let work = api::invoke(root, "prepare", &json!({"plan":plan,"view":"full"})).unwrap();
+    let request = work["work"][0].clone();
+    put(
+        Path::new(request["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    let packet = input(root, &request);
+    let failed = submit(root, &request, receipt(&packet));
+    let id = failed["id"].as_str().unwrap();
+    let converge = failed["work"][0].clone();
+    assert_eq!(converge["kind"], "converge", "{failed}");
+    // The repair agent appends an in-scope task to the native tracking file.
+    let tracking = Path::new(converge["project"].as_str().unwrap()).join("specs/feature/tasks.md");
+    let before = fs::read_to_string(&tracking).unwrap();
+    fs::write(
+        &tracking,
+        format!("{before}\n- [ ] T003 Repair the phase gate\n"),
+    )
+    .unwrap();
+    let packet = input(root, &converge);
+    let planning = submit(root, &converge, receipt(&packet));
+    let planner = planning["work"][0].clone();
+    assert_eq!(planner["kind"], "plan-tasks", "{planning}");
+    let packet = input(root, &planner);
+    let partial = packet.snapshot.clone().unwrap();
+    assert_eq!(
+        partial.tasks.len(),
+        1,
+        "only the appended repair task is planned"
+    );
+    let mut result = receipt(&packet);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: partial.source_hash.clone(),
+        tasks: vec![Task {
+            id: "repair".into(),
+            description: "repair the gate".into(),
+            source_ids: vec![partial.tasks[0].id.clone()],
+            depends_on: vec![],
+            reads: vec![],
+            writes: vec!["docs/repair.md".into()],
+            verification: vec![value_check()],
+        }],
+        milestone: packet.milestone.clone(),
+    });
+    let implementing = submit(root, &planner, result);
+    let repair = implementing["work"][0].clone();
+    assert_eq!(repair["task_id"], "repair", "{implementing}");
+    put(
+        Path::new(repair["project"].as_str().unwrap()),
+        "docs/repair.md",
+        "repaired\n",
+    );
+    let packet = input(root, &repair);
+    let stopped = submit(root, &repair, receipt(&packet));
+    assert_eq!(stopped["status"], "needs_input", "{stopped}");
+    assert!(
+        stopped["blocker"]
+            .as_str()
+            .unwrap()
+            .contains("repair_repeated"),
+        "{stopped}"
+    );
+    let run = saved(root, id);
+    assert_eq!(
+        run.completed_tasks.len(),
+        2,
+        "both implementations were integrated"
+    );
+    assert_eq!(
+        run.repair_rounds, 1,
+        "the second identical failure did not start another round"
+    );
+    assert_eq!(
+        run.attempts.iter().filter(|a| a.kind == "converge").count(),
+        1
+    );
+    assert_eq!(
+        run.evidence.iter().filter(|e| e.exit_code == 3).count(),
+        2,
+        "the phase gate failed the same way twice"
     );
 }

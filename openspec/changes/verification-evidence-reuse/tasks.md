@@ -6,3 +6,9 @@
 
 ## 3. Observability and docs
 - [x] 3.1 Add `executed_checks`/`reused_checks` to progress overhead; update docs/long-running-runs.md and config docs. Verify with progress contract test and `bun run test:all`.
+
+## 4. In-flight work and plans
+- [x] 4.1 Defer source reconciliation while attempts are in flight (`reconcile_pending`), extend accepted plans for appended native tasks instead of replanning, stop `converge` from removing plans, and let `run.revise` block only on work in the revised scope. Verify with contract tests for deferred drift, plan extension and unrelated outstanding work.
+
+## 5. Audit reuse and repeated failures
+- [x] 5.1 Cache fully passed audits by phase/scope/tree/acceptance ids and stop on a repeated failure signature with `needs_input: repair_repeated`. Verify with contract tests for cache hits and an identical second phase-gate failure, then `bun run test:all`.

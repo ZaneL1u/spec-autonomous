@@ -41,10 +41,16 @@ impl Coordinator<'_> {
                 bail!("source_drift: stop outstanding host work before replanning");
             }
             self.run.stage = "planning_tasks".into();
-            let p = self.build_plan(phase, &snapshot)?;
-            self.run
-                .completed_tasks
-                .retain(|k| !p.tasks.iter().any(|t| *k == Run::key(&phase.id, &t.id)));
+            let (p, event) = match self.extend_plan(phase, &snapshot)? {
+                Some(extended) => (extended, "plan_extended"),
+                None => {
+                    let p = self.build_plan(phase, &snapshot)?;
+                    self.run
+                        .completed_tasks
+                        .retain(|k| !p.tasks.iter().any(|t| *k == Run::key(&phase.id, &t.id)));
+                    (p, "plan_accepted")
+                }
+            };
             self.run.plans.insert(phase.id.clone(), p.clone());
             let path = paths::inside(
                 &self.project(),
@@ -56,7 +62,11 @@ impl Coordinator<'_> {
             paths::atomic_write(&path, toml::to_string_pretty(&p)?)?;
             self.run.accepted_head = git::commit(
                 Path::new(&self.run.integration),
-                "sa: record execution plan",
+                if event == "plan_extended" {
+                    "sa: extend execution plan"
+                } else {
+                    "sa: record execution plan"
+                },
             )?;
             self.run
                 .host
@@ -64,7 +74,7 @@ impl Coordinator<'_> {
                 .unwrap()
                 .source_revisions
                 .insert(phase.id.clone(), snapshot.source_hash.clone());
-            self.save("plan_accepted")?;
+            self.save(event)?;
             p
         };
         if plan.phase_id != phase.id {
@@ -154,6 +164,15 @@ impl Coordinator<'_> {
                     .insert(phase.id.clone(), snapshot.source_hash.clone());
                 self.save("source_progress_recorded")?;
             }
+        }
+        if self.run.host.as_ref().is_some_and(|h| h.reconcile_pending) {
+            if self.run.has_outstanding_host_work() {
+                bail!(
+                    "awaiting_host: outstanding work finishes before the changed source is merged"
+                );
+            }
+            self.reconcile_source()?;
+            bail!("source_reconciled: restart with the merged source");
         }
         let done: Vec<_> = plan
             .tasks
@@ -469,9 +488,75 @@ impl Coordinator<'_> {
             "sa: append in-scope convergence tasks",
         )?;
         self.run.attempts[index].status = "accepted".into();
-        self.run.plans.remove(&phase.id);
+        // The accepted plan stays; the appended native tasks extend it on the next pass.
         self.save("repair_plan")?;
         self.hooks(phase, "after_converge")
+    }
+    /// Extend the recorded plan when native tasks were appended (convergence repairs,
+    /// user edits) instead of replanning everything. Returns None when a covered source
+    /// task disappeared, which needs a full plan.
+    fn extend_plan(&mut self, phase: &Phase, snapshot: &Snapshot) -> Result<Option<Plan>> {
+        let Some(previous) = self.run.plans.get(&phase.id).cloned() else {
+            return Ok(None);
+        };
+        let known: std::collections::BTreeSet<&str> =
+            snapshot.tasks.iter().map(|t| t.id.as_str()).collect();
+        if previous
+            .tasks
+            .iter()
+            .flat_map(|t| &t.source_ids)
+            .any(|id| !known.contains(id.as_str()))
+        {
+            return Ok(None);
+        }
+        let covered: std::collections::BTreeSet<&str> = previous
+            .tasks
+            .iter()
+            .flat_map(|t| t.source_ids.iter().map(String::as_str))
+            .collect();
+        let appended: Vec<SourceTask> = snapshot
+            .tasks
+            .iter()
+            .filter(|t| !t.done && !covered.contains(t.id.as_str()))
+            .cloned()
+            .collect();
+        let mut merged = previous;
+        merged.source_hash = snapshot.source_hash.clone();
+        merged.milestone = Some(self.run.milestone.clone());
+        if appended.is_empty() {
+            return Ok(Some(merged));
+        }
+        let mut partial = snapshot.clone();
+        partial.tasks = appended;
+        partial.metadata["existing_plan"] = serde_json::json!({
+            "tasks": merged.tasks.iter().map(|t| serde_json::json!({
+                "id": t.id,
+                "source_ids": t.source_ids,
+                "writes": t.writes,
+                "done": self.run.completed_tasks.contains(&Run::key(&phase.id, &t.id)),
+            })).collect::<Vec<_>>(),
+            "note": "Plan only snapshot.tasks. They extend this accepted plan and run after its remaining tasks; do not repeat or rename existing tasks.",
+        });
+        let addition = self.build_plan(phase, &partial)?;
+        let leaves: Vec<String> = merged
+            .tasks
+            .iter()
+            .filter(|t| !merged.tasks.iter().any(|o| o.depends_on.contains(&t.id)))
+            .map(|t| t.id.clone())
+            .collect();
+        for mut task in addition.tasks {
+            if merged.tasks.iter().any(|t| t.id == task.id) {
+                bail!(
+                    "invalid_plan: extension task {} collides with the accepted plan",
+                    task.id
+                );
+            }
+            if task.depends_on.is_empty() {
+                task.depends_on = leaves.clone();
+            }
+            merged.tasks.push(task);
+        }
+        Ok(Some(merged))
     }
     pub(super) fn hooks(&mut self, phase: &Phase, event: &str) -> Result<()> {
         if self.run.milestone.framework != Framework::Speckit {

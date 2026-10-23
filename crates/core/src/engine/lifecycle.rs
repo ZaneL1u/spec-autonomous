@@ -96,6 +96,11 @@ impl Coordinator<'_> {
         }
         let mut phase_count = 0;
         loop {
+            if self.run.host.as_ref().is_some_and(|h| h.reconcile_pending)
+                && !self.run.has_outstanding_host_work()
+            {
+                self.reconcile_source()?;
+            }
             self.check()?;
             self.refresh_roadmap()?;
             let phase = self
@@ -162,7 +167,12 @@ impl Coordinator<'_> {
                 self.hooks(&phase, "before_implement")?;
             }
             loop {
-                self.execute_phase(&phase)?;
+                if let Err(error) = self.execute_phase(&phase) {
+                    if format!("{error:#}").starts_with("source_reconciled:") {
+                        return self.drive(false);
+                    }
+                    return Err(error);
+                }
                 if self.run.mode == "plan" {
                     self.deliver(true)?;
                     self.run.status = "plan_ready".into();
@@ -211,6 +221,11 @@ impl Coordinator<'_> {
             }
             self.run.completed_phases.push(phase.id.clone());
             self.run.stale_phases.retain(|id| id != &phase.id);
+            if let Some(host) = self.run.host.as_mut() {
+                let prefix = format!("{}:", phase.id);
+                host.repair_signatures
+                    .retain(|k, _| !k.starts_with(&prefix));
+            }
             self.run
                 .phase_hashes
                 .insert(phase.id.clone(), snapshot.source_hash);
@@ -291,7 +306,28 @@ impl Coordinator<'_> {
             bail!("acceptance_missing: no native references");
         }
         let mut all = vec![];
+        let tree = git::tree(&self.project())?;
         for (batch, refs) in required.chunks(32).enumerate() {
+            // An audit of the same acceptance ids against the same integration tree has
+            // the same inputs; a fully passed one is reused instead of asked again.
+            let ids: Vec<&str> = refs.iter().filter_map(|v| v["id"].as_str()).collect();
+            let key = paths::hash(serde_json::to_string(&serde_json::json!({
+                "phase": phase.id,
+                "scope": snapshot.metadata["scope"],
+                "tree": tree,
+                "ids": ids,
+            }))?);
+            if let Some(items) = self
+                .run
+                .host
+                .as_ref()
+                .and_then(|h| h.audit_cache.get(&key))
+                .cloned()
+            {
+                all.extend(items);
+                self.save("audit_reused")?;
+                continue;
+            }
             let mut partial = snapshot.clone();
             partial.metadata["acceptance"] = serde_json::json!(refs);
             let audit_task = if snapshot.metadata["scope"] == "milestone" {
@@ -318,6 +354,11 @@ impl Coordinator<'_> {
                 self.run.attempts[index].error = Some(format!("{error:#}"));
                 self.save("audit_rejected")?;
                 return Err(error);
+            }
+            if result.audit.iter().all(|a| a.passed)
+                && let Some(host) = self.run.host.as_mut()
+            {
+                host.audit_cache.insert(key, result.audit.clone());
             }
             all.extend(result.audit);
             self.run.attempts[index].status = "accepted".into();
@@ -389,6 +430,53 @@ impl Coordinator<'_> {
     ) -> Result<()> {
         if self.run.repair_rounds >= self.run.config.execution.max_repair_rounds {
             bail!("repair_budget_exhausted: selected scope still fails verification");
+        }
+        // Wave paths differ every time, so a host-verification failure is identified by
+        // the failing command and exit code; audit failures by their requirement ids.
+        let failing = self
+            .run
+            .evidence
+            .iter()
+            .rev()
+            .find(|e| e.exit_code != 0 || !e.tree_unchanged)
+            .map(|e| serde_json::json!({"argv":e.argv,"cwd":e.cwd,"exit_code":e.exit_code}));
+        let failed: Vec<serde_json::Value> = audit
+            .iter()
+            .filter(|a| !a.passed)
+            .map(|a| {
+                if a.requirement == "host-verification" {
+                    serde_json::json!({"requirement":a.requirement,"check":failing})
+                } else {
+                    serde_json::json!({"requirement":a.requirement})
+                }
+            })
+            .collect();
+        let signature = format!(
+            "{}:{}",
+            phase.id,
+            paths::hash(serde_json::to_string(&failed)?)
+        );
+        let requirements: Vec<&str> = audit
+            .iter()
+            .filter(|a| !a.passed)
+            .map(|a| a.requirement.as_str())
+            .collect();
+        let seen = self
+            .run
+            .host
+            .as_mut()
+            .context("legacy_run_read_only")?
+            .repair_signatures
+            .entry(signature)
+            .or_insert(0);
+        *seen += 1;
+        if *seen > 1 {
+            self.save("repair_repeated")?;
+            bail!(
+                "needs_input: repair_repeated: phase {} failed the same way after a repair round ({}); inspect the evidence, then use run.revise for a wrong check or fix the native source before continuing",
+                phase.id,
+                requirements.join(", ")
+            );
         }
         self.run.repair_rounds += 1;
         self.run

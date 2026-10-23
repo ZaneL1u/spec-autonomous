@@ -314,6 +314,17 @@ pub struct HostState {
     /// Only identical keys reuse evidence; failures are never stored.
     #[serde(default)]
     pub verification_cache: BTreeMap<String, VerificationPass>,
+    /// Fully passed audits keyed by phase, scope, integration tree and acceptance ids.
+    #[serde(default)]
+    pub audit_cache: BTreeMap<String, Vec<AuditItem>>,
+    /// The original source changed while host work was outstanding; merge it once that
+    /// work has been received instead of revoking it.
+    #[serde(default)]
+    pub reconcile_pending: bool,
+    /// Repair rounds per `phase:failure-signature`; the same failure recurring after a
+    /// repair stops the loop instead of spending the whole budget on it.
+    #[serde(default)]
+    pub repair_signatures: BTreeMap<String, u32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationPass {

@@ -18,3 +18,12 @@ The system SHALL persist roadmap revision, stable range endpoints, native workfl
 #### Scenario: Native source of a completed phase changes
 - **WHEN** the original checkout changes the tracking file of a completed phase that other completed phases depend on
 - **THEN** only that phase is reopened and replanned while dependent phases stay completed and are re-verified before delivery
+
+## ADDED Requirements
+
+### Requirement: Defer source reconciliation while work is in flight
+The system SHALL NOT revoke or discard issued, claimed, submitted or integrating work because the original source changed. It SHALL record the pending reconciliation, keep accepting and integrating receipts against the current integration revision, stop issuing new work, and merge the changed source once no work is in flight. Only when nothing is in flight SHALL a source change pause the run immediately.
+
+#### Scenario: Specification edited while a worker runs
+- **WHEN** the original checkout commits a specification change while an implement packet is outstanding
+- **THEN** the packet stays valid, its receipt is integrated, the source is merged afterwards and no attempt is revoked

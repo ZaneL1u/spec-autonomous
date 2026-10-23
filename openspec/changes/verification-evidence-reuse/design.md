@@ -18,6 +18,11 @@ Non-goals: 跨 run 复用；审计 agent 缓存；在途工作的 source_drift �
 - `stale_phases` 在全部选中 phase 完成后、交付前逐个重跑 `checks(phase)`（命令门）；失败走既有 `repair_failure` + `reopen` 后重新 drive。审计结果保留：原生任务与验收引用未变。
 - handed_off 分支同理：integration HEAD 前进时按 `accepted_head..actual` 的文件分类，不清空计划。
 - 配置开关 `verification_reuse`，`none` 时恢复逐次执行；非法值报 `invalid_config`。
+- 漂移延后：`check()` 发现原始规范变化时，若存在 issued/claimed/receiving/submitted/candidate 的 attempt，置 `host.reconcile_pending` 并继续；`execute_phase` 处理完回执后，若仍有在途工作则 `awaiting_host`，否则立即 `reconcile_source` 并以 `source_reconciled:` 重启 drive。`reconcile_source` 在有在途工作时同样只置标记。
+- 计划扩展：`execute_phase` 在计划 source_hash 失配时先尝试 `extend_plan`：计划覆盖的源任务都仍存在 → 只对未覆盖且未完成的源任务调用 planner（packet 含 `metadata.existing_plan`），新任务追加并默认依赖原计划叶子；否则整体重规划。`converge` 不再 `plans.remove`。
+- 审计缓存键 = sha256(JSON{phase, scope, 集成树哈希, 验收 id 批次})，只缓存全部通过的批次；packet 的 `execution_evidence` 不参与键。
+- 失败签名：`repair_audit` 以 `phase:sha256(失败项)` 计数，host-verification 项以最近一条失败证据的 argv/cwd/exit_code 标识；计数 > 1 即 `needs_input: repair_repeated`；phase 完成时按前缀清除。
+- `run.revise` 的 `blocking_requests` = 修订任务的 implement 尝试 + 修订 phase（或里程碑级）的 converge/audit 尝试；`active_requests` 保留为信息字段。
 
 ## Risks / Trade-offs
 

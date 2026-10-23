@@ -259,9 +259,10 @@ impl Coordinator<'_> {
         let foreign = files
             .iter()
             .any(|path| !prefixes.iter().any(|(_, prefix)| path.starts_with(prefix)));
+        // The recorded plan stays: execution extends it for appended native tasks and
+        // only replans when source tasks disappeared.
         for phase in native {
             self.reopen(&phase);
-            self.run.plans.remove(&phase);
         }
         if foreign {
             for id in self.run.completed_phases.clone() {
@@ -276,6 +277,9 @@ impl Coordinator<'_> {
         let origin = Path::new(&self.run.origin);
         let current = git::head(origin)?;
         if current == self.run.origin_head {
+            if let Some(host) = self.run.host.as_mut() {
+                host.reconcile_pending = false;
+            }
             return Ok(());
         }
         if !git::clean(origin)? {
@@ -292,21 +296,20 @@ impl Coordinator<'_> {
             self.run.origin_head = current;
             self.run.origin_sources.clear();
             self.capture_sources()?;
+            if let Some(host) = self.run.host.as_mut() {
+                host.reconcile_pending = false;
+            }
             return self.save("origin_advanced");
         }
-        let outstanding: Vec<_> = self
-            .run
-            .attempts
-            .iter()
-            .filter(|a| matches!(a.status.as_str(), "issued" | "claimed" | "receiving"))
-            .map(|a| format!("{}({})", a.id, a.status))
-            .collect();
-        if !outstanding.is_empty() {
-            bail!(
-                "source_drift: outstanding host work blocks new source; stop the host and revoke [{}] with work.revoke before retrying run {}",
-                outstanding.join(", "),
-                self.run.id
-            );
+        if self.run.has_outstanding_host_work() {
+            // Issued, claimed and submitted work is integrated against the current
+            // integration revision first; the merge waits instead of revoking it.
+            let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+            if !host.reconcile_pending {
+                host.reconcile_pending = true;
+                self.save("source_reconcile_deferred")?;
+            }
+            return Ok(());
         }
         for attempt in &mut self.run.attempts {
             if attempt.status == "submitted" {
@@ -400,6 +403,9 @@ impl Coordinator<'_> {
         git::advance(Path::new(&self.run.integration), &target)?;
         self.run.accepted_head = target;
         self.run.intents.last_mut().unwrap().state = "accepted".into();
+        if let Some(host) = self.run.host.as_mut() {
+            host.reconcile_pending = false;
+        }
         self.save("source_reconciled")
     }
 }

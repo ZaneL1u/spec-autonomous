@@ -24,7 +24,7 @@ alpha.9 增加 `run.revise`。当 run 的任务、阶段或里程碑验证使用
 spec-autonomous tools call run.revise --input @revision.json --json
 ```
 
-审阅返回的 `diff`、`active_requests` 和 `retained_verified_tasks`。如果仍有任务在执行，先让宿主停止并用 `work.revoke` 确认撤销；已提交的回执应先恢复处理。随后重新预览，在相同 JSON 中加入 `"apply": true` 和当前 `"plan_hash": "..."`，再次调用同一命令。
+审阅返回的 `diff`、`active_requests`、`blocking_requests` 和 `retained_verified_tasks`。只有被修订范围内的在途工作会阻塞应用：修订任务自身的 implement 尝试，以及被修订 phase（或里程碑级修订时任何 phase）的 converge / audit 尝试；其他在途工作继续执行，提交时按修订后的检查验证。遇到 `blocking_requests` 非空，先让宿主完成其回执或用 `work.revoke` 确认撤销。随后重新预览，在相同 JSON 中加入 `"apply": true` 和当前 `"plan_hash": "..."`，再次调用同一命令。
 
 ```sh
 spec-autonomous tools call run.revise --input @revision.json --json

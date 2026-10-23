@@ -8,6 +8,11 @@
 - 无 hook 改变已接受提交时跳过 post-hook 波次。
 - 续跑对账不再清空 `completed_phases` / `plans`：origin 仅吸收了 integration 历史（用户 fast-forward）时不合并不重置；外部代码改动把已完成 phase 标记为 `stale`，在交付前只重跑其命令门；原生源目录改动只重开对应 phase，不再沿 `depends_on` 级联，依赖它的 phase 转为 stale。
 - progress 的 overhead 区分 `executed_checks` 与 `reused_checks`。
+- 源漂移不再丢弃在途工作：记录待合并，继续接收并集成回执，不签发新任务，在途工作全部落地后再合并。
+- 原生跟踪文件追加任务时增量扩展已接受的计划（只规划新增任务），不再整体重新规划；converge 不再删除计划。
+- 完全通过的审计按 phase/scope/集成树/验收引用缓存并复用。
+- 修复轮按 `phase:失败签名` 计数，同一失败在一轮修复后再次出现即 `needs_input`（`repair_repeated`）。
+- `run.revise` 只被修订范围内的在途工作阻塞（`blocking_requests`），其他在途工作继续。
 - 新增 `[execution] verification_reuse = "same-tree" | "none"`，默认 `same-tree`。
 
 ## Capabilities
@@ -17,7 +22,10 @@
 
 ### Modified Capabilities
 - `verified-integration`: 新增同树证据复用要求。
-- `run-recovery`: 续跑保留已完成 phase，改为 stale 复验。
+- `run-recovery`: 续跑保留已完成 phase，改为 stale 复验；源漂移延后合并。
+- `task-planning`: 已接受计划的增量扩展。
+- `recoverable-autonomy`: 修订只被相关在途工作阻塞。
+- `milestone-autonomy`: 重复失败签名即停。
 
 ## Impact
 

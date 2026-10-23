@@ -467,7 +467,7 @@ impl Coordinator<'_> {
         (self.observer)(&self.run, event);
         Ok(())
     }
-    fn check(&self) -> Result<()> {
+    fn check(&mut self) -> Result<()> {
         if let Some(host) = &self.run.host {
             if !host.blockers.is_empty() {
                 bail!(
@@ -494,14 +494,30 @@ impl Coordinator<'_> {
         if self.cancel.load(Ordering::Relaxed) || process::interrupted() {
             bail!("paused: interrupted");
         }
-        for (path, expected) in &self.run.origin_sources {
-            let full = paths::inside(&self.origin_project(), path)?;
+        for (path, expected) in self.run.origin_sources.clone() {
+            let full = paths::inside(&self.origin_project(), &path)?;
             let actual = if full.is_file() {
                 paths::hash(fs::read(full)?)
             } else {
                 String::new()
             };
-            if actual != *expected {
+            if actual != expected {
+                // Work the host holds or that is being integrated stays valid against the
+                // integration checkout; merge the new source once it has landed.
+                let in_flight = self.run.attempts.iter().any(|a| {
+                    matches!(
+                        a.status.as_str(),
+                        "issued" | "claimed" | "receiving" | "submitted" | "candidate"
+                    )
+                });
+                if in_flight {
+                    let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+                    if !host.reconcile_pending {
+                        host.reconcile_pending = true;
+                        self.save("source_drift_deferred")?;
+                    }
+                    return Ok(());
+                }
                 bail!("source_drift: original source changed: {path}");
             }
         }

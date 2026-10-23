@@ -122,7 +122,7 @@ cleanup 对活跃 run 里含 ignored 文件的 worktree 一律保留（`cleanup.
 
 ### P0 —— 去掉乘数
 
-> 实施状态（2026-10-23，OpenSpec change `verification-evidence-reuse`）：第 1、2、4 项已实现并有契约测试覆盖（整树哈希 PASS 复用、post-hook 跳过、recover 不清零 / fast-forward 识别 / 非级联 reopen + stale 复验）。第 3、5、6 项待做。
+> 实施状态（2026-10-23，OpenSpec change `verification-evidence-reuse`）：P0 六项全部实现并有契约测试覆盖——整树哈希 PASS 复用、post-hook 跳过、审计缓存、recover 不清零（fast-forward 识别 / 非级联 reopen / stale 复验）、源漂移延后合并且不撤销在途工作、`run.revise` 只被相关在途工作阻塞、计划增量扩展、同一失败签名重复即 `needs_input`。
 
 
 1. **PASS 证据复用**（R2、R3）：以 `(tree hash, argv, 相对 cwd, 去掉 SA_VERIFY_* 的环境, verification_prepare argv, 超时/日志限额, checkout 类别 fresh-worktree|integration)` 为键，
