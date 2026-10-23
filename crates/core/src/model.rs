@@ -206,6 +206,13 @@ pub struct Attempt {
     pub evidence: Vec<Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<serde_json::Value>,
+    /// sha256 of the worker patch against base_commit, persisted before its worktree is
+    /// reclaimed so retry fingerprints never need the checkout again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hash: Option<String>,
+    /// `reclaimed` once the worktree directory was removed; the branch and patch stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_state: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationIntent {
@@ -279,15 +286,23 @@ impl Run {
         format!("{phase}/{task}")
     }
     pub fn has_outstanding_host_work(&self) -> bool {
+        // Index the latest success per unit once instead of rescanning per attempt.
+        let mut latest_success = BTreeMap::<(&str, &str, &str), usize>::new();
+        for (index, attempt) in self.attempts.iter().enumerate() {
+            if matches!(attempt.status.as_str(), "accepted" | "integrated") {
+                latest_success.insert((&attempt.kind, &attempt.task_id, &attempt.phase_id), index);
+            }
+        }
         self.attempts.iter().enumerate().any(|(index, attempt)| {
             matches!(attempt.status.as_str(), "issued" | "claimed" | "receiving")
                 || (attempt.status == "submitted"
-                    && !self.attempts.iter().skip(index + 1).any(|other| {
-                        other.kind == attempt.kind
-                            && other.task_id == attempt.task_id
-                            && other.phase_id == attempt.phase_id
-                            && matches!(other.status.as_str(), "accepted" | "integrated")
-                    }))
+                    && !latest_success
+                        .get(&(
+                            attempt.kind.as_str(),
+                            attempt.task_id.as_str(),
+                            attempt.phase_id.as_str(),
+                        ))
+                        .is_some_and(|&success| success > index))
         })
     }
 }

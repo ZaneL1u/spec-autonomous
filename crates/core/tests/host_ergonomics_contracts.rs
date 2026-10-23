@@ -396,9 +396,19 @@ fn revise_and_cleanup_apply_in_one_step_when_nothing_relevant_is_outstanding() {
     )
     .unwrap();
     assert_eq!(cleaned["applied"], true, "{cleaned}");
+    assert!(cleaned["removed"].is_array(), "{cleaned}");
+    // Closed worker checkouts were already reclaimed when their receipts landed.
+    let run = saved(root, &id);
     assert!(
-        !cleaned["removed"].as_array().unwrap().is_empty(),
-        "{cleaned}"
+        run.attempts
+            .iter()
+            .filter(|a| a.status == "integrated")
+            .all(|a| a.worktree_state.as_deref() == Some("reclaimed")),
+        "{:?}",
+        run.attempts
+            .iter()
+            .map(|a| (a.status.clone(), a.worktree_state.clone()))
+            .collect::<Vec<_>>()
     );
     let needs_hash = api::invoke(
         root,

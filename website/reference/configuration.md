@@ -36,6 +36,8 @@ lease_seconds = 1800
 | `max_planner_tasks` | planner 单批原生任务上限 |
 | `verification_reuse` | `same-tree`（默认）在同一源码树、同命令、同环境、同检出类别上复用已通过的验证证据；`none` 每个波次重新执行 |
 | `unsafe_budgets` | 默认 `false`：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 259200`（72 小时）；设为 `true` 才允许超出，doctor 会告警 |
+| `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
+| `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支 |
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
@@ -55,7 +57,7 @@ lease_seconds = 1800
 
 ## `host`
 
-`max_concurrency` 表示宿主确认能同时管理多少个 fresh session。没有声明时保守串行。
+`max_concurrency` 表示宿主确认能同时管理多少个 fresh session。没有声明时保守串行。 `lease_seconds` 是心跳租约（现在只用于 `stale` 信息）。`[host.capabilities]` 可声明宿主能力（如 `isolation = "worktree"`、`background_dispatch = "true"`），随 `host_capacity` 返回给宿主。
 
 `lease_seconds` 用于判断工作包心跳是否过期。过期只代表状态未知，不代表 Agent 已停止，也不会自动转让所有权。
 

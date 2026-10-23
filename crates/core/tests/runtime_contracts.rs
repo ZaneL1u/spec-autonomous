@@ -1220,7 +1220,7 @@ fn legacy_ledger_is_backed_up_before_transactional_upgrade() {
     let version: u32 = upgraded
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, spec_autonomous_core::state::SCHEMA_VERSION);
     assert_eq!(
         upgraded
             .query_row("SELECT value FROM legacy", [], |r| r.get::<_, String>(0))

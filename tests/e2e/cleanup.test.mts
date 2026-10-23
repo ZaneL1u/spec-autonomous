@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,writeFileSync,readFileSync} from 'node:fs';
-import {fixture,cli,git,join} from './helpers.mts';
+import {fixture,cli,git,join,edit} from './helpers.mts';
 
 test('run.cleanup CLI previews terminal resources, rejects changed state and applies a reviewed cleanup',{timeout:120000},t=>{
   const root=fixture(t,'speckit');
+  // Closed worktrees are reclaimed automatically by default; keep them here to exercise the reviewed manual path.
+  edit(root,'.spec-autonomous/config.toml',text=>text.replace('max_workers = 2','max_workers = 2\nreclaim_worktrees = "never"'));
+  git(root,['add','--all']);git(root,['commit','-qm','test: keep worktrees for reviewed cleanup']);
   const done=cli(root,['run','--milestone','M001','--only','1']);
   assert.equal(done.status,0,done.details);
   const call=(args: any)=>cli(root,['tools','call','run.cleanup','--input',JSON.stringify({...args,run_id:done.data.id,view:'full'})]);

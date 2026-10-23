@@ -578,6 +578,19 @@ impl Coordinator<'_> {
             self.run.blocker = Some(message);
             self.save("stopped")?;
         }
+        // Closed worktrees go now that their evidence is durable; keeping them for a
+        // manual cleanup is what grew runtimes to tens of gigabytes.
+        match crate::reclaim::reclaim(&self.repo, &self.store, &mut self.run) {
+            Ok(report) => {
+                if !report["removed"].as_array().is_none_or(Vec::is_empty) {
+                    self.save("worktrees_reclaimed")?;
+                }
+            }
+            Err(error) => {
+                self.run.blocker.get_or_insert_with(String::new);
+                let _ = error;
+            }
+        }
         let body = format!(
             "# {}\n\nRun: {}\nStatus: {}\nStage: {}\nCheckout: {}\nAccepted revision: {}\nSelected phases: {}\nCompleted phases: {}\nVerified tasks: {}\nAttempts: {}\nElapsed ms: {}\nUsage: unavailable\n\n{}\n\n## Evidence\n\n{}\n",
             self.run.milestone.goal,
@@ -648,6 +661,8 @@ impl Coordinator<'_> {
             process_identity: None,
             evidence: vec![],
             usage: None,
+            patch_hash: None,
+            worktree_state: None,
         });
         self.save("attempt_started")?;
         Ok((index, worktree, dir))
@@ -676,6 +691,27 @@ impl Coordinator<'_> {
             milestone: Some(self.run.milestone.clone()),
             failure,
         }
+    }
+    /// Files an attempt changed against its base. Reads the checkout while it exists and
+    /// the stored patch after the worktree was reclaimed.
+    fn attempt_changes(&self, index: usize) -> Result<Vec<String>> {
+        let attempt = &self.run.attempts[index];
+        let worktree = Path::new(&attempt.worktree);
+        if worktree.is_dir() {
+            return git::changed(worktree, &attempt.base_commit);
+        }
+        let patch = self
+            .store
+            .attempt_dir(&self.run.id, &attempt.id)?
+            .join("patch.diff");
+        let text = fs::read_to_string(&patch).with_context(|| {
+            format!(
+                "patch_unavailable: worktree {} was reclaimed and {} is missing",
+                attempt.worktree,
+                patch.display()
+            )
+        })?;
+        Ok(git::patch_files(&text))
     }
     fn end_attempt(&mut self, index: usize, result: &Result<WorkerResult>) -> Result<()> {
         let a = &mut self.run.attempts[index];

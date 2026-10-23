@@ -27,3 +27,24 @@ The system SHALL NOT revoke or discard issued, claimed, submitted or integrating
 #### Scenario: Specification edited while a worker runs
 - **WHEN** the original checkout commits a specification change while an implement packet is outstanding
 - **THEN** the packet stays valid, its receipt is integrated, the source is merged afterwards and no attempt is revoked
+
+### Requirement: Reclaim closed worktrees automatically
+After an attempt is integrated, superseded, revoked, accepted as non-implement work, or is an older failure beyond the retained count, the coordinator SHALL store the attempt's patch and its hash, remove the attempt's worktree, and keep the branch ref, packet and evidence. Accepted or abandoned candidate and reconcile worktrees SHALL be removed the same way. The integration checkout, the original checkout and work with a live lease or pending receipt SHALL never be reclaimed. Reclamation SHALL be disableable per project, and retry fingerprints SHALL use the stored patch hash.
+
+#### Scenario: Worker integrated
+- **WHEN** a worker candidate is integrated
+- **THEN** its worktree directory is removed, its branch and patch remain, and the attempt records worktree_state reclaimed
+
+### Requirement: Store attempts and evidence as ledger rows
+The ledger SHALL store run attempts and evidence in their own tables so that saving a run writes only changed rows, SHALL migrate schema 2 and 3 payloads in one transaction after a consistent backup, SHALL refuse writes from older CLIs, and SHALL keep the JSON and MCP run representation unchanged.
+
+#### Scenario: Heartbeat on a large run
+- **WHEN** a heartbeat updates one lease on a run with thousands of evidence entries
+- **THEN** the run core row is rewritten but no attempt or evidence row changes
+
+### Requirement: Read-only run forensics
+`run.forensics` SHALL report, without modifying state, repeated failing checks, tasks with many attempts, idle outstanding requests, repeated phase completions, frequent source reconciliations, repeated handoffs, pending reconciliation, stale phases and worktree backlog, with the evidence that supports each finding.
+
+#### Scenario: Diagnose a stuck run
+- **WHEN** the host asks for forensics on a run whose phase gate failed twice with the same command
+- **THEN** the report lists repeated_failing_check with the evidence indexes and a hint, and nothing in the run changes

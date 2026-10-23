@@ -51,6 +51,12 @@ pub struct Execution {
     /// Lift the retry, repair-round and run-deadline caps. Off by default because runs
     /// with those budgets looped for days before anyone looked.
     pub unsafe_budgets: bool,
+    /// `terminal` removes an attempt's worktree once it is integrated, superseded,
+    /// revoked, accepted (non-implement) or an older failure, after its patch is stored;
+    /// `never` keeps every worktree for manual run.cleanup.
+    pub reclaim_worktrees: String,
+    /// Newest failed worktrees kept per task for inspection while the task is open.
+    pub retain_failed_worktrees: u32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -115,6 +121,8 @@ impl Default for Execution {
             max_planner_tasks: 32,
             verification_reuse: "same-tree".into(),
             unsafe_budgets: false,
+            reclaim_worktrees: "terminal".into(),
+            retain_failed_worktrees: 1,
         }
     }
 }
@@ -217,6 +225,9 @@ impl Config {
         }
         if !["same-tree", "none"].contains(&self.execution.verification_reuse.as_str()) {
             bail!("invalid_config: verification_reuse must be same-tree or none");
+        }
+        if !["terminal", "never"].contains(&self.execution.reclaim_worktrees.as_str()) {
+            bail!("invalid_config: reclaim_worktrees must be terminal or never");
         }
         let x = &self.execution;
         if x.max_workers == 0
@@ -343,12 +354,17 @@ pub fn validate_check(check: &Check) -> Result<()> {
 pub struct HostConfig {
     pub max_concurrency: usize,
     pub lease_seconds: u64,
+    /// Declared host facilities (for example background_dispatch, nested, isolation),
+    /// echoed to the host as host_capacity so packets never ask it to self-assess.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub capabilities: BTreeMap<String, String>,
 }
 impl Default for HostConfig {
     fn default() -> Self {
         Self {
             max_concurrency: 1,
             lease_seconds: 1800,
+            capabilities: BTreeMap::new(),
         }
     }
 }

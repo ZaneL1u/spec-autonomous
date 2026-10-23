@@ -475,6 +475,11 @@ pub fn all() -> Vec<Capability> {
             true,
         ),
         (
+            "run.forensics",
+            "Read-only anomaly report: repeated failing checks, attempt churn, idle requests, repeated completions and worktree backlog.",
+            false,
+        ),
+        (
             "run.cleanup",
             "Preview/apply worktree cleanup and optional safe merged-branch deletion; plan_hash is required only when branches or the integration are deleted.",
             true,

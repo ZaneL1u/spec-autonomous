@@ -243,8 +243,11 @@ impl Coordinator<'_> {
                         .split(':')
                         .next()
                         .unwrap_or("");
-                    let diff =
-                        git::patch(Path::new(&a.worktree), &a.base_commit).unwrap_or_default();
+                    let diff = a.patch_hash.clone().unwrap_or_else(|| {
+                        paths::hash(
+                            git::patch(Path::new(&a.worktree), &a.base_commit).unwrap_or_default(),
+                        )
+                    });
                     paths::hash(format!("{code}\n{diff}"))
                 })
                 .collect();
@@ -627,6 +630,8 @@ impl Coordinator<'_> {
                 process_identity: None,
                 evidence: vec![],
                 usage: None,
+                patch_hash: None,
+                worktree_state: None,
             });
             self.run.stage = format!("hook_{event}");
             self.save("hook_started")?;

@@ -18,3 +18,7 @@
 
 ## 7. Host protocol ergonomics
 - [x] 7.1 Auto-claim prepared work for the calling host, recover tokens through `next`/`request.get`, revoke by owning host, bounded lock wait, informational staleness, readiness only where needed, one-step `run.revise`/`run.cleanup`, discussion cards with prepare, and routing-style skills with docs/host-protocol.md. Verify with contract tests for claiming, recovery, revocation, lock wait and one-step apply, the skill contract test, then `bun run test:all`.
+
+## 8. Resources and ledger
+- [x] 8.1 Reclaim closed attempt and candidate worktrees automatically after storing their patch, make retry fingerprints read the stored hash, drop the ignored-output retention for closed worktrees, and add `reclaim_worktrees` / `retain_failed_worktrees`. Verify with contract tests for reclamation, retention of live work and the disable switch.
+- [x] 8.2 Split the ledger into run core, attempt rows and evidence rows (schema 4) with migration and backup, add read-only `run.forensics` and `host_capacity`. Verify with contract tests for migration, incremental rows, forensics and capacity, then `bun run test:all`.

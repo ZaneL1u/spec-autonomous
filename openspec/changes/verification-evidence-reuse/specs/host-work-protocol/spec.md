@@ -38,3 +38,10 @@ When a phase pauses on gray areas, `prepare` SHALL return the discussion cards i
 #### Scenario: Host accepted defaults up front
 - **WHEN** prepare is called with discussion_auto and the phase has cards marked requires_user
 - **THEN** the recommended options are recorded as decisions and planning continues without a second call
+
+### Requirement: Declare host capacity to the host
+Responses that carry work SHALL include host_capacity with the effective concurrency, lease seconds and the host capabilities declared in configuration, so hosts do not self-assess dispatch capacity.
+
+#### Scenario: Configured isolation capability
+- **WHEN** the project declares [host.capabilities] isolation = "worktree"
+- **THEN** prepare returns host_capacity.capabilities.isolation = "worktree" alongside max_concurrency

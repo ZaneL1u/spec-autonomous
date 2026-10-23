@@ -105,6 +105,8 @@ impl Fixture {
             process_identity: None,
             evidence: vec![],
             usage: None,
+            patch_hash: None,
+            worktree_state: None,
         }
     }
 

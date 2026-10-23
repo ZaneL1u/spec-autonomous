@@ -161,6 +161,9 @@ cleanup 对活跃 run 里含 ignored 文件的 worktree 一律保留（`cleanup.
 
 ### P3 —— 存储与资源
 
+> 实施状态（2026-10-23）：第 16~19 项已实现——attempt 终态且 patch 落盘后自动 `worktree remove`（已接受候选与对账检出同样回收，`reclaim_worktrees` / `retain_failed_worktrees` 可调）；cleanup 不再因 ignored 文件保留已关闭 worktree；重试指纹读 `patch_hash`；账本 schema 4 分表（run_attempts / run_evidence 按行增量写入，首次写入迁移并备份）；`has_outstanding_host_work` 去掉 O(n²)、progress 用 HashMap 索引 worktree 归属。P2 遗留的 `run.forensics` 与 `host_capacity`（宿主能力声明）也已补上。
+
+
 16. attempt 到 integrated/failed/superseded/revoked 且 `patch.diff + patch_hash` 已落盘后自动 `git worktree remove`（不 force，脏/锁则记录保留原因）；
     intent accepted 后删 candidate；`reconcile-*` 在 source_reconciled 后删。配置 `reclaim_worktrees`、`retain_failed_worktrees`、`clean_ignored_before_remove`。
 17. cleanup 的 ignored 规则只对非终态 attempt 生效；重试指纹改读持久化的 patch_hash。

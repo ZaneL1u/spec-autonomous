@@ -65,6 +65,7 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 | `git.commit` | 细粒度 | 写入/可写 | `expected_head`, `message`, `files` | Commit explicitly selected files without capturing unrelated staged changes. |
 | `run.pause` | 细粒度 | 写入/可写 | `run_id` | Request pause and return host cancellation actions. |
 | `run.cancel` | 细粒度 | 写入/可写 | `run_id` | Cancel a run without pretending external sessions stopped. |
+| `run.forensics` | 细粒度 | 只读 | `run_id` | Read-only anomaly report: repeated failing checks, attempt churn, idle requests, repeated completions and worktree backlog. |
 | `run.cleanup` | 细粒度 | 写入/可写 | `run_id` | Preview/apply cleanup; plan_hash is required only when branches or the integration are deleted. |
 | `task.list` | 细粒度 | 只读 | `run_id` | Read execution tasks and source bindings. |
 | `task.ready` | 细粒度 | 只读 | `run_id` | Read eligible tasks under dependency and conflict constraints. |

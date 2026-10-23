@@ -28,3 +28,7 @@ Dogfood 可执行 `node scripts/dogfood.mts`，验证初始化、auto 回执、p
 ## 一步应用
 
 只回收已关闭 worktree（不带 `delete_branches` / `delete_integration`）时，`apply: true` 不需要先预览取 `plan_hash`：所有分支引用、账本和证据都保留。删除分支或 integration 仍必须先预览，并用相同参数加上返回的 `plan_hash` 应用。
+
+## 自动回收
+
+从本次变更起，协调器在每次收尾时自动回收已关闭 attempt 和已接受候选的 worktree（见 [长任务维护](long-running-runs.md)），`run.cleanup` 主要处理分支删除、integration 删除以及自动回收未覆盖的目录。含 ignored 文件的已关闭 worktree 不再被保留。

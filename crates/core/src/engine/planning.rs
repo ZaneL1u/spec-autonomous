@@ -89,7 +89,7 @@ impl Coordinator<'_> {
                 batch + 1,
                 crate::verification_preflight::planning_guidance()
             );
-            let (result, worktree, index) = self.invoke(
+            let (result, _worktree, index) = self.invoke(
                 "plan-tasks",
                 &task_id,
                 &phase.id,
@@ -97,7 +97,7 @@ impl Coordinator<'_> {
                 Some(partial.clone()),
             )?;
             let candidate = (|| -> Result<Plan> {
-                if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+                if !self.attempt_changes(index)?.is_empty() {
                     bail!("scope_violation: task planner changed files");
                 }
                 let plan = result

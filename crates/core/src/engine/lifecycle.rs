@@ -17,9 +17,9 @@ impl Coordinator<'_> {
                     &self.run.config.runner.environment
                 )
             );
-            let (result, worktree, index) =
+            let (result, _worktree, index) =
                 self.invoke("roadmap", "roadmap", "", instruction, None)?;
-            if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+            if !self.attempt_changes(index)?.is_empty() {
                 bail!("scope_violation: roadmap planner changed files");
             }
             let m = result
@@ -335,7 +335,7 @@ impl Coordinator<'_> {
             } else {
                 format!("audit-{}-{}", phase.id, batch + 1)
             };
-            let (result, worktree, index) = self.invoke(
+            let (result, _worktree, index) = self.invoke(
                 "audit",
                 &audit_task,
                 &phase.id,
@@ -343,7 +343,7 @@ impl Coordinator<'_> {
                 Some(partial.clone()),
             )?;
             let verified = (|| -> Result<()> {
-                if !git::changed(&worktree, &self.run.accepted_head)?.is_empty() {
+                if !self.attempt_changes(index)?.is_empty() {
                     bail!("scope_violation: verifier changed files");
                 }
                 provider::check_audit(&partial, &result.audit)?;

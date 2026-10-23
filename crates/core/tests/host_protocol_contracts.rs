@@ -645,8 +645,9 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     assert_eq!(
-        version, 3,
-        "older v2 writers must not erase revision history"
+        version,
+        spec_autonomous_core::state::SCHEMA_VERSION,
+        "older writers must not erase revision history or split rows"
     );
     let control = Store::for_control(&repo).unwrap();
     control.control(id, "pause").unwrap();
@@ -866,6 +867,15 @@ fn later_accepted_attempt_supersedes_leftover_submitted_receipts() {
 #[test]
 fn later_submitted_receipt_is_not_superseded_by_an_earlier_success() {
     let root = fixture();
+    // These receipts are grafted onto an accepted attempt's checkout, so keep it around.
+    let mut keep = Config::load(root.path()).unwrap();
+    keep.execution.reclaim_worktrees = "never".into();
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&keep).unwrap(),
+    );
+    git::commit(root.path(), "keep worktrees for leftover receipts").unwrap();
     let first = prepare(root.path());
     answer_plan(root.path(), &first["work"][0]);
     let repo = git::Repository::discover(root.path()).unwrap();
@@ -928,6 +938,15 @@ fn later_submitted_receipt_is_not_superseded_by_an_earlier_success() {
 #[test]
 fn submitted_receipts_for_a_distinct_task_id_are_not_superseded() {
     let root = fixture();
+    // These receipts are grafted onto an accepted attempt's checkout, so keep it around.
+    let mut keep = Config::load(root.path()).unwrap();
+    keep.execution.reclaim_worktrees = "never".into();
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&keep).unwrap(),
+    );
+    git::commit(root.path(), "keep worktrees for leftover receipts").unwrap();
     let first = prepare(root.path());
     answer_plan(root.path(), &first["work"][0]);
     let repo = git::Repository::discover(root.path()).unwrap();

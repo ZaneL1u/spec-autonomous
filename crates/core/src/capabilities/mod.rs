@@ -19,6 +19,7 @@ use std::{
 pub mod catalog;
 mod checks;
 mod documents;
+mod forensics;
 mod git_tools;
 mod lifecycle;
 mod queries;
@@ -291,6 +292,7 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         "run.pause" => engine::host_control(&root, text(args, "run_id")?, "pause")?,
         "run.cancel" => engine::host_control(&root, text(args, "run_id")?, "cancel")?,
         "run.revise" => crate::run_revision::revise(&root, args)?,
+        "run.forensics" => forensics::run_forensics(&root, text(args, "run_id")?)?,
         "run.cleanup" => crate::cleanup::cleanup_reviewed(
             &root,
             text(args, "run_id")?,

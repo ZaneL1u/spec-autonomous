@@ -95,6 +95,22 @@ idempotent = true
 
 预算硬上限：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72 小时`，超出需显式 `[execution] unsafe_budgets = true`；已有 run 的账本配置同样受限，可用 `prepare --run-id … --reload-config` 读取修改后的项目配置。doctor 对超过默认值两倍的 `max_attempts`、`max_repair_rounds`、`run_timeout_seconds`、`no_progress_limit` 以及 `unsafe_budgets=true` 输出 `budget_warning`。
 
+### 自动回收 worktree 与账本分表
+
+attempt 进入 integrated / superseded / revoked / operator_resolved、非 implement 的 accepted，或是某任务较旧的 failed（每个未完成任务保留最新 `retain_failed_worktrees` 个，默认 1）后，协调器在每次收尾时先把 worker 相对 base_commit 的补丁写入 `runs/<run>/attempts/<attempt>/patch.diff` 并记录 `patch_hash`，再 `git worktree remove --force` 其检出；分支引用、输入/结果/证据全部保留，attempt 标记 `worktree_state = reclaimed`。已接受或已放弃的候选（`intent-*`）和对账（`reconcile-*`）检出同样回收。integration、原始检出、持有租约或已提交回执的工作从不回收。`[execution] reclaim_worktrees = "never"` 关闭自动回收。重试指纹改读持久化的 `patch_hash`，不再依赖检出。
+
+`run.cleanup` 不再因「含 ignored 文件」保留已关闭的 worktree：证据在 `runs/` 下，构建产物不是证据。
+
+账本 schema 4 把 attempts 和 evidence 拆成 `run_attempts` / `run_evidence` 行：心跳、单条验证或一次状态变更只写一行，而不是整体重写几 MB 的 run 载荷。首次以新版本写入时在同一事务内从 schema 2/3 的整体载荷迁移，迁移前先做 `VACUUM INTO` 备份；旧版 CLI 以只读方式仍能读取旧格式，但拒绝写入新版账本。JSON/MCP 的 run 形状不变。
+
+### run.forensics
+
+只读的 `run.forensics {run_id}` 返回异常列表与度量：同一命令多次失败（`repeated_failing_check`）、单任务 attempt 过多（`task_attempt_churn`）、超过两小时无心跳的在途请求（`idle_outstanding_request`）、phase 被重复完成、频繁源对账、反复 handoff、待合并源、stale phase、worktree 积压、修复轮签名，以及尝试分布、执行/复用检查数、事件数、账本跨度。它不修改任何状态；先看它，再决定 revoke、revise 还是继续。
+
+### 宿主能力声明
+
+`[host] capabilities` 表（例如 `isolation = "worktree"`、`background_dispatch = "true"`）与 `max_concurrency`、`lease_seconds` 一起作为 `host_capacity` 出现在 prepare / apply-result / next 的响应里，skill 不再要求宿主自行评估能力。
+
 ## 失败诊断与进度
 
 每个检查保存 `result.json`，包含阶段、准备/检查步骤、命令、目录、提交、耗时、退出码、失败类型，以及 stdout/stderr 文件和哈希。公共错误只提供诊断位置，避免把任意原始输出复制到会话。超时、取消、无法启动、日志限额、断言失败和源码变化会分开标注。

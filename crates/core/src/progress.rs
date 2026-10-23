@@ -58,12 +58,23 @@ pub fn snapshot(path: &Path) -> Result<Value> {
             done.insert(format!("{}/{}", run.milestone.id, task));
         }
     }
+    // Resolve ownership through one index instead of scanning every run per worktree.
+    let mut owners: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (index, run) in runs.iter().enumerate() {
+        owners.entry(run.integration.as_str()).or_insert(index);
+        for intent in &run.intents {
+            owners.entry(intent.worktree.as_str()).or_insert(index);
+        }
+        for attempt in &run.attempts {
+            owners.entry(attempt.worktree.as_str()).or_insert(index);
+        }
+    }
     for wt in &first {
         let mut row = json!({"id":paths::hash(&wt.path),"path":wt.path,"head":wt.head,"branch":wt.branch,"locked":wt.locked,"prunable":wt.prunable,"kind":"external","status":"unknown"});
         if !Path::new(&wt.path).exists() {
             row["status"] = json!("prunable");
         }
-        for run in &runs {
+        for run in owners.get(wt.path.as_str()).into_iter().map(|&i| &runs[i]) {
             if run.integration == wt.path {
                 row["kind"] = json!("managed-integration");
                 row["run_id"] = json!(run.id);

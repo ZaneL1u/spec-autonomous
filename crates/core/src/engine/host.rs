@@ -138,6 +138,7 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
         data["recovery_options"] = json!({"inspect":"state.get","revise_pending_verification":"run.revise","continue":"prepare","stop_active_work":"work.revoke","cleanup_terminal_work":"run.cleanup"});
     }
     data["starts_agents"] = json!(false);
+    data["host_capacity"] = json!({"max_concurrency":run.config.host.max_concurrency.min(run.config.execution.max_workers),"lease_seconds":run.config.host.lease_seconds,"capabilities":run.config.host.capabilities});
     data["host_action"] = json!(match run.status.as_str() {
         "awaiting_host" => "execute_prepared_work",
         "paused" => "inspect_or_resume",
@@ -359,7 +360,13 @@ pub fn revoke(
     run.attempts[index].finished_at = Some(paths::now());
     run.updated_at = paths::now();
     store.save(&run, "host_revoked")?;
-    Ok(json!({"run_id":run_id,"request_id":attempt_id,"revoked":true}))
+    let reclaimed = crate::reclaim::reclaim(&repo, &store, &mut run)?;
+    if !reclaimed["removed"].as_array().is_none_or(Vec::is_empty) {
+        store.save(&run, "worktrees_reclaimed")?;
+    }
+    Ok(
+        json!({"run_id":run_id,"request_id":attempt_id,"revoked":true,"reclaimed":reclaimed["removed"]}),
+    )
 }
 #[allow(clippy::too_many_arguments)]
 pub fn apply_result(
