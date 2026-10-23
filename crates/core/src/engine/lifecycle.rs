@@ -680,6 +680,7 @@ impl Coordinator<'_> {
     }
     pub(super) fn checks(&self, phase: &Phase, task: &[Check]) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.phase_verification.clone());
         x.extend(phase.verification.clone());
         x.extend_from_slice(task);
         if x.is_empty() {
@@ -693,11 +694,13 @@ impl Coordinator<'_> {
     }
     pub(super) fn task_checks(&self, task: &Task) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.task_verification.clone());
         x.extend(task.verification.clone());
         x
     }
     pub(super) fn checks_milestone(&self) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
+        x.extend(self.run.config.milestone_verification.clone());
         x.extend(self.run.milestone.verification.clone());
         if x.is_empty() {
             for phase in &self.run.milestone.phases {

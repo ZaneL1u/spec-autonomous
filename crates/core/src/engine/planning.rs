@@ -44,16 +44,44 @@ impl Coordinator<'_> {
                     &self.run.config.runner.environment,
                 );
             let task_id = format!("plan-{}-{}", phase.id, batch + 1);
-            if let Some(failed) = self.run.attempts.iter().rev().find(|a| {
-                a.kind == "plan-tasks"
-                    && a.task_id == task_id
-                    && a.phase_id == phase.id
-                    && a.status == "failed"
-            }) {
+            let failures: Vec<&Attempt> = self
+                .run
+                .attempts
+                .iter()
+                .filter(|a| {
+                    a.kind == "plan-tasks"
+                        && a.task_id == task_id
+                        && a.phase_id == phase.id
+                        && a.status == "failed"
+                })
+                .collect();
+            if let Some(failed) = failures.last() {
                 partial.metadata["previous_planning_failure"] = serde_json::json!({
                     "request_id":failed.id,"error":failed.error,
                     "action":"Correct the rejected plan before returning a new candidate; preserve native task coverage."
                 });
+                // Every earlier rejection, summarised by diagnostic code, so a planner
+                // does not cycle through the same mistakes one at a time.
+                let history: Vec<serde_json::Value> = failures
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|a| {
+                        let error = a.error.clone().unwrap_or_default();
+                        let mut codes: Vec<String> = error
+                            .match_indices("\"code\":\"")
+                            .filter_map(|(start, needle)| {
+                                let rest = &error[start + needle.len()..];
+                                rest.split('"').next().map(str::to_owned)
+                            })
+                            .collect();
+                        codes.sort();
+                        codes.dedup();
+                        let summary: String = error.chars().take(400).collect();
+                        serde_json::json!({"request_id":a.id,"finished_at":a.finished_at,"codes":codes,"summary":summary})
+                    })
+                    .collect();
+                partial.metadata["previous_planning_failures"] = serde_json::json!(history);
             }
             let instruction = format!(
                 "Return an execution Plan for phase {}. Use schema_version=1 and exact snapshot.source_hash. Cover EVERY source task in snapshot.tasks using its exact ID; do not add other sources even when the native tracking file contains more rows. Tasks contain id,description,source_ids,depends_on,reads,writes,verification. Preserve snapshot.metadata.reviewed_task_checks for matching task IDs; these are reviewed corrections, not obsolete baseline checks. Preserve native order and phase barriers; only independent [P] siblings may parallelize in Spec Kit. Every task must have meaningful, individually runnable verification argv unless project-level checks are configured. Do not edit files. This is planning batch {}; dependency references must be internal to this batch; the host adds conservative cross-batch barriers. {}",
@@ -78,8 +106,16 @@ impl Coordinator<'_> {
                 if plan.phase_id != phase.id {
                     bail!("invalid_plan: wrong phase identity");
                 }
+                let project_checks: Vec<Check> = self
+                    .run
+                    .config
+                    .verification
+                    .iter()
+                    .chain(&self.run.config.task_verification)
+                    .cloned()
+                    .collect();
                 for task in &plan.tasks {
-                    if task.verification.is_empty() && self.run.config.verification.is_empty() {
+                    if task.verification.is_empty() && project_checks.is_empty() {
                         bail!(
                             "verification_missing: each task needs checks or configured project checks"
                         );
@@ -89,7 +125,7 @@ impl Coordinator<'_> {
                 let readiness = crate::verification_preflight::inspect_plan_with_environment(
                     &self.project(),
                     &plan,
-                    &self.run.config.verification,
+                    &project_checks,
                     &self.run.config.runner.environment,
                 );
                 if !readiness.ready {

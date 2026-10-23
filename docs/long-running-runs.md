@@ -85,6 +85,16 @@ idempotent = true
 
 完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
 
+### 分阶段检查与规划护栏
+
+`[[task_verification]]`、`[[phase_verification]]`、`[[milestone_verification]]` 分别只在任务候选、phase 门槛和里程碑门槛执行；`[[verification]]` 保持原语义（每个阶段）。昂贵的全量套件放到 phase 或 milestone 级，worker/combined 只跑快速检查，combined 对已完成任务检查的累加也只涉及任务级命令。
+
+检查 argv 中单个元素超过 1024 字节，或包含 base64 / b85decode / zlib.decompress 等编码载荷，会被 `invalid_command: inline_script_argv` 拒绝；规划指引要求脚本必须是任务 `writes` 中声明的文件。preflight 把 `writes` 中将创建的脚本（`check_script_deferred`）和可执行文件（`check_executable_deferred`，不再要求带目录前缀或执行位）视为延后而不是缺失；不在 writes 中且不存在的脚本操作数报 `check_script_missing`。
+
+规划包的 `verification_environment` 现在包含实际运行时版本（node、python3、go、cargo、bun、npm、git）、`package.json` scripts、项目清单文件、已有测试文件（最多 100 条，附总数）以及常见缓存目录是否被 git 忽略；`previous_planning_failures` 列出该规划单元历史上全部被拒绝的候选（最多 10 条）及其诊断代码。
+
+预算硬上限：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72 小时`，超出需显式 `[execution] unsafe_budgets = true`；已有 run 的账本配置同样受限，可用 `prepare --run-id … --reload-config` 读取修改后的项目配置。doctor 对超过默认值两倍的 `max_attempts`、`max_repair_rounds`、`run_timeout_seconds`、`no_progress_limit` 以及 `unsafe_budgets=true` 输出 `budget_warning`。
+
 ## 失败诊断与进度
 
 每个检查保存 `result.json`，包含阶段、准备/检查步骤、命令、目录、提交、耗时、退出码、失败类型，以及 stdout/stderr 文件和哈希。公共错误只提供诊断位置，避免把任意原始输出复制到会话。超时、取消、无法启动、日志限额、断言失败和源码变化会分开标注。

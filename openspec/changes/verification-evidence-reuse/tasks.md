@@ -12,3 +12,6 @@
 
 ## 5. Audit reuse and repeated failures
 - [x] 5.1 Cache fully passed audits by phase/scope/tree/acceptance ids and stop on a repeated failure signature with `needs_input: repair_repeated`. Verify with contract tests for cache hits and an identical second phase-gate failure, then `bun run test:all`.
+
+## 6. Stage scopes and planning guardrails
+- [x] 6.1 Add `task_verification` / `phase_verification` / `milestone_verification`, reject inline-encoded or oversized argv, defer future scripts and executables in preflight, enrich the planner environment and failure history, and cap budgets with `unsafe_budgets` plus doctor warnings. Verify with contract tests for stage routing, rejection, deferral, environment facts, failure history and caps, then `bun run test:all`.

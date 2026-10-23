@@ -16,7 +16,17 @@ pub struct Config {
     pub host: HostConfig,
     pub environment: BTreeMap<String, String>,
     pub provider: Provider,
+    /// Checks that run at every stage: worker, combined, phase gates and the milestone gate.
     pub verification: Vec<Check>,
+    /// Checks that run only when a task candidate is verified (worker and combined).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub task_verification: Vec<Check>,
+    /// Checks that run only at phase gates (phase, post-hook, stale re-verification).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phase_verification: Vec<Check>,
+    /// Checks that run only at the milestone gate.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub milestone_verification: Vec<Check>,
     pub hooks: BTreeMap<String, Hook>,
     pub policy: Policy,
 }
@@ -38,6 +48,9 @@ pub struct Execution {
     /// `same-tree` reuses passing evidence for an identical tree, command, environment and
     /// checkout class; `none` executes every check in every wave.
     pub verification_reuse: String,
+    /// Lift the retry, repair-round and run-deadline caps. Off by default because runs
+    /// with those budgets looped for days before anyone looked.
+    pub unsafe_budgets: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -77,6 +90,9 @@ impl Default for Config {
             environment: BTreeMap::new(),
             provider: Provider::default(),
             verification: vec![],
+            task_verification: vec![],
+            phase_verification: vec![],
+            milestone_verification: vec![],
             hooks: BTreeMap::new(),
             policy: Policy::default(),
         }
@@ -98,6 +114,7 @@ impl Default for Execution {
             max_source_bytes: 2 * 1024 * 1024,
             max_planner_tasks: 32,
             verification_reuse: "same-tree".into(),
+            unsafe_budgets: false,
         }
     }
 }
@@ -142,6 +159,51 @@ impl Config {
         value.validate()?;
         Ok(value)
     }
+    /// Every configured project check regardless of stage.
+    pub fn all_verification(&self) -> impl Iterator<Item = &Check> {
+        self.verification
+            .iter()
+            .chain(&self.task_verification)
+            .chain(&self.phase_verification)
+            .chain(&self.milestone_verification)
+    }
+    /// Budget fields that exceed twice their default, for doctor warnings.
+    pub fn budget_warnings(&self) -> Vec<String> {
+        let d = Execution::default();
+        let x = &self.execution;
+        let mut out = vec![];
+        for (name, value, default) in [
+            ("max_attempts", x.max_attempts as u64, d.max_attempts as u64),
+            (
+                "max_repair_rounds",
+                x.max_repair_rounds as u64,
+                d.max_repair_rounds as u64,
+            ),
+            (
+                "run_timeout_seconds",
+                x.run_timeout_seconds,
+                d.run_timeout_seconds,
+            ),
+            (
+                "no_progress_limit",
+                x.no_progress_limit as u64,
+                d.no_progress_limit as u64,
+            ),
+        ] {
+            if value > default.saturating_mul(2) {
+                out.push(format!(
+                    "budget_warning: {name}={value} is more than twice the default {default}; long loops stay unnoticed with large budgets"
+                ));
+            }
+        }
+        if x.unsafe_budgets {
+            out.push(
+                "budget_warning: unsafe_budgets=true lifts the retry, repair and deadline caps"
+                    .into(),
+            );
+        }
+        out
+    }
     pub fn validate(&self) -> Result<()> {
         if ![SCHEMA, 2].contains(&self.schema_version) {
             bail!("schema_unsupported: config version");
@@ -173,6 +235,15 @@ impl Config {
         {
             bail!("invalid_config: execution limits must be positive and workers <=32");
         }
+        if !x.unsafe_budgets
+            && (x.max_attempts > MAX_ATTEMPTS_CAP
+                || x.max_repair_rounds > MAX_REPAIR_ROUNDS_CAP
+                || x.run_timeout_seconds > RUN_TIMEOUT_CAP_SECONDS)
+        {
+            bail!(
+                "invalid_config: budget_cap: max_attempts <= {MAX_ATTEMPTS_CAP}, max_repair_rounds <= {MAX_REPAIR_ROUNDS_CAP} and run_timeout_seconds <= {RUN_TIMEOUT_CAP_SECONDS} unless [execution] unsafe_budgets = true"
+            );
+        }
         if !["ff-original", "branch"].contains(&x.delivery.as_str()) {
             bail!("invalid_config: delivery must be ff-original or branch");
         }
@@ -187,7 +258,7 @@ impl Config {
         if !["disabled", "command", "codex"].contains(&self.runner.profile.as_str()) {
             bail!("runner_unsupported: unknown profile");
         }
-        for c in &self.verification {
+        for c in self.all_verification() {
             validate_check(c)?;
         }
         if self
@@ -220,12 +291,48 @@ fn merge(base: &mut toml::Value, override_: toml::Value) {
         (base, value) => *base = value,
     }
 }
+pub const MAX_ATTEMPTS_CAP: u32 = 10;
+pub const MAX_REPAIR_ROUNDS_CAP: u32 = 4;
+pub const RUN_TIMEOUT_CAP_SECONDS: u64 = 72 * 3600;
+/// Longest single argv element a check may carry; scripts belong in files.
+pub const MAX_ARGV_ELEMENT_BYTES: usize = 1024;
+
 pub fn validate_check(check: &Check) -> Result<()> {
     if check.argv.is_empty()
         || check.argv[0].is_empty()
         || check.argv.iter().any(|x| x.contains('\0'))
     {
         bail!("invalid_command: argv must have an executable");
+    }
+    // Planners once smuggled whole test suites into argv as compressed, encoded
+    // payloads to get past preflight. Scripts must be files declared in the task's writes.
+    for (index, arg) in check.argv.iter().enumerate() {
+        if arg.len() > MAX_ARGV_ELEMENT_BYTES {
+            bail!(
+                "invalid_command: inline_script_argv: argv[{index}] is {} bytes; write the script to a file listed in the task's writes and run that file",
+                arg.len()
+            );
+        }
+        let lower = arg.to_ascii_lowercase();
+        if [
+            "b85decode",
+            "b64decode",
+            "a85decode",
+            "base64.b",
+            "zlib.decompress",
+            "exec(zlib",
+            "exec(compile(",
+            "eval(atob",
+            "from('base64')",
+            "from(\"base64\")",
+        ]
+        .iter()
+        .any(|pattern| lower.contains(pattern))
+        {
+            bail!(
+                "invalid_command: inline_script_argv: argv[{index}] embeds an encoded or compressed script; write the script to a file listed in the task's writes and run that file"
+            );
+        }
     }
     paths::relative(&check.cwd)?;
     Ok(())

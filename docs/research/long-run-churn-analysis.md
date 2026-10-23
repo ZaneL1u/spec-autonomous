@@ -138,6 +138,9 @@ cleanup 对活跃 run 里含 ignored 文件的 worktree 一律保留（`cleanup.
 
 ### P1 —— 配置与规划模型
 
+> 实施状态（2026-10-23）：第 7~10 项已实现——改为 `task_verification` / `phase_verification` / `milestone_verification` 三个数组而非 `Check.scope` 字段（零迁移）；`inline_script_argv` 拒绝 + preflight 对 writes 内脚本/可执行文件 deferred；规划包携带运行时版本、package scripts、测试文件、忽略目录与全部历史拒绝；预算硬上限（10 / 4 / 72h，`unsafe_budgets` 放开）与 doctor `budget_warning`。64 KiB 结果上限保持不变。
+
+
 7. `Check` 增加 `scope = task|phase|milestone|all`（默认 all，向后兼容），combined = task 范围 + phase 范围，不再 O(n²) 累加。
 8. `validate_plan` 拒绝内联脚本 argv（元素 > 512 字节、含 base64/b85decode/exec(/zlib、`-c`/`-e` 长内联体）；
    preflight 把 writes 里将创建的普通文件视为 deferred，Python/shell 操作数同样检查；指引明确「测试脚本必须是 writes 里的文件」。

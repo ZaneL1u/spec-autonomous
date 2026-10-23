@@ -13,6 +13,10 @@
 - 完全通过的审计按 phase/scope/集成树/验收引用缓存并复用。
 - 修复轮按 `phase:失败签名` 计数，同一失败在一轮修复后再次出现即 `needs_input`（`repair_repeated`）。
 - `run.revise` 只被修订范围内的在途工作阻塞（`blocking_requests`），其他在途工作继续。
+- 新增 `task_verification` / `phase_verification` / `milestone_verification`，让昂贵套件只在对应门槛执行；`verification` 语义不变。
+- 检查 argv 拒绝内嵌编码脚本与超长元素；preflight 把 writes 中将创建的脚本和可执行文件视为 deferred。
+- 规划包携带真实运行时版本、package scripts、清单、已有测试文件、忽略目录状态和全部历史规划拒绝诊断。
+- 预算硬上限（`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72h`），`unsafe_budgets = true` 才可超出；doctor 对超默认两倍的预算告警。
 - 新增 `[execution] verification_reuse = "same-tree" | "none"`，默认 `same-tree`。
 
 ## Capabilities
@@ -25,7 +29,9 @@
 - `run-recovery`: 续跑保留已完成 phase，改为 stale 复验；源漂移延后合并。
 - `task-planning`: 已接受计划的增量扩展。
 - `recoverable-autonomy`: 修订只被相关在途工作阻塞。
-- `milestone-autonomy`: 重复失败签名即停。
+- `milestone-autonomy`: 重复失败签名即停；预算硬上限与告警。
+- `verified-integration`: 分阶段项目检查。
+- `task-planning`: 内联脚本拒绝、future 脚本 deferred、规划包环境事实。
 
 ## Impact
 

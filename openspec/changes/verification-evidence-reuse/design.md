@@ -23,6 +23,11 @@ Non-goals: 跨 run 复用；审计 agent 缓存；在途工作的 source_drift �
 - 审计缓存键 = sha256(JSON{phase, scope, 集成树哈希, 验收 id 批次})，只缓存全部通过的批次；packet 的 `execution_evidence` 不参与键。
 - 失败签名：`repair_audit` 以 `phase:sha256(失败项)` 计数，host-verification 项以最近一条失败证据的 argv/cwd/exit_code 标识；计数 > 1 即 `needs_input: repair_repeated`；phase 完成时按前缀清除。
 - `run.revise` 的 `blocking_requests` = 修订任务的 implement 尝试 + 修订 phase（或里程碑级）的 converge/audit 尝试；`active_requests` 保留为信息字段。
+- 分阶段检查用三个新数组而不是给 `Check` 加字段：`Check` 结构、PartialEq、TOML/JSON 形状与 `run.revise` 的比较逻辑都不变，旧配置零迁移。`task_checks = verification + task_verification + task.verification`；`checks(phase) = verification + phase_verification + phase.verification`；`checks_milestone = verification + milestone_verification + milestone.verification`。规划器的"项目级检查"= `verification + task_verification`。
+- `validate_check` 对 argv 元素 > 1024 字节或含 `b85decode` / `b64decode` / `a85decode` / `base64.b` / `zlib.decompress` / `exec(zlib` / `exec(compile(` / `eval(atob` / `from('base64')` 的检查报 `invalid_command: inline_script_argv`，配置与计划同时生效。
+- preflight：可执行文件的 future 判定去掉"必须含 `/`"的条件；新增 `script_operand`（python/bash/sh/zsh/ruby/perl 的首个非选项操作数，`-c`/`-e`/`-m`/`-` 视为无脚本）→ `check_script_deferred` / `check_script_missing`。
+- `environment_with_overrides` 实际执行 `--version`（go 为 `version`）取首行；读取 `package.json` scripts、清单文件存在性、`git ls-files` 中的测试文件（截断 100 并给总数）、`git check-ignore` 常见缓存目录。`build_plan` 为每个规划单元附 `previous_planning_failures`（最多 10 条，含 `"code":"…"` 提取的诊断代码）。
+- 预算：`Execution.unsafe_budgets`（默认 false）；`validate` 在未开启时拒绝超出 `MAX_ATTEMPTS_CAP=10` / `MAX_REPAIR_ROUNDS_CAP=4` / `RUN_TIMEOUT_CAP_SECONDS=259200`，错误文本说明如何放开；`Config::budget_warnings` 供 doctor 输出。
 
 ## Risks / Trade-offs
 
