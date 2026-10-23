@@ -1,8 +1,8 @@
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.16"
 
 [files]
-".agents/skills/auto/SKILL.md" = "c134f0988d95df4a258a10f3836a122f6c70a10d5f3fe4a941447094f9aca5a4"
-".agents/skills/autonomous/SKILL.md" = "55346e6a4460b808f990f345aba054a0b18e18d2c4d89273557a7d428f8417d9"
-".agents/skills/milestone/SKILL.md" = "59d7482a10596c5dc10e6bdede6285c1b4257dcac3bd7291080fc6b85d61862d"
-".agents/skills/progress/SKILL.md" = "d6b180310fcd08545a36fd6be2442cc0a7bc0cc905ec476b2c349c95eb221e1d"
-".agents/skills/resume/SKILL.md" = "0f36ad38a5ba6de69975ed647f4fb509ddb96a8de46fcff929337f4059f2fbe5"
+".agents/skills/auto/SKILL.md" = "4a319d1cb4d62b8ff59d61039fc31ff6246d2fcc4e1783fe0fe8f12271d6d0b1"
+".agents/skills/autonomous/SKILL.md" = "e436f424bdc05e6570d3aa2eeff49f91cb65a29dadeae835a077004a1f46c077"
+".agents/skills/milestone/SKILL.md" = "b19fbe195b437314ee315c25ea222db2bfd812b0ec5ed27a92c1fe065e87b663"
+".agents/skills/progress/SKILL.md" = "92fb495d1648cf4022ae8e6f903c3527cea8fe012dfb90b7823e6f315046b54c"
+".agents/skills/resume/SKILL.md" = "0c5f23db031d918c9ad0705e14be8b065a7166d47337ad2ca91911d202db27dc"
