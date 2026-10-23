@@ -117,6 +117,10 @@ pub fn select_page(value: &mut Value, args: &Value) -> Result<()> {
             "summaries",
             "findings",
             "references",
+            "attempts",
+            "work",
+            "evidence",
+            "intents",
         ] {
             if let Some(items) = map.get_mut(name).and_then(Value::as_array_mut) {
                 let total = items.len();

@@ -17,6 +17,8 @@
 - 检查 argv 拒绝内嵌编码脚本与超长元素；preflight 把 writes 中将创建的脚本和可执行文件视为 deferred。
 - 规划包携带真实运行时版本、package scripts、清单、已有测试文件、忽略目录状态和全部历史规划拒绝诊断。
 - 预算硬上限（`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72h`），`unsafe_budgets = true` 才可超出；doctor 对超默认两倍的预算告警。
+- 宿主协议：`prepare` / `apply-result` 带 `host` 自动认领并返回令牌；`next` / `request.get` 向拥有者找回令牌；`work.revoke` 可用拥有者身份代替令牌；协调器锁有界等待；心跳过期不再拒收回执；claim/heartbeat 响应不计算 readiness；`run.revise` / `run.cleanup` 在非破坏范围一步应用；discussion 卡片随 prepare 返回并支持 `discussion_auto`。
+- skills 改写为 ≤ 60 行的路由式说明，协议细节移入 docs/host-protocol.md。
 - 新增 `[execution] verification_reuse = "same-tree" | "none"`，默认 `same-tree`。
 
 ## Capabilities
@@ -32,6 +34,7 @@
 - `milestone-autonomy`: 重复失败签名即停；预算硬上限与告警。
 - `verified-integration`: 分阶段项目检查。
 - `task-planning`: 内联脚本拒绝、future 脚本 deferred、规划包环境事实。
+- `host-work-protocol`: 自动认领、令牌找回、信息性心跳、有界锁等待、一步应用、discussion 随 prepare。
 
 ## Impact
 

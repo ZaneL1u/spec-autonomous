@@ -23,3 +23,8 @@ MCP 对应 `sa_tools` 的 `operation: "call"`、`capability: "run.cleanup"`，�
 Dogfood 可执行 `node scripts/dogfood.mts`，验证初始化、auto 回执、progress 和 cleanup preview；它复制 `playground/` 到临时目录并在结束后删除。
 
 非终态运行可显式使用 `active:true` 预览、应用已关闭资源清理。活跃所有者、恢复用工作树、当前包引用及 ignored 产物继续保留；集成树不可删除。详见[长任务维护](long-running-runs.md)。
+
+
+## 一步应用
+
+只回收已关闭 worktree（不带 `delete_branches` / `delete_integration`）时，`apply: true` 不需要先预览取 `plan_hash`：所有分支引用、账本和证据都保留。删除分支或 integration 仍必须先预览，并用相同参数加上返回的 `plan_hash` 应用。

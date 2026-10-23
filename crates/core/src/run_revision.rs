@@ -309,8 +309,16 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     if !apply {
         return Ok(preview);
     }
-    if args["plan_hash"].as_str() != Some(&hash) {
-        bail!("revision_conflict: preview is stale or plan_hash is missing");
+    // A supplied plan_hash must match. Without one, the revision applies directly when
+    // nothing in its scope is outstanding; otherwise the preview/hash round trip stays.
+    match args["plan_hash"].as_str() {
+        Some(supplied) if supplied != hash => {
+            bail!("revision_conflict: preview is stale or plan_hash is missing");
+        }
+        None if !blocking.is_empty() => {
+            bail!("revision_conflict: preview is stale or plan_hash is missing");
+        }
+        _ => {}
     }
     if !blocking.is_empty() {
         bail!(

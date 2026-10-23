@@ -324,7 +324,10 @@ fn execute(
             json!({"path":run.integration,"head":entry.map(|w|&w.head),"eligible":safe});
     }
     let hash = paths::hash(serde_json::to_vec(&result)?);
-    if apply && reviewed && expected != Some(hash.as_str()) {
+    // Removing closed worktrees keeps every ref and all evidence, so it may apply without
+    // a preview; deleting branches or the integration still needs the reviewed hash.
+    let destructive = delete_branches || delete_integration;
+    if apply && reviewed && (expected.is_some() || destructive) && expected != Some(hash.as_str()) {
         bail!(
             "source_drift: cleanup preview scope changed (delete_branches={delete_branches}, delete_integration={delete_integration}); re-run run.cleanup with the same scope and apply its new plan_hash"
         );

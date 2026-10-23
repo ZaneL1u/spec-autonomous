@@ -149,6 +149,9 @@ cleanup 对活跃 run 里含 ignored 文件的 worktree 一律保留（`cleanup.
 
 ### P2 —— 宿主协议与 skill
 
+> 实施状态（2026-10-23）：第 11~15 项已实现——`prepare`/`next` 接受 `host`，`prepare` 与带 `claim_next` 的 `apply-result` 自动按派生会话认领并返回令牌；`next`/`request.get` 向拥有者找回令牌；`work.revoke` 可用拥有者身份；协调器锁有界等待 10 s；心跳过期不再拒收；claim/heartbeat 响应不算 readiness；`run.revise`/`run.cleanup` 非破坏范围一步 apply；discussion 卡片随 prepare 返回并支持 `discussion_auto`；三份 skill 改写为 ≤ 35 行的路由式说明，细节在 docs/host-protocol.md。宿主能力声明文件（P2 新增项）与 `run.forensics` 未做。
+
+
 11. `prepare` / `apply-result` / `next` 接受可选 `host`，返回的 work 直接以派生 session_id 认领并带 token（保留现有 claim 接口、字段名、错误码）；
     `next --host` 可按所有者找回 token；`work.revoke` 允许 `host_stopped:true` 代替 token。
 12. 锁改为有界等待（约 10 s）再报 `run_already_active`；提交时去掉 `lease_stale` 拒绝，`stale` 只作信息；`lease_seconds` 默认等于 attempt_timeout。

@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Bounded wait for the coordinator lock before reporting another active coordinator.
+pub const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 pub struct Lease {
     file: File,
 }
@@ -22,9 +24,23 @@ impl Lease {
             .read(true)
             .write(true)
             .open(path)?;
-        file.try_lock_exclusive()
-            .context("run_already_active: another coordinator owns this Git repository")?;
-        Ok(Self { file })
+        // Concurrent host calls (a heartbeat racing a receipt, two claims) are normal.
+        // Wait briefly for the lock instead of failing them straight away.
+        let deadline = std::time::Instant::now() + LOCK_WAIT;
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(Self { file }),
+                Err(error) if std::time::Instant::now() < deadline => {
+                    let _ = error;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(error) => {
+                    return Err(error).context(
+                        "run_already_active: another coordinator owns this Git repository",
+                    );
+                }
+            }
+        }
     }
 }
 impl Drop for Lease {

@@ -615,7 +615,8 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
         root,
         id,
         req["request_id"].as_str().unwrap(),
-        req["token"].as_str().unwrap(),
+        req["token"].as_str(),
+        None,
         true,
         "discard obsolete verification repair",
     )

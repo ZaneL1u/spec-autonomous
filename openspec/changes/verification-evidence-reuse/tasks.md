@@ -15,3 +15,6 @@
 
 ## 6. Stage scopes and planning guardrails
 - [x] 6.1 Add `task_verification` / `phase_verification` / `milestone_verification`, reject inline-encoded or oversized argv, defer future scripts and executables in preflight, enrich the planner environment and failure history, and cap budgets with `unsafe_budgets` plus doctor warnings. Verify with contract tests for stage routing, rejection, deferral, environment facts, failure history and caps, then `bun run test:all`.
+
+## 7. Host protocol ergonomics
+- [x] 7.1 Auto-claim prepared work for the calling host, recover tokens through `next`/`request.get`, revoke by owning host, bounded lock wait, informational staleness, readiness only where needed, one-step `run.revise`/`run.cleanup`, discussion cards with prepare, and routing-style skills with docs/host-protocol.md. Verify with contract tests for claiming, recovery, revocation, lock wait and one-step apply, the skill contract test, then `bun run test:all`.
