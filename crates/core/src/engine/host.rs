@@ -114,20 +114,19 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
         && let Some(plan) = run.plans.get(phase)
     {
         let project = Path::new(&run.integration).join(&run.project_relative);
-        data["verification_readiness"] = serde_json::to_value(
-            crate::verification_preflight::inspect_plan_with_environment(
+        data["verification_readiness"] =
+            serde_json::to_value(crate::verification_preflight::inspect_plan_with_config(
                 &project,
                 plan,
                 &run.config.verification,
-                &run.config.runner.environment,
-            ),
-        )?;
+                &run.config,
+            ))?;
     } else {
         data["verification_readiness"] = serde_json::to_value(
-            crate::verification_preflight::inspect_milestone_with_environment(
+            crate::verification_preflight::inspect_milestone_with_config(
                 &Path::new(&run.integration).join(&run.project_relative),
                 &run.milestone,
-                &run.config.runner.environment,
+                &run.config,
             ),
         )?;
     }

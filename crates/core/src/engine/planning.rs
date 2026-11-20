@@ -122,11 +122,11 @@ impl Coordinator<'_> {
                     }
                 }
                 plan::validate_plan(&plan, &partial)?;
-                let readiness = crate::verification_preflight::inspect_plan_with_environment(
+                let readiness = crate::verification_preflight::inspect_plan_with_config(
                     &self.project(),
                     &plan,
                     &project_checks,
-                    &self.run.config.runner.environment,
+                    &self.run.config,
                 );
                 if !readiness.ready {
                     bail!(

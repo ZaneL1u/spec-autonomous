@@ -94,9 +94,10 @@ impl Wave {
             "SA_VERIFY_OUTPUT_DIR".into(),
             artifacts.to_string_lossy().into_owned(),
         );
+        let argv = crate::verification_preflight::resolve_check_argv(check, config);
         let start = Instant::now();
         let result = process::execute(process::Request {
-            argv: &check.argv,
+            argv: &argv,
             cwd: &cwd,
             env: &environment,
             stdin: None,
@@ -139,7 +140,7 @@ impl Wave {
             failure = Some("source_changed");
         }
         let manifest = directory.join("result.json");
-        let details = json!({"schema_version":1,"wave_id":self.directory.file_name().unwrap().to_string_lossy(),"stage":self.stage,"step":if preparation {"preparation"} else {"check"},"duration_ms":duration_ms,"failure_kind":failure,"exit_code":exit_code,"argv":check.argv,"cwd":cwd,"revision":self.revision,"tree_unchanged":tree_unchanged,"stdout":log,"stdout_sha256":stdout_hash,"stderr":stderr,"stderr_sha256":stderr_hash,"manifest":manifest,"output_directory":artifacts,"diagnostics_directory":directory});
+        let details = json!({"schema_version":1,"wave_id":self.directory.file_name().unwrap().to_string_lossy(),"stage":self.stage,"step":if preparation {"preparation"} else {"check"},"duration_ms":duration_ms,"failure_kind":failure,"exit_code":exit_code,"argv":check.argv,"executed_argv":argv,"cwd":cwd,"revision":self.revision,"tree_unchanged":tree_unchanged,"stdout":log,"stdout_sha256":stdout_hash,"stderr":stderr,"stderr_sha256":stderr_hash,"manifest":manifest,"output_directory":artifacts,"diagnostics_directory":directory});
         paths::atomic_write(&manifest, serde_json::to_vec_pretty(&details)?).with_context(
             || {
                 format!(
@@ -180,12 +181,8 @@ pub fn input_identity(
             cwd: ".".into(),
         });
     }
-    let report = crate::verification_preflight::inspect_checks_with_environment(
-        project,
-        &commands,
-        &[],
-        &config.runner.environment,
-    );
+    let report =
+        crate::verification_preflight::inspect_checks_with_config(project, &commands, &[], config);
     let executables: Vec<_> = report
         .checks
         .iter()

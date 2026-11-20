@@ -311,8 +311,9 @@ pub(super) fn verify_configured(
             &repo.common,
             &format!("spec-autonomous/operations/{key}-checks/{index}"),
         )?;
+        let argv = crate::verification_preflight::resolve_check_argv(check, config);
         let output = process::execute(process::Request {
-            argv: &check.argv,
+            argv: &argv,
             cwd: &paths::inside(root, &check.cwd)?,
             env: &config.environment,
             stdin: None,

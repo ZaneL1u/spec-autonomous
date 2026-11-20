@@ -14,12 +14,15 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
         let s = provider::inspect(root, m.framework, &p.source.selector, &Config::load(root)?)?;
         let plan: crate::model::Plan = serde_json::from_value(args["plan"].clone())?;
         crate::plan::validate_plan(&plan, &s)?;
-        let config = Config::load(root)?;
-        let readiness = crate::verification_preflight::inspect_plan_with_environment(
+        let mut config = Config::load(root)?;
+        if m.framework == crate::Framework::Openspec {
+            config.provider.openspec_command = provider::openspec_argv(root, &config);
+        }
+        let readiness = crate::verification_preflight::inspect_plan_with_config(
             root,
             &plan,
             &config.verification,
-            &config.runner.environment,
+            &config,
         );
         return Ok(
             json!({"valid":true,"phase_id":p.id,"source_hash":s.source_hash,"verification_readiness":readiness}),

@@ -1,6 +1,6 @@
 //! Read-only command readiness checks. Readiness is never verification evidence.
 use crate::{
-    config,
+    config::{self, Config},
     model::{Check, Milestone, Plan},
     paths, plan,
 };
@@ -28,6 +28,10 @@ pub struct CheckReadiness {
     pub argv: Vec<String>,
     pub cwd: String,
     pub executable: Option<PathBuf>,
+    /// The argv that executes when it differs from the declared one, for example a
+    /// bare `openspec` mapped to the managed `provider.openspec_command`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_argv: Option<Vec<String>>,
     pub status: String,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -198,15 +202,38 @@ pub fn inspect_checks_with_environment(
     planned_writes: &[String],
     overrides: &BTreeMap<String, String>,
 ) -> Report {
-    let mut report = Report::default();
-    inspect_into(
-        &mut report,
+    inspect_checks_in(
         root,
         checks,
         planned_writes,
-        None,
         &SearchEnvironment::new(overrides),
-    );
+    )
+}
+
+/// Like [`inspect_checks_with_environment`] with the run configuration: its runner
+/// environment and the managed OpenSpec command used by [`resolve_check_argv`].
+pub fn inspect_checks_with_config(
+    root: &Path,
+    checks: &[Check],
+    planned_writes: &[String],
+    config: &Config,
+) -> Report {
+    inspect_checks_in(
+        root,
+        checks,
+        planned_writes,
+        &SearchEnvironment::for_config(config),
+    )
+}
+
+fn inspect_checks_in(
+    root: &Path,
+    checks: &[Check],
+    planned_writes: &[String],
+    search: &SearchEnvironment,
+) -> Report {
+    let mut report = Report::default();
+    inspect_into(&mut report, root, checks, planned_writes, None, search);
     report.finish();
     report
 }
@@ -222,13 +249,34 @@ pub fn inspect_milestone_with_environment(
     milestone: &Milestone,
     overrides: &BTreeMap<String, String>,
 ) -> Report {
-    let checks: Vec<_> = milestone
+    inspect_checks_in(
+        root,
+        &milestone_checks(milestone),
+        &["**".into()],
+        &SearchEnvironment::new(overrides),
+    )
+}
+
+pub fn inspect_milestone_with_config(
+    root: &Path,
+    milestone: &Milestone,
+    config: &Config,
+) -> Report {
+    inspect_checks_in(
+        root,
+        &milestone_checks(milestone),
+        &["**".into()],
+        &SearchEnvironment::for_config(config),
+    )
+}
+
+fn milestone_checks(milestone: &Milestone) -> Vec<Check> {
+    milestone
         .verification
         .iter()
         .chain(milestone.phases.iter().flat_map(|p| &p.verification))
         .cloned()
-        .collect();
-    inspect_checks_with_environment(root, &checks, &["**".into()], overrides)
+        .collect()
 }
 
 pub fn inspect_plan(root: &Path, execution: &Plan, configured_checks: &[Check]) -> Report {
@@ -241,8 +289,35 @@ pub fn inspect_plan_with_environment(
     configured_checks: &[Check],
     overrides: &BTreeMap<String, String>,
 ) -> Report {
+    inspect_plan_in(
+        root,
+        execution,
+        configured_checks,
+        &SearchEnvironment::new(overrides),
+    )
+}
+
+pub fn inspect_plan_with_config(
+    root: &Path,
+    execution: &Plan,
+    configured_checks: &[Check],
+    config: &Config,
+) -> Report {
+    inspect_plan_in(
+        root,
+        execution,
+        configured_checks,
+        &SearchEnvironment::for_config(config),
+    )
+}
+
+fn inspect_plan_in(
+    root: &Path,
+    execution: &Plan,
+    configured_checks: &[Check],
+    search: &SearchEnvironment,
+) -> Report {
     let mut report = Report::default();
-    let search = SearchEnvironment::new(overrides);
     let all_writes: Vec<_> = execution
         .tasks
         .iter()
@@ -267,7 +342,7 @@ pub fn inspect_plan_with_environment(
             &task.verification,
             &available_writes,
             Some(&task.id),
-            &search,
+            search,
         );
         if task.writes.is_empty() {
             report.note("empty_write_scope", "warning", "This task has no declared repair files. Prefer attaching verification to its implementation task, or explicitly declare the files a repair may change.".into(), Some(&task.id), None);
@@ -279,7 +354,7 @@ pub fn inspect_plan_with_environment(
         configured_checks,
         &all_writes,
         None,
-        &search,
+        search,
     );
     report.finish();
     report
@@ -318,10 +393,10 @@ fn inspect_into(
     task: Option<&str>,
     search: &SearchEnvironment,
 ) {
-    for (index, check) in checks.iter().enumerate() {
+    for (index, declared) in checks.iter().enumerate() {
         let before = report.diagnostics.len();
         let mut deferred = false;
-        if let Err(error) = config::validate_check(check) {
+        if let Err(error) = config::validate_check(declared) {
             report.note(
                 "invalid_check",
                 "error",
@@ -330,7 +405,7 @@ fn inspect_into(
                 Some(index),
             );
         }
-        let cwd = match paths::inside(root, &check.cwd) {
+        let cwd = match paths::inside(root, &declared.cwd) {
             Ok(path) => path,
             Err(error) => {
                 report.note(
@@ -340,8 +415,15 @@ fn inspect_into(
                     task,
                     Some(index),
                 );
-                root.join(&check.cwd)
+                root.join(&declared.cwd)
             }
+        };
+        // Inspect what will execute: a bare `openspec` absent from PATH runs through the
+        // managed provider command, exactly as verification does.
+        let resolved = search.resolve_argv(&cwd, &declared.argv);
+        let check = &Check {
+            argv: resolved.clone(),
+            cwd: declared.cwd.clone(),
         };
         if !cwd.is_dir() {
             let future = !cwd.exists() && future_path(&check.cwd, writes, true);
@@ -458,9 +540,10 @@ fn inspect_into(
         report.checks.push(CheckReadiness {
             task_id: task.map(str::to_owned),
             check_index: index,
-            argv: check.argv.clone(),
-            cwd: check.cwd.clone(),
+            argv: declared.argv.clone(),
+            cwd: declared.cwd.clone(),
             executable,
+            resolved_argv: (resolved != declared.argv).then_some(resolved),
             status: if blocked {
                 "needs_input"
             } else if deferred {
@@ -555,10 +638,19 @@ fn node_test_operands(argv: &[String]) -> Vec<&str> {
     }
     operands
 }
+/// The argv a check executes. A bare `openspec` that PATH cannot resolve runs as the
+/// managed `provider.openspec_command` plus the remaining arguments, so a provider the
+/// JS layer installed (or a project-local copy) is usable in verification argv too.
+/// Every other argv, and `openspec` already on PATH, is returned unchanged.
+pub fn resolve_check_argv(check: &Check, config: &Config) -> Vec<String> {
+    SearchEnvironment::for_config(config).resolve_argv(Path::new(""), &check.argv)
+}
+
 struct SearchEnvironment {
     path: OsString,
     #[cfg(windows)]
     extensions: OsString,
+    openspec_command: Vec<String>,
 }
 impl SearchEnvironment {
     fn new(overrides: &BTreeMap<String, String>) -> Self {
@@ -567,7 +659,27 @@ impl SearchEnvironment {
             #[cfg(windows)]
             extensions: effective_environment("PATHEXT", overrides)
                 .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into()),
+            openspec_command: vec![],
         }
+    }
+    fn for_config(config: &Config) -> Self {
+        let mut search = Self::new(&config.runner.environment);
+        search.openspec_command = config.provider.openspec_command.clone();
+        search
+    }
+    fn resolve_argv(&self, cwd: &Path, argv: &[String]) -> Vec<String> {
+        let managed = argv.first().is_some_and(|name| name == "openspec")
+            && !self.openspec_command.is_empty()
+            && self.openspec_command.iter().all(|part| !part.is_empty())
+            && resolve_executable(cwd, "openspec", self).is_none();
+        if !managed {
+            return argv.to_vec();
+        }
+        self.openspec_command
+            .iter()
+            .chain(&argv[1..])
+            .cloned()
+            .collect()
     }
 }
 fn effective_environment(name: &str, overrides: &BTreeMap<String, String>) -> Option<OsString> {

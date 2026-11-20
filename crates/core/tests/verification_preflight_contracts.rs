@@ -309,3 +309,120 @@ fn unix_path_overrides_remain_case_sensitive() {
     );
     assert!(!report.ready);
 }
+
+/// A bare `openspec` check runs through the managed provider command when PATH cannot
+/// resolve it, in preflight and in the verification that actually executes it.
+#[cfg(unix)]
+#[test]
+fn managed_openspec_command_backs_bare_openspec_checks() {
+    use spec_autonomous_core::{config::Config, git, verification::Wave};
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::{Arc, atomic::AtomicBool},
+    };
+    let root = tempfile::tempdir().unwrap();
+    git::command(root.path(), &["init", "-q", "-b", "main"], None).unwrap();
+    fs::write(root.path().join("source"), "unchanged").unwrap();
+    git::commit(root.path(), "fixture").unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let empty_path = tools.path().join("empty-bin");
+    fs::create_dir(&empty_path).unwrap();
+    let fake = tools.path().join("managed-openspec");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nprintf '%s ' \"$@\" > \"$SA_FAKE_OPENSPEC_MARKER\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = tools.path().join("marker");
+    let mut config = Config::default();
+    config
+        .runner
+        .environment
+        .insert("PATH".into(), empty_path.to_string_lossy().into_owned());
+    config.runner.environment.insert(
+        "SA_FAKE_OPENSPEC_MARKER".into(),
+        marker.to_string_lossy().into_owned(),
+    );
+    let command = Check {
+        argv: vec![
+            "openspec".into(),
+            "validate".into(),
+            "demo".into(),
+            "--strict".into(),
+        ],
+        cwd: ".".into(),
+    };
+
+    // Without a managed command the bare name stays a missing executable.
+    let unmanaged = preflight::inspect_checks_with_config(
+        root.path(),
+        std::slice::from_ref(&command),
+        &[],
+        &config,
+    );
+    assert!(!unmanaged.ready);
+    assert!(has(&unmanaged, "check_executable_missing"));
+    assert_eq!(
+        preflight::resolve_check_argv(&command, &config),
+        command.argv
+    );
+
+    config.provider.openspec_command = vec![fake.to_string_lossy().into_owned()];
+    let report = preflight::inspect_checks_with_config(
+        root.path(),
+        std::slice::from_ref(&command),
+        &[],
+        &config,
+    );
+    assert!(report.ready, "{report:?}");
+    assert_eq!(report.checks[0].executable.as_ref(), Some(&fake));
+    assert_eq!(
+        report.checks[0].argv, command.argv,
+        "declared argv stays the identity"
+    );
+    assert_eq!(
+        report.checks[0].resolved_argv.as_deref(),
+        Some(
+            &[
+                fake.to_string_lossy().into_owned(),
+                "validate".into(),
+                "demo".into(),
+                "--strict".into()
+            ][..]
+        )
+    );
+    // The environment-only variant keeps its PATH-only contract.
+    assert!(
+        !preflight::inspect_checks_with_environment(
+            root.path(),
+            std::slice::from_ref(&command),
+            &[],
+            &config.runner.environment
+        )
+        .ready
+    );
+
+    let output = tempfile::tempdir().unwrap();
+    let wave = Wave::new(output.path().join("wave"), root.path(), "phase", &config).unwrap();
+    let result = wave
+        .execute(&command, false, &config, Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    assert!(result.failure.is_none(), "{:?}", result.evidence.details);
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap(),
+        "validate demo --strict "
+    );
+    assert_eq!(result.evidence.argv, command.argv);
+    let details = result.evidence.details.unwrap();
+    assert_eq!(details["executed_argv"][0], fake.to_string_lossy().as_ref());
+
+    // An openspec found on PATH wins over the managed command.
+    let on_path = empty_path.join("openspec");
+    fs::write(&on_path, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&on_path, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        preflight::resolve_check_argv(&command, &config),
+        command.argv
+    );
+}

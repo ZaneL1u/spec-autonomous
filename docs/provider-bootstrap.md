@@ -61,6 +61,8 @@ spec-autonomous providers exec openspec --managed -- --version
 
 `--managed` 不改写项目已有的工具选择。自动安装工具也不把命令加入全局 PATH；原生人工流程可使用 providers exec。
 
+自治 run 的验证检查可以直接写 `openspec ...`：PATH 上没有 `openspec` 时，预检与检查执行会改用 run 解析出的 OpenSpec argv（即上面的选择结果）再拼接其余参数，因此受管理安装无需加入 PATH 也能通过预检并真正执行。
+
 ## 并发、失败与验证
 
 各 worktree 共享用户安装目录及安装锁。每次安装使用独立 generation 路径，成功执行版本探测后才原子写 `current.json`；Python venv 不在安装后重命名。失败 generation 不会被当作可用安装，下次 ensure 重新安装。安装仍在运行时返回或等待锁；安装者退出后的锁可回收。用户已有工具不被删除或升级。

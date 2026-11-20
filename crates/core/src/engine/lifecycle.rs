@@ -32,10 +32,10 @@ impl Coordinator<'_> {
                 bail!("scope_violation: roadmap changed milestone identity, goal or provider");
             }
             plan::validate_milestone(&m)?;
-            let readiness = crate::verification_preflight::inspect_milestone_with_environment(
+            let readiness = crate::verification_preflight::inspect_milestone_with_config(
                 &self.project(),
                 &m,
-                &self.run.config.runner.environment,
+                &self.run.config,
             );
             if !readiness.ready {
                 let message = format!(
@@ -754,7 +754,7 @@ impl Coordinator<'_> {
         let mut prepared = preparation.is_none();
         for check in unique_checks(checks.to_vec()) {
             self.check()?;
-            let key = paths::hash(serde_json::to_string(&serde_json::json!({
+            let mut identity = serde_json::json!({
                 "tree": tree,
                 "class": class,
                 "argv": check.argv,
@@ -763,7 +763,15 @@ impl Coordinator<'_> {
                 "prepare": preparation.as_ref().map(|h| &h.argv),
                 "attempt_timeout_seconds": self.run.config.execution.attempt_timeout_seconds,
                 "max_log_bytes": self.run.config.execution.max_log_bytes,
-            }))?);
+            });
+            // A managed command stands in for the declared one; another managed command
+            // is another input. Keys of checks that run as declared are unchanged.
+            let executed =
+                crate::verification_preflight::resolve_check_argv(&check, &self.run.config);
+            if executed != check.argv {
+                identity["executed_argv"] = serde_json::json!(executed);
+            }
+            let key = paths::hash(serde_json::to_string(&identity)?);
             let hit = if reuse {
                 self.run
                     .host
@@ -846,11 +854,11 @@ impl Coordinator<'_> {
             // exposing arbitrary child output in a public error.
             let stderr =
                 fs::read_to_string(details["stderr"].as_str().unwrap()).unwrap_or_default();
-            let readiness = crate::verification_preflight::inspect_checks_with_environment(
+            let readiness = crate::verification_preflight::inspect_checks_with_config(
                 project,
                 std::slice::from_ref(check),
                 &[],
-                &self.run.config.runner.environment,
+                &self.run.config,
             );
             if stderr.contains("MODULE_NOT_FOUND")
                 && readiness
