@@ -461,7 +461,11 @@ pub fn all() -> Vec<Capability> {
             json!({"expected_head":s,"message":s,"files":{"type":"array","items":s}}),
         ),
     ]);
-    out.push(entry("run.revise", "Preview/apply pending verification corrections while preserving verified work and native requirements; apply without plan_hash when nothing in the revised scope is outstanding.", false, true, &["run_id", "reason"], json!({"run_id":s,"reason":s,"task_checks":{"type":"array","items":{"type":"object"}},"phase_checks":{"type":"array","items":{"type":"object"}},"milestone_checks":{"type":"array","items":{"type":"object"}},"apply":b,"plan_hash":s})));
+    // Same shape run_revision deserializes (deny_unknown_fields), so hosts can build a
+    // correction from the schema instead of guessing the item fields.
+    let check = json!({"type":"object","additionalProperties":false,"required":["argv"],"properties":{"argv":{"type":"array","minItems":1,"items":s,"description":"Executed without a shell."},"cwd":{"type":"string","description":"Project-relative directory; defaults to \".\"."}}});
+    let checks = json!({"type":"array","minItems":1,"maxItems":100,"items":check});
+    out.push(entry("run.revise", "Preview/apply pending verification corrections while preserving verified work and native requirements; apply without plan_hash when nothing in the revised scope is outstanding.", false, true, &["run_id", "reason"], json!({"run_id":s,"reason":s,"task_checks":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["phase_id","task_id","checks"],"properties":{"phase_id":s,"task_id":{"type":"string","description":"Execution plan task id, not the native source id."},"checks":checks}}},"phase_checks":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["phase_id","checks"],"properties":{"phase_id":s,"checks":checks}}},"milestone_checks":checks,"apply":b,"plan_hash":s})));
     out.push(entry("work.claim-batch", "Atomically claim prepared work for distinct host sessions in one operation.", false, true, &["run_id","requests"], json!({"run_id":s,"requests":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["request_id","token","host"],"properties":{"request_id":s,"token":s,"host":host}}}})));
     for (id, description, write) in [
         (
@@ -521,7 +525,17 @@ pub fn all() -> Vec<Capability> {
     out
 }
 pub fn list(all_: bool) -> Value {
-    json!({"schema_version":1,"starts_agents":false,"capabilities":all().into_iter().filter(|c|all_||c.primary).collect::<Vec<_>>()})
+    let (shown, hidden): (Vec<_>, Vec<_>) = all().into_iter().partition(|c| all_ || c.primary);
+    let mut value = json!({"schema_version":1,"starts_agents":false,"capabilities":shown});
+    if !all_ {
+        // The default view lists complete capabilities only; name the granular ones so a
+        // host knows they exist without loading every schema.
+        value["hidden_capabilities"] = json!(hidden.iter().map(|c| &c.id).collect::<Vec<_>>());
+        value["hint"] = json!(
+            "Granular capabilities are hidden. Run `spec-autonomous tools list --all --json` (MCP: sa_tools {\"operation\":\"list\"}) for their schemas, then `tools call <id>`."
+        );
+    }
+    value
 }
 pub fn get(id: &str) -> Result<Capability> {
     all()

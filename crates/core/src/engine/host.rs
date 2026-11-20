@@ -70,6 +70,20 @@ pub fn work_context(root: &Path, run_id: &str, attempt_id: &str) -> Result<Value
     }
     Ok(serde_json::to_value(work_packet::read_input(&dir)?)?)
 }
+/// Packet limits and what they do. The CLI never runs or kills host workers: the
+/// timeout bounds the verification and hook subprocesses it starts itself, and an
+/// overdue heartbeat only marks a request `stale` without moving ownership.
+fn limits(run: &Run) -> Value {
+    json!({
+        "attempt_timeout_seconds": run.config.execution.attempt_timeout_seconds,
+        "run_remaining_ms": (run.config.execution.run_timeout_seconds * 1000).saturating_sub(elapsed(run)),
+        "max_result_bytes": 65536,
+        "enforced": false,
+        "applies_to": "attempt_timeout_seconds bounds each verification check and hook subprocess the CLI runs; host workers are not timed or killed by the CLI",
+        "heartbeat_required": false,
+        "stale_effect": "informational",
+    })
+}
 pub fn work_view(run: &Run, runtime: &Path) -> Result<Value> {
     work_view_with(run, runtime, true)
 }
@@ -103,7 +117,7 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
                         json!(Path::new(selector).file_name().and_then(|s| s.to_str()));
                 }
             }
-            work.push(json!({"request_id":a.id,"run_id":run.id,"kind":a.kind,"task_id":a.task_id,"phase_id":a.phase_id,"status":a.status,"token":lease.token,"input_hash":lease.input_hash,"worktree":a.worktree,"project":Path::new(&a.worktree).join(&run.project_relative),"base_commit":a.base_commit,"input_path":dir.join("input.json"),"prompt_path":dir.join("prompt.md"),"result_schema_path":dir.join("result.schema.json"),"result_path":dir.join("host-result.json"),"environment_hints":hints,"requirements":{"fresh_context":true,"host_owned_execution":true},"limits":{"attempt_timeout_seconds":run.config.execution.attempt_timeout_seconds,"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(run)),"max_result_bytes":65536},"stale":now_ms().saturating_sub(lease.heartbeat_at_ms)>run.config.host.lease_seconds*1000,"owner":lease.owner}));
+            work.push(json!({"request_id":a.id,"run_id":run.id,"kind":a.kind,"task_id":a.task_id,"phase_id":a.phase_id,"status":a.status,"token":lease.token,"input_hash":lease.input_hash,"worktree":a.worktree,"project":Path::new(&a.worktree).join(&run.project_relative),"base_commit":a.base_commit,"input_path":dir.join("input.json"),"prompt_path":dir.join("prompt.md"),"result_schema_path":dir.join("result.schema.json"),"result_path":dir.join("host-result.json"),"environment_hints":hints,"requirements":{"fresh_context":true,"host_owned_execution":true},"limits":limits(run),"stale":now_ms().saturating_sub(lease.heartbeat_at_ms)>run.config.host.lease_seconds*1000,"owner":lease.owner}));
         }
     }
     data["work"] = json!(work);

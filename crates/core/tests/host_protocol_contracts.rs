@@ -363,6 +363,23 @@ fn a_prepared_plan_is_not_evidence_that_its_phase_is_complete() {
 }
 
 #[test]
+fn packet_limits_say_the_cli_does_not_enforce_host_worker_time() {
+    let root = fixture();
+    let first = prepare(root.path());
+    let limits = &first["work"][0]["limits"];
+    assert!(limits["attempt_timeout_seconds"].as_u64().unwrap() > 0);
+    assert_eq!(limits["enforced"], false, "{limits}");
+    assert_eq!(limits["heartbeat_required"], false);
+    assert_eq!(limits["stale_effect"], "informational");
+    assert!(
+        limits["applies_to"]
+            .as_str()
+            .unwrap()
+            .contains("subprocess")
+    );
+}
+
+#[test]
 fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
     let root = fixture();
     let first = prepare(root.path());

@@ -75,3 +75,59 @@ fn compact_views_keep_totals_and_paginate_without_exposing_run_credentials() {
     assert_eq!(ids.len(), all.len());
     assert_eq!(all.iter().filter(|c| c.primary).count(), 8);
 }
+
+#[test]
+fn default_catalog_names_hidden_capabilities_and_revise_items_have_a_schema() {
+    let primary = catalog::list(false);
+    let shown: Vec<&str> = primary["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    let hidden: Vec<&str> = primary["hidden_capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    assert!(hidden.contains(&"run.revise") && hidden.contains(&"work.claim"));
+    assert!(hidden.iter().all(|id| !shown.contains(id)));
+    assert_eq!(shown.len() + hidden.len(), catalog::all().len());
+    assert!(
+        primary["hint"]
+            .as_str()
+            .unwrap()
+            .contains("tools list --all")
+    );
+    let everything = catalog::list(true);
+    assert!(everything.get("hidden_capabilities").is_none());
+    assert_eq!(
+        everything["capabilities"].as_array().unwrap().len(),
+        catalog::all().len()
+    );
+
+    let revise = catalog::get("run.revise").unwrap().input_schema;
+    let item = &revise["properties"]["task_checks"]["items"];
+    assert_eq!(item["required"], json!(["phase_id", "task_id", "checks"]));
+    assert_eq!(
+        item["properties"]["checks"]["items"]["required"],
+        json!(["argv"])
+    );
+    let check = json!({"argv":["node","--test","tests/a.test.mjs"],"cwd":"."});
+    assert!(
+        catalog::validate(
+            "run.revise",
+            &json!({"run_id":"r","reason":"fix","task_checks":[{"phase_id":"P001","task_id":"t","checks":[check]}],"phase_checks":[{"phase_id":"P001","checks":[check]}],"milestone_checks":[check]})
+        )
+        .is_ok()
+    );
+    for bad in [
+        json!({"run_id":"r","reason":"fix","task_checks":[{"phase_id":"P001","checks":[check]}]}),
+        json!({"run_id":"r","reason":"fix","task_checks":[{"phase_id":"P001","task_id":"t","checks":[{"cmd":"x"}]}]}),
+        json!({"run_id":"r","reason":"fix","phase_checks":[{"phase_id":"P001","checks":[check],"extra":1}]}),
+        json!({"run_id":"r","reason":"fix","milestone_checks":[{"argv":"node"}]}),
+    ] {
+        assert!(catalog::validate("run.revise", &bad).is_err(), "{bad}");
+    }
+}

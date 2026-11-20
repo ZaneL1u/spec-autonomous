@@ -11,7 +11,7 @@ spec-autonomous tools call <capability> --input @arguments.json --json
 
 MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级 `sa_tools` 使用 `{"operation":"list"}` 或 `{"operation":"call","capability":"...","arguments":{...}}`。`mcp --all-tools` 可显式公开全部细粒度工具。
 
-每个条目的完整 input_schema 可从目录查询。读取工具支持 view、fields、limit、offset；写工具只支持 view，业务 CAS/凭据见必需参数。省略的选择参数由原生框架定位，存在歧义时明确拒绝。
+不带 `--all` 的列表只含主能力，另附 `hidden_capabilities`（被隐藏的细粒度能力 id）与 `hint`。每个条目的完整 input_schema 可从目录查询。读取工具支持 view、fields、limit、offset；写工具只支持 view，业务 CAS/凭据见必需参数。省略的选择参数由原生框架定位，存在歧义时明确拒绝。
 
 | 能力 | 级别 | 读写 | 必需参数 | 职责 |
 | --- | --- | --- | --- | --- |
