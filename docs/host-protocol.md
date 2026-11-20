@@ -1,6 +1,6 @@
 # 宿主协议
 
-本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?}]}`）。
+本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` / `task_writes` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?}]}`、`{phase_id, task_id, add:[path]}`）。
 
 ## 一次循环需要多少次调用
 
@@ -35,6 +35,10 @@
 ## 重派时继承上次改动
 
 同一任务上一个 implement attempt 以 `failed` / `blocked` 结束且留有未提交改动时，重派的 implement 包在 `input.json` 中带 `previous_candidate = {attempt_id, base_commit, patch_path, files, same_base}`：补丁写在新 attempt 目录的 `previous-candidate.diff`，worktree 仍在时由 `git diff` 相对其 base 生成，已回收时取回收保存的 `patch.diff`。`same_base: true` 时在 worktree 根目录 `git apply --index <patch_path>` 即可复用，否则用 `--3way` 或仅作参考；prompt 同样说明，并要求复用后重新运行该任务的检查。没有上次改动时不输出该字段，旧包的 `input_hash` 不变。
+
+## 追加写集
+
+implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
 
 ## 原生任务子条目
 

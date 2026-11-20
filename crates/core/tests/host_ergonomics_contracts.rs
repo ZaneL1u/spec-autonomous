@@ -90,6 +90,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         milestone: None,
         plan: None,
         audit: vec![],
+        requested_writes: vec![],
     }
 }
 /// Submit with the identity the coordinator derived for this packet.

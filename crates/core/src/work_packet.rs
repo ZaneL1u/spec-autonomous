@@ -57,6 +57,14 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
         "You are a fresh Spec Autonomous worker. Your task is the JSON request below. Follow its native SDD instructions and repository rules. Work only inside the assigned checkout. If context_reference is present, read the immutable complete request before acting. The host owns your session and must report it with the receipt. Do not start other autonomous coordinators, write shared task checkboxes, commit, push or publish. The coordinator owns native extension hooks: do not invoke hooks yourself, including hooks mentioned by native skills. Native planning may create only snapshot.next_action.outputs; Spec Kit feature.json may be updated locally by the native command but will be restored before integration. Return a single JSON object matching WorkerResult: schema_version=1, run_id/task_id/attempt_id copied exactly, status=candidate|blocked|failed, summary<=8192 bytes, blockers array, milestone or null, plan or null, audit array. Roadmap work returns milestone; task planning returns plan; verification returns requirement/evidence/passed audit items. Never claim integrated/verified. Only implementation/native-planning/converge work may edit allowed files.\n\nREQUEST:\n{}",
         String::from_utf8_lossy(&data)
     );
+    let prompt = if input.kind == "implement" {
+        format!(
+            "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative paths (at most {}). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",
+            crate::run_revision::MAX_REQUESTED_WRITES
+        )
+    } else {
+        prompt
+    };
     let prompt = match &input.previous_candidate {
         Some(previous) => format!(
             "{prompt}\n\nPREVIOUS CANDIDATE: attempt {} of this task failed or was blocked (see failure) after changing {}. Its uncommitted changes are saved at {}. {} Review them against the failure before reusing anything; reused code is not evidence, so run this task's verification checks again before returning a candidate.",
@@ -97,13 +105,17 @@ pub fn read_input(dir: &Path) -> Result<WorkerInput> {
     Ok(input)
 }
 pub fn read_result(dir: &Path) -> Result<WorkerResult> {
+    let result = read_receipt(dir)?;
+    validate_result(&read_input(dir)?, &result)?;
+    Ok(result)
+}
+/// The stored receipt as submitted, before a blocked or failed status becomes an error.
+pub fn read_receipt(dir: &Path) -> Result<WorkerResult> {
     if fs::metadata(dir.join("result.json"))?.len() > 64 * 1024 {
         bail!("worker_protocol_error: result exceeds 64 KiB");
     }
-    let result: WorkerResult = serde_json::from_slice(&fs::read(dir.join("result.json"))?)
-        .context("worker_protocol_error: invalid result JSON")?;
-    validate_result(&read_input(dir)?, &result)?;
-    Ok(result)
+    serde_json::from_slice(&fs::read(dir.join("result.json"))?)
+        .context("worker_protocol_error: invalid result JSON")
 }
 pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     fn object(properties: serde_json::Value) -> serde_json::Value {
@@ -133,6 +145,7 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     let mut schema = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"run_id":{"type":"string","enum":[input.run_id]},"task_id":{"type":"string","enum":[input.task_id]},"attempt_id":{"type":"string","enum":[input.attempt_id]},"status":{"type":"string","enum":["candidate","blocked","failed"]},"summary":string,"blockers":strings,"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]},"plan":{"anyOf":[{"$ref":"#/$defs/plan"},{"type":"null"}]},"audit":{"type":"array","items":{"$ref":"#/$defs/audit"}}}),
     );
+    schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: project-relative files outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
     schema["$defs"] = json!({"check":check,"source":source,"phase":phase,"milestone":milestone,"task":task,"plan":plan,"audit":audit});
     schema
 }

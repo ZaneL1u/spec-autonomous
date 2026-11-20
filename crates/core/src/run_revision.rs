@@ -1,4 +1,5 @@
-//! Reviewed, CAS-protected changes to pending verification. No Git mutations.
+//! Reviewed, CAS-protected changes to pending verification and task write sets.
+//! No Git mutations.
 use crate::{
     git::{self, Repository},
     model::{Check, Run},
@@ -80,11 +81,21 @@ struct PhaseChecks {
     phase_id: String,
     checks: Vec<Check>,
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TaskWrites {
+    phase_id: String,
+    task_id: String,
+    add: Vec<String>,
+}
 #[derive(Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Changes {
     #[serde(default)]
     task_checks: Vec<TaskChecks>,
+    /// Omitted when empty so earlier revision records and their hashes stay identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    task_writes: Vec<TaskWrites>,
     #[serde(default)]
     phase_checks: Vec<PhaseChecks>,
     #[serde(default)]
@@ -101,6 +112,141 @@ fn checks(values: &[Check]) -> Result<()> {
     Ok(())
 }
 
+/// Paths a blocked worker may have added to its task's write set without review.
+pub const MAX_REQUESTED_WRITES: usize = 10;
+
+/// Native context a worker must never edit for one phase: its context files and the
+/// tracking file the coordinator alone checks off.
+pub fn context_paths(snapshot: &crate::model::Snapshot) -> Vec<String> {
+    snapshot
+        .context_files
+        .iter()
+        .map(|f| f.path.clone())
+        .chain(snapshot.tracking_file.clone())
+        .collect()
+}
+
+fn normalize_write(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || Path::new(trimmed).is_absolute() || trimmed.starts_with('/') {
+        bail!("write_scope_invalid: {raw:?} is not a project-relative path");
+    }
+    paths::relative(trimmed).map_err(|_| {
+        anyhow::anyhow!("write_scope_invalid: {raw:?} is not a safe project-relative path")
+    })?;
+    let normal = trimmed
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if normal.is_empty() {
+        bail!("write_scope_invalid: {raw:?} names the project root");
+    }
+    if normal == ".git"
+        || normal.starts_with(".git/")
+        || normal == ".spec-autonomous"
+        || normal.starts_with(".spec-autonomous/")
+    {
+        bail!("write_scope_forbidden: {normal} is reserved for Git and the coordinator");
+    }
+    globset::Glob::new(&normal)
+        .map_err(|_| anyhow::anyhow!("write_scope_invalid: {normal:?} is not a valid pattern"))?;
+    Ok(normal)
+}
+
+/// Check paths to add to a pending task's write set and return the normalized ones its
+/// writes do not already allow. Rejects reserved or native context paths, an unrestricted
+/// task and overlap with another task's outstanding implement work (`exclude` skips the
+/// attempt asking for them).
+pub fn admissible_writes(
+    run: &Run,
+    phase_id: &str,
+    task_id: &str,
+    add: &[String],
+    context: &[String],
+    exclude: Option<&str>,
+) -> Result<Vec<String>> {
+    if add.is_empty() || add.len() > 100 {
+        bail!("invalid_revision: supply 1..100 paths to add");
+    }
+    let task = run
+        .plans
+        .get(phase_id)
+        .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+        .context("task_not_found")?;
+    if task.writes.is_empty() {
+        bail!(
+            "write_scope_unrestricted: task {task_id} has no declared write set and may already change any file except native context"
+        );
+    }
+    let mut added: Vec<String> = vec![];
+    for raw in add {
+        let path = normalize_write(raw)?;
+        let matcher = globset::Glob::new(&path)?.compile_matcher();
+        if let Some(hit) = context.iter().find(|c| **c == path || matcher.is_match(c)) {
+            bail!(
+                "write_scope_forbidden: {path} covers native context {hit}; change the spec through the native workflow instead"
+            );
+        }
+        if crate::plan::allowed(&path, &task.writes) || added.contains(&path) {
+            continue;
+        }
+        for attempt in run.attempts.iter().filter(|a| {
+            a.kind == "implement"
+                && ["issued", "claimed", "receiving", "submitted"].contains(&a.status.as_str())
+                && Some(a.id.as_str()) != exclude
+                && !(a.phase_id == phase_id && a.task_id == task_id)
+        }) {
+            let Some(other) = run
+                .plans
+                .get(&attempt.phase_id)
+                .and_then(|p| p.tasks.iter().find(|t| t.id == attempt.task_id))
+            else {
+                continue;
+            };
+            if other
+                .writes
+                .iter()
+                .chain(&other.reads)
+                .any(|y| crate::plan::overlaps(&path, y))
+            {
+                bail!(
+                    "write_scope_conflict: {path} overlaps task {}/{} whose request {} is outstanding; retry once it is received or revoked",
+                    attempt.phase_id,
+                    attempt.task_id,
+                    attempt.id
+                );
+            }
+        }
+        added.push(path);
+    }
+    Ok(added)
+}
+
+/// Add `added` to the planned task's writes and return the ledger diff entry.
+pub fn extend_task_writes(
+    run: &mut Run,
+    phase_id: &str,
+    task_id: &str,
+    added: &[String],
+) -> Result<Value> {
+    let task = run
+        .plans
+        .get_mut(phase_id)
+        .and_then(|p| p.tasks.iter_mut().find(|t| t.id == task_id))
+        .context("task_not_found")?;
+    let before = task.writes.clone();
+    task.writes.extend(added.iter().cloned());
+    Ok(
+        json!({"scope":"task_writes","phase_id":phase_id,"task_id":task_id,"before":before,"after":task.writes,"added":added}),
+    )
+}
+
+/// Ready-to-run `run.revise` arguments granting `paths` to a task, for blockers.
+pub fn grant_example(run_id: &str, phase_id: &str, task_id: &str, paths: &[String]) -> String {
+    json!({"run_id":run_id,"reason":format!("Task {task_id} needs these files to finish its native requirement"),"task_writes":[{"phase_id":phase_id,"task_id":task_id,"add":paths}],"apply":true}).to_string()
+}
+
 pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     let id = args["run_id"]
         .as_str()
@@ -111,11 +257,12 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
         .context("invalid_revision: explain the correction and its native requirement evidence")?;
     let changes: Changes = serde_json::from_value(json!({
         "task_checks":args.get("task_checks").cloned().unwrap_or(json!([])),
+        "task_writes":args.get("task_writes").cloned().unwrap_or(json!([])),
         "phase_checks":args.get("phase_checks").cloned().unwrap_or(json!([])),
         "milestone_checks":args.get("milestone_checks").cloned().unwrap_or(Value::Null),
     }))
     .context("invalid_revision: correction payload does not match the revision schema")?;
-    if changes.task_checks.len() + changes.phase_checks.len() > 100 {
+    if changes.task_checks.len() + changes.phase_checks.len() + changes.task_writes.len() > 100 {
         bail!("invalid_revision: too many changes");
     }
     let apply = args["apply"] == true;
@@ -173,6 +320,12 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
         .task_checks
         .iter()
         .map(|u| Run::key(&u.phase_id, &u.task_id))
+        .chain(
+            changes
+                .task_writes
+                .iter()
+                .map(|u| Run::key(&u.phase_id, &u.task_id)),
+        )
         .collect();
     let revised_phases: BTreeSet<&str> = changes
         .task_checks
@@ -257,8 +410,52 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
         );
         modified.milestone.verification = values.clone();
     }
+    let project = integration.join(&run.project_relative);
+    for update in &changes.task_writes {
+        let key = Run::key(&update.phase_id, &update.task_id);
+        if !touched.insert(format!("writes/{key}")) {
+            bail!("invalid_revision: duplicate task write update");
+        }
+        if !run.selected_phases.contains(&update.phase_id) || run.completed_tasks.contains(&key) {
+            bail!(
+                "revision_scope_violation: only pending tasks in the selected phase range can change"
+            );
+        }
+        let phase = run
+            .milestone
+            .phases
+            .iter()
+            .find(|p| p.id == update.phase_id)
+            .context("phase_not_found")?;
+        let snapshot = provider::inspect(
+            &project,
+            run.milestone.framework,
+            &phase.source.selector,
+            &run.config,
+        )?;
+        let added = admissible_writes(
+            &modified,
+            &update.phase_id,
+            &update.task_id,
+            &update.add,
+            &context_paths(&snapshot),
+            None,
+        )?;
+        if added.is_empty() {
+            bail!("invalid_revision: task writes already allow every listed path");
+        }
+        diff.push(extend_task_writes(
+            &mut modified,
+            &update.phase_id,
+            &update.task_id,
+            &added,
+        )?);
+        if !task_keys.contains(&key) {
+            task_keys.push(key);
+        }
+    }
     if diff.is_empty() {
-        bail!("invalid_revision: no verification changes supplied");
+        bail!("invalid_revision: no verification or write-set changes supplied");
     }
     if let Some(repair) = &host.pending_repair {
         let superseded = repair
@@ -277,7 +474,6 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
         }
         modified.host.as_mut().unwrap().pending_repair = None;
     }
-    let project = integration.join(&run.project_relative);
     let mut sources = serde_json::Map::new();
     for phase in &run.milestone.phases {
         if !run.selected_phases.contains(&phase.id) {
@@ -348,7 +544,8 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     Ok(preview)
 }
 
-/// A new planner must not silently restore a known obsolete check list.
+/// A new planner must not silently restore a known obsolete check list, nor drop files
+/// a revision added to a task's write set (an unrestricted task keeps its open scope).
 pub fn reconcile_plan(plan: &mut crate::model::Plan, revisions: &[Value]) -> Result<()> {
     for task in &mut plan.tasks {
         let mut versions = vec![];
@@ -363,6 +560,25 @@ pub fn reconcile_plan(plan: &mut crate::model::Plan, revisions: &[Value]) -> Res
                         diff["before"].clone(),
                     )?);
                     versions.push(serde_json::from_value::<Vec<Check>>(diff["after"].clone())?);
+                }
+            }
+        }
+        if !task.writes.is_empty() {
+            for record in revisions {
+                for diff in record["diff"].as_array().into_iter().flatten() {
+                    if diff["scope"] == "task_writes"
+                        && diff["phase_id"] == plan.phase_id
+                        && diff["task_id"] == task.id
+                        && diff["superseded_by_native"] != true
+                    {
+                        for path in diff["added"].as_array().into_iter().flatten() {
+                            if let Some(path) = path.as_str()
+                                && !crate::plan::allowed(path, &task.writes)
+                            {
+                                task.writes.push(path.to_owned());
+                            }
+                        }
+                    }
                 }
             }
         }

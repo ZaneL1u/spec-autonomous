@@ -191,6 +191,10 @@ pub struct WorkerResult {
     pub plan: Option<Plan>,
     #[serde(default)]
     pub audit: Vec<AuditItem>,
+    /// Project-relative paths outside the task's write set that a blocked implement needs.
+    /// Omitted when empty so receipts without it keep their hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_writes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

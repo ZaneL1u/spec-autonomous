@@ -33,6 +33,29 @@ spec-autonomous prepare --run-id run-example --json
 
 MCP 使用 `sa_tools`：`operation: call`、`capability: run.revise`、`arguments` 为相同 JSON。阶段检查使用 `phase_checks: [{phase_id,checks}]`；完整里程碑的检查使用 `milestone_checks: [{argv,cwd}]`。修订后的检查仍由协调器执行，结果通过门禁后才完成。
 
+## 追加任务写集
+
+任务需要改写集外的既有文件（典型是改动后受影响的旧测试）时，用 `task_writes` 给待完成任务追加写集，只能追加不能删除：
+
+```json
+{
+  "run_id": "run-example",
+  "reason": "tests/test_contracts.py 断言旧接口，需随本任务一起更新",
+  "task_writes": [
+    { "phase_id": "P1", "task_id": "t3", "add": ["tests/test_contracts.py"] }
+  ],
+  "apply": true
+}
+```
+
+- 路径为项目相对路径或 glob，先规范化（去掉 `./`、重复斜杠），拒绝绝对路径、`..`、`.git/`、`.spec-autonomous/`，以及命中该 phase 原生上下文（spec / plan / tasks 等 context 文件与跟踪文件）的路径（`write_scope_forbidden` / `write_scope_invalid`）。
+- 已被现有写集覆盖的路径跳过；全部已覆盖时拒绝。`writes: []` 的任务本就是开放范围，拒绝追加（`write_scope_unrestricted`）。
+- 与其他在途 implement（issued / claimed / receiving / submitted）的写集或读集重叠时拒绝（`write_scope_conflict`），待其回执或撤销后再试。
+- 被修订任务自己的在途 implement 会阻塞应用，规则同检查修订；应用后重置该任务的重试计数，`prepare --run-id` 即重新签发，新包的 `task.writes` 含追加路径，并通过 `previous_candidate` 继承上次改动。
+- 修订记录在账本 `verification_revisions`，diff 为 `{scope:"task_writes", before, after, added}`；重新规划时 `reconcile_plan` 把 `added` 并回同 ID 任务的写集（开放范围任务保持开放）。
+
+worker 也可以自己申请：implement 返回 `status: "blocked"` 并带 `requested_writes: [path...]`（至多 10 个）。协调器按上述同一组约束检查，全部满足时自动追加写集、在账本记一条 `automatic: true` 的修订，把该 attempt 记为 `write_scope_extended` 失败并立即重派（带 `previous_candidate`，计入该任务的重试次数）。任一约束不满足或超过 10 个时保持 `needs_input`，blocker 给出原因和可直接执行的 `spec-autonomous tools call run.revise --input '{...}' --json` 参数。
+
 ## 保留与约束
 
 - 当前运行的有效验证保存在账本；原有 TOML 是基线。`state.get` 的完整视图展示有效 plan 和 `verification_revisions`，语义审查的证据文件也包含修订原因和前后差异。

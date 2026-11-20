@@ -86,7 +86,7 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 }
 ```
 
-具体工作类型及其结果形状以请求的 result.schema.json 为准。宿主传回结果，CLI 执行验证/集成；result 不能声明 integrated/verified。返回 awaiting_host 表示还有宿主工作，不是完成。领取凭据只用于该请求，普通 progress/next 不公开它。
+具体工作类型及其结果形状以请求的 result.schema.json 为准。implement 被写集挡住时可返回 `"status":"blocked"` 并附可选的 `"requested_writes":["tests/test_x.py"]`（至多 10 个），见 [宿主协议](host-protocol.md)。宿主传回结果，CLI 执行验证/集成；result 不能声明 integrated/verified。返回 awaiting_host 表示还有宿主工作，不是完成。领取凭据只用于该请求，普通 progress/next 不公开它。
 
 ## MCP resources
 
@@ -97,4 +97,4 @@ MCP 的七个主工具将连字符替换成下划线并加 `sa_` 前缀。高级
 
 URI 只接受注册的形式和安全 ID，不提供任意文件路径读取。查询中的缺失字段、不支持能力和模糊选择均有明确错误。
 
-运行恢复新增 `run.revise`（见 [修订与续跑](run-revision.md)）；批量认领使用 `work.claim-batch`。`run.cleanup` 在删除引用时采用预览/哈希应用，详见 [清理规则](run-cleanup.md)。宿主身份、自动认领、令牌找回与调用次数见 [宿主协议](host-protocol.md)。
+运行恢复新增 `run.revise`（见 [修订与续跑](run-revision.md)），可修订待完成检查，也可用 `task_writes` 给待完成任务追加写集；批量认领使用 `work.claim-batch`。`run.cleanup` 在删除引用时采用预览/哈希应用，详见 [清理规则](run-cleanup.md)。宿主身份、自动认领、令牌找回与调用次数见 [宿主协议](host-protocol.md)。

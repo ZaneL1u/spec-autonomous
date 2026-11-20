@@ -287,6 +287,7 @@ fn valid_result(input: &WorkerInput) -> WorkerResult {
         milestone: None,
         plan: None,
         audit: vec![],
+        requested_writes: vec![],
     }
 }
 

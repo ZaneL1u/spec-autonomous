@@ -121,6 +121,9 @@ impl Coordinator<'_> {
                 .iter()
                 .find(|t| t.id == self.run.attempts[index].task_id)
                 .context("stale_request: task no longer in plan")?;
+            if self.grant_requested_writes(phase, &snapshot, index)? {
+                continue;
+            }
             let dir = self
                 .store
                 .attempt_dir(&self.run.id, &self.run.attempts[index].id)?;
@@ -165,6 +168,8 @@ impl Coordinator<'_> {
                 self.save("source_progress_recorded")?;
             }
         }
+        // Granted write-set additions changed the planned tasks.
+        let plan = self.run.plans.get(&phase.id).cloned().unwrap_or(plan);
         if self.run.host.as_ref().is_some_and(|h| h.reconcile_pending) {
             if self.run.has_outstanding_host_work() {
                 bail!(
@@ -276,6 +281,115 @@ impl Coordinator<'_> {
             .collect::<Vec<_>>()
             .join("; ");
         bail!("no_progress: no eligible task remains: {errors}")
+    }
+    /// A blocked implement receipt naming `requested_writes` gets them added to its task's
+    /// write set when they are safe (bounded, normalized, outside native context and
+    /// outstanding work); the attempt then closes as failed so the task is re-issued with
+    /// its changes as previous_candidate. Unsafe requests stop the run with a ready
+    /// run.revise example. Returns true when the write set was extended.
+    fn grant_requested_writes(
+        &mut self,
+        phase: &Phase,
+        snapshot: &Snapshot,
+        index: usize,
+    ) -> Result<bool> {
+        let attempt = self.run.attempts[index].clone();
+        let dir = self.store.attempt_dir(&self.run.id, &attempt.id)?;
+        let Ok(receipt) = work_packet::read_receipt(&dir) else {
+            return Ok(false);
+        };
+        if attempt.kind != "implement"
+            || receipt.status != "blocked"
+            || receipt.requested_writes.is_empty()
+        {
+            return Ok(false);
+        }
+        let requested = &receipt.requested_writes;
+        let limit = crate::run_revision::MAX_REQUESTED_WRITES;
+        let checked = if requested.len() > limit {
+            Err(anyhow::anyhow!(
+                "write_scope_limit: {} paths requested; at most {limit} are added without review",
+                requested.len()
+            ))
+        } else {
+            crate::run_revision::admissible_writes(
+                &self.run,
+                &phase.id,
+                &attempt.task_id,
+                requested,
+                &crate::run_revision::context_paths(snapshot),
+                Some(&attempt.id),
+            )
+        };
+        let now = paths::now();
+        match checked {
+            Ok(added) if !added.is_empty() => {
+                let diff = crate::run_revision::extend_task_writes(
+                    &mut self.run,
+                    &phase.id,
+                    &attempt.task_id,
+                    &added,
+                )?;
+                let reason = format!(
+                    "blocked attempt {} requested writes: {}",
+                    attempt.id,
+                    receipt.blockers.join("; ")
+                );
+                let changes = serde_json::json!({"task_writes":[{"phase_id":phase.id,"task_id":attempt.task_id,"add":requested}]});
+                let record = serde_json::json!({
+                    "plan_hash": paths::hash(serde_json::to_vec(&(&attempt.id, &changes))?),
+                    "reason": reason.chars().take(8192).collect::<String>(),
+                    "changes": changes,
+                    "diff": [diff],
+                    "at": now,
+                    "accepted_head": self.run.accepted_head,
+                    "automatic": true,
+                    "attempt_id": attempt.id,
+                });
+                self.run
+                    .host
+                    .as_mut()
+                    .context("legacy_run_read_only")?
+                    .verification_revisions
+                    .push(record);
+                let a = &mut self.run.attempts[index];
+                a.status = "failed".into();
+                a.finished_at = Some(now);
+                a.summary = receipt.summary.clone();
+                a.error = Some(format!(
+                    "write_scope_extended: task {} may now also write {}; it is re-issued with this attempt's changes as previous_candidate",
+                    attempt.task_id,
+                    added.join(", ")
+                ));
+                self.save("task_writes_extended")?;
+                Ok(true)
+            }
+            outcome => {
+                let reason = match outcome {
+                    Err(error) => format!("{error:#}"),
+                    Ok(_) => "task.writes already allow every requested path".into(),
+                };
+                let message = format!(
+                    "needs_input: {} {}; requested_writes were not added automatically: {reason}. After review grant them with `spec-autonomous tools call run.revise --input '{}' --json`, then run `spec-autonomous prepare --run-id {}`",
+                    receipt.summary,
+                    receipt.blockers.join("; "),
+                    crate::run_revision::grant_example(
+                        &self.run.id,
+                        &phase.id,
+                        &attempt.task_id,
+                        requested
+                    ),
+                    self.run.id
+                );
+                let a = &mut self.run.attempts[index];
+                a.status = "failed".into();
+                a.finished_at = Some(now);
+                a.summary = receipt.summary.clone();
+                a.error = Some(message.clone());
+                self.save("task_retry")?;
+                bail!(message)
+            }
+        }
     }
     pub(super) fn integrate_task(
         &mut self,

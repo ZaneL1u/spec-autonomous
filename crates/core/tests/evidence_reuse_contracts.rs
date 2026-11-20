@@ -127,6 +127,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         milestone: None,
         plan: None,
         audit: vec![],
+        requested_writes: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {

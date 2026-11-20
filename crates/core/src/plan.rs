@@ -231,7 +231,8 @@ fn normalized(pattern: &str) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
-fn overlaps(a: &str, b: &str) -> bool {
+/// True when two write/read patterns can name the same file (prefix-based, conservative).
+pub fn overlaps(a: &str, b: &str) -> bool {
     let a_normal = normalized(a);
     let b_normal = normalized(b);
     let a = a_normal.as_str();
