@@ -2,7 +2,78 @@
 //! and joined with conservative batch barriers before global DAG validation.
 use super::*;
 
+/// Marks a planning candidate whose only preflight errors are project-level environment
+/// gaps. Such a candidate stays `candidate` and is re-checked instead of re-planned.
+pub(super) const ENVIRONMENT_UNAVAILABLE: &str = "verification_environment_unavailable";
+
+/// True when every preflight error is a project-level (no task) missing executable or
+/// cwd. A planner cannot fix those; the operator's environment or configuration can.
+fn environment_only(report: &crate::verification_preflight::Report) -> bool {
+    let mut errors = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "error")
+        .peekable();
+    errors.peek().is_some()
+        && errors.all(|d| {
+            d.task_id.is_none()
+                && matches!(
+                    d.code.as_str(),
+                    "check_executable_missing" | "check_cwd_missing"
+                )
+        })
+}
+
 impl Coordinator<'_> {
+    /// The newest planning candidate for this batch that only the verification
+    /// environment held back, when it still matches the current source and baseline.
+    /// A stale one is superseded so a fresh planning packet is issued instead.
+    fn kept_planning_candidate(
+        &mut self,
+        task_id: &str,
+        phase_id: &str,
+        partial: &Snapshot,
+    ) -> Result<Option<(WorkerResult, PathBuf, usize)>> {
+        let Some(index) = self.run.attempts.iter().rposition(|a| {
+            a.kind == "plan-tasks"
+                && a.task_id == task_id
+                && a.phase_id == phase_id
+                && a.status == "candidate"
+                && a.error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with(ENVIRONMENT_UNAVAILABLE))
+        }) else {
+            return Ok(None);
+        };
+        let attempt = &self.run.attempts[index];
+        let dir = self.store.attempt_dir(&self.run.id, &attempt.id)?;
+        let previous = work_packet::read_input(&dir)
+            .ok()
+            .and_then(|input| input.snapshot);
+        let ids = |s: &Snapshot| s.tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        let current = attempt.base_commit == self.run.accepted_head
+            && previous
+                .as_ref()
+                .is_some_and(|p| p.source_hash == partial.source_hash && ids(p) == ids(partial));
+        let result = if current {
+            work_packet::read_result(&dir).ok()
+        } else {
+            None
+        };
+        let Some(result) = result else {
+            let attempt = &mut self.run.attempts[index];
+            attempt.status = "superseded".into();
+            attempt.error = Some(
+                "superseded: the planning candidate kept for an environment fix no longer matches the source or baseline"
+                    .into(),
+            );
+            self.save("planning_candidate_superseded")?;
+            return Ok(None);
+        };
+        let worktree = PathBuf::from(&attempt.worktree);
+        Ok(Some((result, worktree, index)))
+    }
+
     pub(super) fn build_plan(&mut self, phase: &Phase, snapshot: &Snapshot) -> Result<Plan> {
         let pending: Vec<_> = snapshot.tasks.iter().filter(|t| !t.done).cloned().collect();
         let limit = self.run.config.execution.max_planner_tasks;
@@ -89,13 +160,19 @@ impl Coordinator<'_> {
                 batch + 1,
                 crate::verification_preflight::planning_guidance()
             );
-            let (result, _worktree, index) = self.invoke(
-                "plan-tasks",
-                &task_id,
-                &phase.id,
-                instruction,
-                Some(partial.clone()),
-            )?;
+            // A candidate held back only by the verification environment is checked
+            // again as-is; the planner is not asked for the plan it already returned.
+            let kept = self.kept_planning_candidate(&task_id, &phase.id, &partial)?;
+            let (result, _worktree, index) = match kept {
+                Some(kept) => kept,
+                None => self.invoke(
+                    "plan-tasks",
+                    &task_id,
+                    &phase.id,
+                    instruction,
+                    Some(partial.clone()),
+                )?,
+            };
             let candidate = (|| -> Result<Plan> {
                 if !self.attempt_changes(index)?.is_empty() {
                     bail!("scope_violation: task planner changed files");
@@ -130,7 +207,12 @@ impl Coordinator<'_> {
                 );
                 if !readiness.ready {
                     bail!(
-                        "verification_preflight_failed: {}",
+                        "{}: {}",
+                        if environment_only(&readiness) {
+                            ENVIRONMENT_UNAVAILABLE
+                        } else {
+                            "verification_preflight_failed"
+                        },
                         serde_json::to_string(&readiness)?
                     );
                 }
@@ -138,6 +220,24 @@ impl Coordinator<'_> {
             })();
             let mut plan = match candidate {
                 Ok(plan) => plan,
+                Err(error) if format!("{error:#}").starts_with(ENVIRONMENT_UNAVAILABLE) => {
+                    // The plan is fine; the project environment is not. Keep the
+                    // candidate so the next prepare only re-runs the preflight.
+                    let message = format!("{error:#}");
+                    let attempt = &mut self.run.attempts[index];
+                    attempt.status = "candidate".into();
+                    attempt.error = Some(message.clone());
+                    attempt.finished_at = Some(paths::now());
+                    let attempt_id = attempt.id.clone();
+                    self.save("planning_environment_blocked")?;
+                    bail!(
+                        "needs_input: {ENVIRONMENT_UNAVAILABLE}: project-level verification cannot run in this environment; the planning candidate {attempt_id} is kept. Install the missing executable or create the missing directory (or correct runner.environment / project verification and pass reload_config), then run `spec-autonomous prepare --run-id {}` without --change/--feature; only the verification preflight runs again: {}",
+                        self.run.id,
+                        message
+                            .strip_prefix(&format!("{ENVIRONMENT_UNAVAILABLE}: "))
+                            .unwrap_or(&message)
+                    );
+                }
                 Err(error) => {
                     let attempt = &mut self.run.attempts[index];
                     attempt.status = "failed".into();
@@ -145,7 +245,8 @@ impl Coordinator<'_> {
                     attempt.finished_at = Some(paths::now());
                     self.save("planning_batch_rejected")?;
                     bail!(
-                        "needs_input: planning candidate rejected; prepare the run again for a corrected plan: {error:#}"
+                        "needs_input: planning candidate rejected; run `spec-autonomous prepare --run-id {}` without --change/--feature to issue a corrected planning packet: {error:#}",
+                        self.run.id
                     );
                 }
             };
@@ -190,6 +291,13 @@ impl Coordinator<'_> {
                 .collect();
             combined.tasks.extend(plan.tasks);
             self.run.attempts[index].status = "accepted".into();
+            if self.run.attempts[index]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with(ENVIRONMENT_UNAVAILABLE))
+            {
+                self.run.attempts[index].error = None;
+            }
             self.save("planning_batch_accepted")?;
         }
         plan::validate_plan(&combined, snapshot)?;

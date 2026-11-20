@@ -566,12 +566,14 @@ impl Coordinator<'_> {
             }
             .into();
             if !message.starts_with("awaiting_host:") {
-                if let Some(attempt) = self
-                    .run
-                    .attempts
-                    .iter_mut()
-                    .rev()
-                    .find(|a| a.status == "candidate")
+                // A planning candidate kept for an environment fix stays a candidate.
+                if let Some(attempt) = self.run.attempts.iter_mut().rev().find(|a| {
+                    a.status == "candidate"
+                        && !a
+                            .error
+                            .as_deref()
+                            .is_some_and(|e| e.starts_with(planning::ENVIRONMENT_UNAVAILABLE))
+                })
                 {
                     attempt.status = "failed".into();
                     attempt.error = Some(message.clone());

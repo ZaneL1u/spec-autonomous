@@ -444,6 +444,104 @@ fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
     );
 }
 
+/// A project-level check whose executable is missing is an environment problem, not a
+/// planning mistake: the accepted-shape candidate is kept and only preflight re-runs.
+#[cfg(unix)]
+#[test]
+fn environment_only_preflight_failure_keeps_the_planning_candidate() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = fixture();
+    let tools = tempfile::tempdir().unwrap();
+    let tool = tools.path().join("sa-env-tool-552871");
+    let mut config = Config::load(root.path()).unwrap();
+    config.runner.environment.insert(
+        "PATH".into(),
+        format!(
+            "{}:{}",
+            tools.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    config.verification.push(Check {
+        argv: vec!["sa-env-tool-552871".into()],
+        cwd: ".".into(),
+    });
+    put(
+        root.path(),
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    git::commit(root.path(), "configure an environment tool").unwrap();
+
+    let first = prepare(root.path());
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let blocked = answer_plan(root.path(), &first["work"][0]);
+    assert_eq!(blocked["status"], "needs_input", "{blocked}");
+    let blocker = blocked["blocker"].as_str().unwrap();
+    assert!(
+        blocker.starts_with("needs_input: verification_environment_unavailable"),
+        "{blocker}"
+    );
+    assert!(blocker.contains("check_executable_missing"), "{blocker}");
+    assert!(
+        blocker.contains(&format!("prepare --run-id {run_id}")),
+        "{blocker}"
+    );
+    assert!(blocker.contains("without --change"), "{blocker}");
+    let repo = git::Repository::discover(root.path()).unwrap();
+    let attempts = || {
+        Store::open(&repo, false)
+            .unwrap()
+            .unwrap()
+            .get(&run_id)
+            .unwrap()
+    };
+    let run = attempts();
+    assert_eq!(run.attempts.len(), 1);
+    assert_eq!(run.attempts[0].status, "candidate");
+    assert!(run.plans.is_empty());
+
+    // Still broken: preflight runs again, no new planning packet is issued.
+    let again = api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id":run_id,"view":"full"}),
+    )
+    .unwrap();
+    assert_eq!(again["status"], "needs_input", "{again}");
+    assert!(again["work"].as_array().unwrap().is_empty());
+    assert_eq!(attempts().attempts.len(), 1);
+    assert_eq!(attempts().attempts[0].status, "candidate");
+
+    // Fix the environment: the kept plan is accepted and implementation is issued.
+    fs::write(
+        &tool,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let resumed = api::invoke(
+        root.path(),
+        "prepare",
+        &json!({"run_id":run_id,"view":"full"}),
+    )
+    .unwrap();
+    assert_eq!(resumed["status"], "awaiting_host", "{resumed}");
+    assert_eq!(resumed["work"][0]["kind"], "implement", "{resumed}");
+    let run = attempts();
+    let planners: Vec<_> = run
+        .attempts
+        .iter()
+        .filter(|a| a.kind == "plan-tasks")
+        .collect();
+    assert_eq!(planners.len(), 1, "the planner is not asked again");
+    assert_eq!(planners[0].status, "accepted");
+    assert!(planners[0].error.is_none());
+    assert_eq!(run.plans["P001"].tasks[0].id, "value");
+}
+
 #[test]
 fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() {
     let f = fixture();
