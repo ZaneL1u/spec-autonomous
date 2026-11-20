@@ -11,7 +11,8 @@ pub fn doctor(config: &Config) -> Result<serde_json::Value> {
     )
 }
 pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) -> Result<()> {
-    let mapped = map_input(input, root);
+    let mut mapped = map_input(input, root);
+    trim(&mut mapped);
     let input_file = dir.join("input.json");
     let result_file = dir.join("result.json");
     if result_file.exists()
@@ -53,9 +54,23 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
     let data = serde_json::to_vec_pretty(input)?;
     fs::create_dir_all(dir)?;
     paths::atomic_write(&input_file, &data)?;
+    let reference = input
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.metadata.get("context_reference"))
+        .map(|r| {
+            format!(
+                " input.json is a bounded envelope: its snapshot.metadata.context_reference names the immutable complete request at {} (sha256 {}); read that file before acting.",
+                r["path"].as_str().unwrap_or_default(),
+                r["sha256"].as_str().unwrap_or_default()
+            )
+        })
+        .unwrap_or_default();
     let prompt = format!(
-        "You are a fresh Spec Autonomous worker. Your task is the JSON request below. Follow its native SDD instructions and repository rules. Work only inside the assigned checkout. If context_reference is present, read the immutable complete request before acting. The host owns your session and must report it with the receipt. Do not start other autonomous coordinators, write shared task checkboxes, commit, push or publish. The coordinator owns native extension hooks: do not invoke hooks yourself, including hooks mentioned by native skills. Native planning may create only snapshot.next_action.outputs; Spec Kit feature.json may be updated locally by the native command but will be restored before integration. Return a single JSON object matching WorkerResult: schema_version=1, run_id/task_id/attempt_id copied exactly, status=candidate|blocked|failed, summary<=8192 bytes, blockers array, milestone or null, plan or null, audit array. Roadmap work returns milestone; task planning returns plan; verification returns requirement/evidence/passed audit items. Never claim integrated/verified. Only implementation/native-planning/converge work may edit allowed files.\n\nREQUEST:\n{}",
-        String::from_utf8_lossy(&data)
+        "You are a fresh Spec Autonomous worker. Your task is the JSON request in the input file named below. Follow its native SDD instructions and repository rules. Work only inside the assigned checkout. The host owns your session and must report it with the receipt. Do not start other autonomous coordinators, write shared task checkboxes, commit, push or publish. The coordinator owns native extension hooks: do not invoke hooks yourself, including hooks mentioned by native skills. Native planning may create only snapshot.next_action.outputs; Spec Kit feature.json may be updated locally by the native command but will be restored before integration. Return a single JSON object matching WorkerResult: schema_version=1, run_id/task_id/attempt_id copied exactly, status=candidate|blocked|failed, summary<=8192 bytes, blockers array, milestone or null, plan or null, audit array. Roadmap work returns milestone; task planning returns plan; verification returns requirement/evidence/passed audit items. Never claim integrated/verified. Only implementation/native-planning/converge work may edit allowed files.\n\nREQUEST: {} (sha256 {}). Read this JSON file completely before acting; it is the authority for identity, scope, the unit instruction, native instructions (snapshot.next_action), native context (snapshot.context_files) and tasks. The summary below only orients you and never replaces it.{reference}\n\nSUMMARY:\n{}",
+        input_file.display(),
+        paths::hash(&data),
+        summary(input)
     );
     let prompt = if input.kind == "implement" {
         format!(
@@ -88,6 +103,203 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
         serde_json::to_vec_pretty(&result_schema(input))?,
     )?;
     Ok(())
+}
+/// Drop what a worker of this kind never reads: acceptance references outside audits,
+/// parsed document outlines and the raw native JSON envelope for implementation, and a
+/// planning failure repeated verbatim from `failure`.
+fn trim(input: &mut WorkerInput) {
+    let kind = input.kind.clone();
+    let failure = input.failure.clone();
+    let Some(snapshot) = input.snapshot.as_mut() else {
+        return;
+    };
+    if let Some(meta) = snapshot.metadata.as_object_mut() {
+        if kind != "audit" {
+            meta.remove("acceptance");
+        }
+        if kind == "implement" {
+            meta.remove("documents");
+        }
+        if let (Some(failure), Some(previous)) = (
+            failure.as_deref(),
+            meta.get_mut("previous_planning_failure")
+                .and_then(serde_json::Value::as_object_mut),
+        ) && previous.get("error").and_then(serde_json::Value::as_str) == Some(failure)
+        {
+            previous.remove("error");
+            previous.insert("error_in".into(), json!("failure"));
+        }
+    }
+    // OpenSpec apply instructions arrive as their whole JSON document; its task list and
+    // context file map are already snapshot.tasks and snapshot.context_files.
+    if kind == "implement"
+        && let Ok(native) =
+            serde_json::from_str::<serde_json::Value>(&snapshot.next_action.instruction)
+        && let Some(text) = native
+            .get("instruction")
+            .and_then(serde_json::Value::as_str)
+    {
+        let mut instruction = text.to_owned();
+        for warning in native["warnings"].as_array().into_iter().flatten() {
+            if let Some(warning) = warning.as_str() {
+                instruction.push_str(&format!("\nWarning: {warning}"));
+            }
+        }
+        if let Some(context) = native["context"].as_str().filter(|c| !c.trim().is_empty()) {
+            instruction.push_str(&format!("\n\nProject context:\n{context}"));
+        }
+        snapshot.next_action.instruction = instruction;
+    }
+}
+fn clip(text: &str, limit: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    format!("{}…", text.chars().take(limit).collect::<String>())
+}
+fn listed(values: &[String], empty: &str) -> String {
+    if values.is_empty() {
+        empty.to_owned()
+    } else {
+        values.join(", ")
+    }
+}
+/// A short orientation per work kind; the input file remains the authority.
+fn summary(input: &WorkerInput) -> String {
+    let mut lines = vec![
+        format!(
+            "kind: {} | run_id: {} | task_id: {} | attempt_id: {} | base_commit: {}",
+            input.kind, input.run_id, input.task_id, input.attempt_id, input.base_commit
+        ),
+        format!("instruction: {}", clip(&input.instruction, 6000)),
+    ];
+    let snapshot = input.snapshot.as_ref();
+    match input.kind.as_str() {
+        "implement" => {
+            if let Some(task) = &input.task {
+                lines.push(format!("task.id: {}", task.id));
+                lines.push(format!(
+                    "task.description: {}",
+                    clip(&task.description, 4000)
+                ));
+                lines.push(format!(
+                    "task.source_ids: {}",
+                    listed(&task.source_ids, "none")
+                ));
+                lines.push(format!(
+                    "task.depends_on: {}",
+                    listed(&task.depends_on, "none")
+                ));
+                lines.push(format!(
+                    "task.writes: {}",
+                    listed(
+                        &task.writes,
+                        "unrestricted (empty: any file except native context)"
+                    )
+                ));
+                lines.push(format!(
+                    "task.reads: {}",
+                    listed(&task.reads, "none declared")
+                ));
+                let checks: Vec<String> = task
+                    .verification
+                    .iter()
+                    .map(|c| format!("`{}` (cwd {})", c.argv.join(" "), c.cwd))
+                    .collect();
+                lines.push(format!(
+                    "task.verification: {}",
+                    listed(&checks, "project-level checks only")
+                ));
+            }
+            if let Some(snapshot) = snapshot {
+                lines.push(format!(
+                    "native instruction (snapshot.next_action.instruction): {}",
+                    clip(&snapshot.next_action.instruction, 1500)
+                ));
+            }
+            if let Some(previous) = &input.previous_candidate {
+                lines.push(format!(
+                    "previous_candidate: attempt {} changed {}; patch at {} (same_base: {}) — see PREVIOUS CANDIDATE below",
+                    previous.attempt_id,
+                    previous.files.join(", "),
+                    previous.patch_path,
+                    previous.same_base
+                ));
+            }
+        }
+        "plan-tasks" => {
+            if let Some(snapshot) = snapshot {
+                lines.push(format!(
+                    "source: {} | source_hash: {}",
+                    snapshot.selector, snapshot.source_hash
+                ));
+                lines.push(format!(
+                    "snapshot.tasks ({}; cover every one):",
+                    snapshot.tasks.len()
+                ));
+                for task in snapshot.tasks.iter().take(60) {
+                    lines.push(format!(
+                        "- {}{}: {}",
+                        task.id,
+                        if task.done { " (done)" } else { "" },
+                        clip(&task.description, 160)
+                    ));
+                }
+                if snapshot.tasks.len() > 60 {
+                    lines.push(format!(
+                        "- … {} more in input.json",
+                        snapshot.tasks.len() - 60
+                    ));
+                }
+            }
+        }
+        "audit" => {
+            let acceptance = snapshot
+                .and_then(|s| s.metadata["acceptance"].as_array())
+                .cloned()
+                .unwrap_or_default();
+            lines.push(format!(
+                "snapshot.metadata.acceptance ({}; one audit item per id):",
+                acceptance.len()
+            ));
+            for item in acceptance.iter().take(60) {
+                lines.push(format!(
+                    "- {}: {}",
+                    item["id"].as_str().unwrap_or_default(),
+                    clip(item["description"].as_str().unwrap_or_default(), 160)
+                ));
+            }
+            if acceptance.len() > 60 {
+                lines.push(format!("- … {} more in input.json", acceptance.len() - 60));
+            }
+        }
+        _ => {}
+    }
+    if let Some(snapshot) = snapshot {
+        lines.push(format!(
+            "native action: {} {} | outputs: {}",
+            snapshot.next_action.kind,
+            snapshot.next_action.artifact,
+            listed(&snapshot.next_action.outputs, "none")
+        ));
+        let files: Vec<String> = snapshot
+            .context_files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        lines.push(format!(
+            "native context files (full text in snapshot.context_files): {}",
+            listed(&files, "none inline")
+        ));
+    }
+    if let Some(failure) = &input.failure {
+        lines.push(format!(
+            "previous failure (full text in failure): {}",
+            clip(failure, 1500)
+        ));
+    }
+    lines.join("\n")
 }
 pub fn read_input(dir: &Path) -> Result<WorkerInput> {
     let input: WorkerInput = serde_json::from_slice(&fs::read(dir.join("input.json"))?)?;

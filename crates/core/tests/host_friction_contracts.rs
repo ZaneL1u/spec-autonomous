@@ -660,3 +660,140 @@ fn doctor_warns_about_unbound_prepare_scripts_and_uninitialized_submodules() {
         "{report:?}"
     );
 }
+
+#[test]
+fn implement_prompt_is_a_small_summary_of_a_trimmed_request() {
+    let bulk = "Repository rule: keep every handler documented and tested. ".repeat(600);
+    let root = fixture_with(|_| {}, |root| put(root, "AGENTS.md", &bulk));
+    let root = root.path();
+    put(
+        root,
+        "specs/feature/plan.md",
+        &format!("# Plan\nUse a plain UTF-8 file and Node assertions.\n{bulk}\n"),
+    );
+    git::commit(root, "large plan").unwrap();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let planning = &first["work"][0];
+    let plan_input: Value =
+        serde_json::from_slice(&fs::read(planning["input_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    let plan_meta = &plan_input["snapshot"]["metadata"];
+    assert!(
+        plan_meta.get("documents").is_some(),
+        "planners keep outlines"
+    );
+    assert!(
+        plan_meta.get("acceptance").is_none(),
+        "only audits get acceptance"
+    );
+    let plan_prompt = fs::read_to_string(planning["prompt_path"].as_str().unwrap()).unwrap();
+    assert!(plan_prompt.contains("snapshot.tasks (2; cover every one)"));
+    assert!(plan_prompt.contains("T001"));
+
+    let wave = answer_plan(root, planning);
+    let request = work(&wave, "value");
+    let input_path = request["input_path"].as_str().unwrap();
+    let input = fs::read(input_path).unwrap();
+    let prompt = fs::read_to_string(request["prompt_path"].as_str().unwrap()).unwrap();
+    let value: Value = serde_json::from_slice(&input).unwrap();
+    let meta = &value["snapshot"]["metadata"];
+    assert!(meta.get("documents").is_none() && meta.get("acceptance").is_none());
+    assert!(
+        value["snapshot"]["context_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["path"] == "specs/feature/plan.md"),
+        "native context stays complete in the input file"
+    );
+    // The old prompt embedded the whole request, so it was larger than input.json.
+    assert!(input.len() > 30 * 1024, "{}", input.len());
+    assert!(prompt.len() < 8 * 1024, "{}", prompt.len());
+    assert!(prompt.len() * 4 < input.len());
+    assert!(!prompt.contains("Repository rule: keep every handler"));
+    for expected in [
+        format!("REQUEST: {input_path}"),
+        format!("sha256 {}", spec_autonomous_core::paths::hash(&input)),
+        "task.id: value".into(),
+        "task.writes: src/value.txt".into(),
+        "task.depends_on: none".into(),
+        "`node --test tests/value.mjs` (cwd .)".into(),
+        "requested_writes".into(),
+        "specs/feature/plan.md".into(),
+    ] {
+        assert!(prompt.contains(&expected), "{expected}\n{prompt}");
+    }
+    // The trimmed packet still verifies against its recorded input hash.
+    let input = packet(root, request);
+    assert_eq!(input.task.unwrap().id, "value");
+}
+
+#[test]
+fn trimming_unwraps_native_apply_json_and_dedupes_planning_failures() {
+    let snapshot = |instruction: String, metadata: Value| -> Value {
+        json!({"schema_version":1,"framework":"openspec","selector":"demo","source_dir":"openspec/changes/demo","tracking_file":"openspec/changes/demo/tasks.md","planning_ready":true,
+            "next_action":{"kind":"implement","artifact":"apply","instruction":instruction,"outputs":[]},
+            "tasks":[],"context_files":[],"diagnostics":[],"source_hash":"h","metadata":metadata})
+    };
+    let apply = json!({"changeName":"demo","contextFiles":{"tasks":["/x/tasks.md"]},"tasks":[{"id":"1","description":"one","done":false}],"progress":{"total":1,"complete":0,"remaining":1},"state":"ready","warnings":["proposal is short"],"context":"Python 3.14 service","instruction":"Implement the pending tasks in order."});
+    let base = |kind: &str, snapshot: Value, failure: Option<&str>| -> WorkerInput {
+        serde_json::from_value(json!({"schema_version":1,"run_id":"run-trim","task_id":"t","attempt_id":"attempt-trim","kind":kind,"goal":"g","framework":"openspec","base_commit":"abc","instruction":"do it","task":null,"snapshot":snapshot,"milestone":null,"failure":failure}))
+            .unwrap()
+    };
+    let config = Config::default();
+    let write = |input: &WorkerInput| -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        spec_autonomous_core::work_packet::prepare(input, dir.path(), dir.path(), &config).unwrap();
+        serde_json::from_slice(&fs::read(dir.path().join("input.json")).unwrap()).unwrap()
+    };
+    let implement = write(&base(
+        "implement",
+        snapshot(
+            serde_json::to_string_pretty(&apply).unwrap(),
+            json!({"documents":[1],"acceptance":[2],"execution":"kept"}),
+        ),
+        None,
+    ));
+    assert_eq!(
+        implement["snapshot"]["next_action"]["instruction"],
+        "Implement the pending tasks in order.\nWarning: proposal is short\n\nProject context:\nPython 3.14 service"
+    );
+    assert_eq!(
+        implement["snapshot"]["metadata"],
+        json!({"execution":"kept"})
+    );
+    let planning = write(&base(
+        "plan-tasks",
+        snapshot(
+            serde_json::to_string_pretty(&apply).unwrap(),
+            json!({"documents":[1],"acceptance":[2],"previous_planning_failure":{"request_id":"r","error":"invalid_plan: bad","action":"fix"}}),
+        ),
+        Some("invalid_plan: bad"),
+    ));
+    assert_eq!(planning["failure"], "invalid_plan: bad");
+    assert_eq!(
+        planning["snapshot"]["metadata"],
+        json!({"documents":[1],"previous_planning_failure":{"request_id":"r","error_in":"failure","action":"fix"}})
+    );
+    assert!(
+        planning["snapshot"]["next_action"]["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("contextFiles"),
+        "non-implement work keeps the native JSON"
+    );
+    let audit = write(&base(
+        "audit",
+        snapshot("audit".into(), json!({"documents":[1],"acceptance":[2]})),
+        None,
+    ));
+    assert_eq!(
+        audit["snapshot"]["metadata"],
+        json!({"documents":[1],"acceptance":[2]})
+    );
+}

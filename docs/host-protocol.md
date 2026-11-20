@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 会话开始 | `doctor`、`inspect` | 各一次。设置错误（缺原生工具、`invalid_config`、`budget_cap`）是阻塞项，用 `providers status|ensure` 或改配置解决，不要用 prepare 当健康检查 |
 | 开始 / 续跑 | `prepare` + `host` | 返回的 `work[]` 已按派生会话认领并带 `token` 与 `owner` |
-| 派发 | 宿主自己的 agent 能力 | 只传 packet 的 `input_path` / `prompt_path` / `result_schema_path` 与 worktree |
+| 派发 | 宿主自己的 agent 能力 | 只传 packet 的 `input_path` / `prompt_path` / `result_schema_path` 与 worktree；`prompt.md` 是指向 `input.json` 的摘要，不必解析 |
 | 回执 | `apply-result`（`host` = packet 的 `owner`，`claim_next: true`） | 验证、集成、签发下一批并为该宿主自动认领，响应即下一批工作 |
 | 结束 | `run.cleanup apply:true` | 不删分支 / integration 时不需要预览哈希 |
 
@@ -31,6 +31,14 @@
 - packet 的 `limits` 自带说明：`enforced: false`（CLI 不计时、不终止宿主 worker）；`applies_to` 说明 `attempt_timeout_seconds` 约束的是 CLI 自己启动的验证检查与钩子子进程；`heartbeat_required: false`；`stale_effect: "informational"`。`run_remaining_ms` 与 `max_result_bytes` 含义不变。
 - `work.revoke {run_id, request_id, host_stopped: true, reason, token?|host?}`：令牌或拥有者 `host_id` 二选一；只有确认子会话已停止才能调用。
 - 完成与否由 CLI 回执与账本决定，而不是 agent 会话的退出状态：结果已提交则该单元已完成；结果未提交则重新提交同一结果或重派同一 packet。
+
+## 工作包内容
+
+`prompt.md` 只放 worker 规则、`input.json` 的绝对路径与 sha256，以及按工作类型的摘要：implement 列出 `task.id` / `description` / `source_ids` / `depends_on` / `writes` / `reads` / `verification`、原生指令摘录与 `previous_candidate`；规划列出来源、`source_hash` 与 `snapshot.tasks` 概要；审计列出验收 id。完整请求只在 `input.json`（超出 `max_context_bytes` 时仍由 `context_reference` 指向 `context-full.json`），worker 必须先完整读取它，摘要不能替代它。
+
+`input.json` 按类型裁剪：只有 audit 带 `snapshot.metadata.acceptance`；implement 不带 `metadata.documents`，`snapshot.next_action.instruction` 由 OpenSpec apply 的整份 JSON 换成其中的 `instruction` 文本（附 `warnings` 与 `context`，任务表与上下文文件已在 `snapshot.tasks` / `snapshot.context_files`）；规划包中与顶层 `failure` 相同的 `previous_planning_failure.error` 换成 `error_in: "failure"`。`context_files` 原样保留。
+
+`input_hash` 是签发时 `input.json` 字节的哈希，只对新签发的包改变。升级前已签发、尚未回执的包仍使用磁盘上原有的 `input.json` / `prompt.md`，回执与 `work.context` 按原哈希校验，不受影响。
 
 ## 重派时继承上次改动
 

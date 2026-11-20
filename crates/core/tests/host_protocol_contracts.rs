@@ -471,11 +471,16 @@ fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
         retry["request_id"].as_str().unwrap(),
     )
     .unwrap();
+    // The rejection is carried once, in `failure`; the planning metadata points to it.
     assert!(
-        retry_input["snapshot"]["metadata"]["previous_planning_failure"]["error"]
+        retry_input["failure"]
             .as_str()
             .unwrap()
             .contains("check_executable_missing")
+    );
+    assert_eq!(
+        retry_input["snapshot"]["metadata"]["previous_planning_failure"]["error_in"],
+        "failure"
     );
     let corrected = answer_plan(root.path(), retry);
     assert_eq!(corrected["id"], first["id"]);
