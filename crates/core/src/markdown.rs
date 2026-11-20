@@ -32,6 +32,60 @@ pub struct Heading {
     pub text: String,
     pub line: usize,
 }
+/// The ATX heading level of a trimmed line (`#` run followed by a space).
+fn heading_level(stripped: &str) -> Option<usize> {
+    let level = stripped.chars().take_while(|c| *c == '#').count();
+    (level > 0 && stripped.chars().nth(level) == Some(' ')).then_some(level)
+}
+/// Leading whitespace width; a tab counts as four columns.
+fn indent(line: &str) -> usize {
+    line.chars()
+        .take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r')
+        .map(|c| if c == '\t' { 4 } else { 1 })
+        .sum()
+}
+
+/// Lines collected under the most recent task checkbox.
+struct Details {
+    task: usize,
+    indent: usize,
+    /// Collected lines; `true` marks fence bodies, which never set the shared indent.
+    lines: Vec<(String, bool)>,
+    blanks: usize,
+    fenced: bool,
+}
+impl Details {
+    fn finish(self, tasks: &mut [SourceTask]) {
+        let common = self
+            .lines
+            .iter()
+            .filter(|(l, verbatim)| !verbatim && !l.trim().is_empty())
+            .map(|(l, _)| indent(l))
+            .min()
+            .unwrap_or(0);
+        let body: Vec<String> = self
+            .lines
+            .iter()
+            .map(|(line, _)| {
+                // Drop the shared indentation only; relative layout and code stay as written.
+                let mut width = 0;
+                let cut = line
+                    .char_indices()
+                    .find(|(_, c)| {
+                        if width >= common || !c.is_whitespace() {
+                            return true;
+                        }
+                        width += if *c == '\t' { 4 } else { 1 };
+                        false
+                    })
+                    .map_or(line.len(), |(i, _)| i);
+                line[cut..].to_string()
+            })
+            .collect();
+        tasks[self.task].details = body.join("\n");
+    }
+}
+
 pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
     let hash = paths::hash(text);
     let mut doc = Document {
@@ -50,6 +104,7 @@ pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
     let mut ids = BTreeSet::new();
     let mut front = String::new();
     let mut front_kind: Option<&str> = None;
+    let mut details: Option<Details> = None;
     for (index, line) in text.split_inclusive('\n').enumerate() {
         let stripped = line.trim();
         if index == 0 && ["---", "+++"].contains(&stripped) {
@@ -71,7 +126,9 @@ pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
             offset += line.len();
             continue;
         }
-        if stripped.starts_with("```") || stripped.starts_with("~~~") {
+        let fence_line = stripped.starts_with("```") || stripped.starts_with("~~~");
+        let fenced_before = fence.is_some();
+        if fence_line {
             let ch = stripped.chars().next().unwrap();
             let count = stripped.chars().take_while(|c| *c == ch).count();
             if let Some((open, len)) = fence {
@@ -83,19 +140,57 @@ pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
             }
         }
         let hidden = fence.is_some() || comment || stripped.starts_with("<!--");
-        if !hidden && stripped.starts_with('#') {
-            let level = stripped.chars().take_while(|c| *c == '#').count();
-            if stripped.chars().nth(level) == Some(' ') {
-                let title = stripped[level..].trim().to_string();
-                if level == 2 {
-                    phase = title.clone();
-                }
-                doc.headings.push(Heading {
-                    level,
-                    text: title,
-                    line: index + 1,
-                });
+        let content = line.trim_end_matches(['\r', '\n']);
+        // Any checkbox the parser reads (a task or an empty_task diagnostic) ends details.
+        let task_line =
+            checkbox().is_match(content) && (!hidden || framework == Framework::Openspec);
+        // Indented lines under a checkbox belong to it until the next task, a heading or
+        // a line indented no deeper than the checkbox. A fence opened inside is kept
+        // whole, whatever its own lines look like, unless one of them is itself a task.
+        if let Some(mut open) = details.take() {
+            let mut verbatim = false;
+            let keep = if task_line {
+                false
+            } else if open.fenced {
+                open.fenced = fence.is_some();
+                verbatim = true;
+                true
+            } else if stripped.is_empty() {
+                open.blanks += 1;
+                details = Some(open);
+                offset += line.len();
+                continue_after_details(&mut comment, stripped);
+                continue;
+            } else if !hidden && heading_level(stripped).is_some() {
+                false
+            } else if indent(content) > open.indent {
+                open.fenced = fence_line && !fenced_before && fence.is_some();
+                true
+            } else {
+                false
+            };
+            if keep {
+                open.lines
+                    .extend(std::iter::repeat_n((String::new(), verbatim), open.blanks));
+                open.blanks = 0;
+                open.lines.push((content.to_string(), verbatim));
+                details = Some(open);
+                offset += line.len();
+                continue_after_details(&mut comment, stripped);
+                continue;
             }
+            open.finish(&mut doc.tasks);
+        }
+        if !hidden && let Some(level) = heading_level(stripped) {
+            let title = stripped[level..].trim().to_string();
+            if level == 2 {
+                phase = title.clone();
+            }
+            doc.headings.push(Heading {
+                level,
+                text: title,
+                line: index + 1,
+            });
         }
         if let Some(c) = checkbox().captures(line.trim_end_matches(['\r', '\n'])) {
             if !hidden || framework == Framework::Openspec {
@@ -137,6 +232,14 @@ pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
                         phase: phase.clone(),
                         story: story().captures(desc).map(|c| c[1].into()),
                         parallel: desc.contains("[P]"),
+                        details: String::new(),
+                    });
+                    details = Some(Details {
+                        task: doc.tasks.len() - 1,
+                        indent: indent(content),
+                        lines: vec![],
+                        blanks: 0,
+                        fenced: false,
                     });
                 }
             }
@@ -149,10 +252,22 @@ pub fn parse(path: &str, text: &str, framework: Framework) -> Result<Document> {
         }
         offset += line.len();
     }
+    if let Some(open) = details {
+        open.finish(&mut doc.tasks);
+    }
     if front_kind.is_some() {
         bail!("invalid_markdown: unclosed frontmatter");
     }
     Ok(doc)
+}
+/// Comment state tracking for lines consumed as task details.
+fn continue_after_details(comment: &mut bool, stripped: &str) {
+    if stripped.contains("<!--") {
+        *comment = true;
+    }
+    if stripped.contains("-->") {
+        *comment = false;
+    }
 }
 pub fn complete(
     root: &Path,

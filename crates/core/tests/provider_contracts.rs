@@ -97,6 +97,75 @@ fn provider_profiles_distinguish_hidden_checkbox_semantics() {
 }
 
 #[test]
+fn task_details_keep_indented_sub_items_code_and_stop_at_the_next_task() {
+    let text = concat!(
+        "## 1. Retrieval\n",
+        "- [ ] 1.1 Rebuild chunking\n",
+        "  - Split per symbol, keep imports\n",
+        "    - nested note\n",
+        "\n",
+        "  Acceptance:\n",
+        "  ```sh\n",
+        "  uv run pytest tests/test_chunks.py -q\n",
+        "\n",
+        "# shell comment, not a heading\n",
+        "  ```\n",
+        "  - [ ] 1.1.1 Nested checkbox is its own task\n",
+        "    - detail of the nested task\n",
+        "- [ ] 1.2 Plain task\n",
+        "Unindented text ends nothing it does not belong to\n",
+        "- [x] 1.3 Done task\n",
+        "\t- tab-indented detail\n",
+        "\n",
+        "## 2. Next\n",
+        "  - indented under a heading, not a task detail\n",
+    );
+    let kit = markdown::parse("tasks.md", text, Framework::Speckit).unwrap();
+    let os = markdown::parse("tasks.md", text, Framework::Openspec).unwrap();
+    for doc in [&kit, &os] {
+        let descriptions: Vec<_> = doc.tasks.iter().map(|t| t.description.as_str()).collect();
+        assert_eq!(
+            descriptions,
+            [
+                "1.1 Rebuild chunking",
+                "1.1.1 Nested checkbox is its own task",
+                "1.2 Plain task",
+                "1.3 Done task"
+            ],
+            "descriptions stay the checkbox line only"
+        );
+        assert_eq!(
+            doc.tasks[0].details,
+            "- Split per symbol, keep imports\n  - nested note\n\nAcceptance:\n```sh\nuv run pytest tests/test_chunks.py -q\n\n# shell comment, not a heading\n```"
+        );
+        assert_eq!(doc.tasks[1].details, "- detail of the nested task");
+        assert_eq!(doc.tasks[2].details, "");
+        assert_eq!(doc.tasks[3].details, "- tab-indented detail");
+    }
+    // Details never shift the checkbox bytes used for native writeback.
+    assert_eq!(&text[os.tasks[3].checkbox_byte..][..1], "x");
+    // Empty details are not serialized, so existing snapshots keep their shape.
+    let plain = serde_json::to_value(&os.tasks[2]).unwrap();
+    assert!(plain.get("details").is_none());
+    let restored: spec_autonomous_core::model::SourceTask = serde_json::from_value(plain).unwrap();
+    assert!(restored.details.is_empty());
+}
+
+#[test]
+fn a_task_inside_a_detail_fence_still_counts_for_openspec() {
+    let text = "- [ ] 1.1 Outer\n  ```md\n  - [ ] 1.2 Counted by OpenSpec\n  ```\n";
+    let os = markdown::parse("tasks.md", text, Framework::Openspec).unwrap();
+    assert_eq!(os.tasks.len(), 2);
+    assert_eq!(os.tasks[0].details, "```md");
+    let kit = markdown::parse("tasks.md", text, Framework::Speckit).unwrap();
+    assert_eq!(kit.tasks.len(), 1);
+    assert_eq!(
+        kit.tasks[0].details,
+        "```md\n- [ ] 1.2 Counted by OpenSpec\n```"
+    );
+}
+
+#[test]
 fn shorter_fence_does_not_expose_an_example_task() {
     let text = "````markdown\n```rust\n- [ ] T998 Example inside nested triple fence\n```\n- [ ] T999 Example still inside four-backtick fence\n````\n- [ ] T001 Real work\n";
     let doc = markdown::parse("tasks.md", text, Framework::Speckit).unwrap();

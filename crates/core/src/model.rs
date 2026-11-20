@@ -79,6 +79,11 @@ pub struct SourceTask {
     pub phase: String,
     pub story: Option<String>,
     pub parallel: bool,
+    /// Non-checkbox lines indented under the checkbox (sub-items, acceptance commands,
+    /// fenced code), dedented. `description` stays the checkbox line so it matches the
+    /// native provider exactly.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub details: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextFile {

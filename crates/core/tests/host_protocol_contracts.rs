@@ -380,6 +380,33 @@ fn packet_limits_say_the_cli_does_not_enforce_host_worker_time() {
 }
 
 #[test]
+fn planner_packets_carry_native_sub_items_as_task_details() {
+    let root = fixture();
+    put(
+        root.path(),
+        "specs/feature/tasks.md",
+        "## Implementation\n- [ ] T001 Write 42 in src/value.txt\n  - Acceptance: node --test tests/value.mjs\n",
+    );
+    git::commit(root.path(), "native sub-item").unwrap();
+    let first = prepare(root.path());
+    let request = &first["work"][0];
+    let input: WorkerInput = serde_json::from_value(
+        engine::work_context(
+            root.path(),
+            request["run_id"].as_str().unwrap(),
+            request["request_id"].as_str().unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let task = &input.snapshot.as_ref().unwrap().tasks[0];
+    assert_eq!(task.description, "T001 Write 42 in src/value.txt");
+    assert_eq!(task.details, "- Acceptance: node --test tests/value.mjs");
+    assert!(input.instruction.contains("snapshot.tasks[].details"));
+    assert!(input.instruction.contains("verification argv"));
+}
+
+#[test]
 fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
     let root = fixture();
     let first = prepare(root.path());
