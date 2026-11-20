@@ -305,7 +305,7 @@ pub fn revise(root: &Path, args: &Value) -> Result<Value> {
     let hash = paths::hash(serde_json::to_vec(
         &json!({"run":run,"changes":changes,"reason":reason,"sources":sources}),
     )?);
-    let mut preview = json!({"run_id":id,"applied":false,"plan_hash":hash,"accepted_head":run.accepted_head,"reason":reason,"changes":changes,"diff":diff,"active_requests":active,"blocking_requests":blocking,"can_apply":blocking.is_empty(),"retained_verified_tasks":run.completed_tasks,"scope":"run-local verification overlay","next_action":"Review checks against native requirements, then apply the same changes with plan_hash. Use prepare with the same run_id afterwards."});
+    let mut preview = json!({"run_id":id,"applied":false,"plan_hash":hash,"accepted_head":run.accepted_head,"reason":reason,"changes":changes,"diff":diff,"active_requests":active,"blocking_requests":blocking,"can_apply":blocking.is_empty(),"retained_verified_tasks":run.completed_tasks,"scope":"run-local verification overlay","next_action":format!("Review checks against native requirements, then apply the same changes with plan_hash. Afterwards run `spec-autonomous prepare --run-id {id}` without --change/--feature.")});
     if !apply {
         return Ok(preview);
     }

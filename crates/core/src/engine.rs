@@ -137,7 +137,10 @@ pub fn start(
             && r.project_relative == relative
     }) {
         if repo.head()? != existing.origin_head {
-            bail!("source_drift: resume the existing run to reconcile committed changes");
+            bail!(
+                "source_drift: run `spec-autonomous prepare --run-id {}` without --change/--feature to reconcile committed changes",
+                existing.id
+            );
         }
         if existing.milestone.id == start.milestone.id
             && existing.milestone.goal == start.milestone.goal
@@ -147,7 +150,7 @@ pub fn start(
             return Ok(existing);
         }
         bail!(
-            "project_in_use: active run {} must be continued or cancelled before starting another workflow for this project",
+            "project_in_use: active run {0} must be continued (`spec-autonomous prepare --run-id {0}` without --change/--feature) or cancelled before starting another workflow for this project",
             existing.id
         );
     }
@@ -573,8 +576,7 @@ impl Coordinator<'_> {
                             .error
                             .as_deref()
                             .is_some_and(|e| e.starts_with(planning::ENVIRONMENT_UNAVAILABLE))
-                })
-                {
+                }) {
                     attempt.status = "failed".into();
                     attempt.error = Some(message.clone());
                 }
