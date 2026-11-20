@@ -452,6 +452,12 @@ impl Coordinator<'_> {
         let intent_index = self.run.intents.len() - 1;
         self.save("integration_intent")?;
         if !direct {
+            let dir = self.store.attempt_dir(&self.run.id, &attempt.id)?;
+            if let Err(error) = self.init_submodules(&candidate, &dir.join("candidate")) {
+                self.run.intents[intent_index].state = "abandoned".into();
+                self.save("candidate_submodules_failed")?;
+                return Err(error.context("submodules_failed: integration candidate"));
+            }
             git::apply(&candidate, &git::patch(&worker, &attempt.base_commit)?)?;
         }
         failpoint("after_candidate_patch");

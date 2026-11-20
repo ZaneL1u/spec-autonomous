@@ -25,6 +25,12 @@ fn value_check() -> Check {
 /// A Spec Kit feature with two parallel native tasks; the plan maps them to `value`
 /// (src/value.txt) and `other` (src/other.txt).
 fn fixture(configure: impl FnOnce(&mut Config)) -> tempfile::TempDir {
+    fixture_with(configure, |_| {})
+}
+fn fixture_with(
+    configure: impl FnOnce(&mut Config),
+    before_commit: impl FnOnce(&Path),
+) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     put(
         root.path(),
@@ -69,6 +75,7 @@ fn fixture(configure: impl FnOnce(&mut Config)) -> tempfile::TempDir {
         &toml::to_string(&config).unwrap(),
     );
     git::command(root.path(), &["init", "-q", "-b", "main"], None).unwrap();
+    before_commit(root.path());
     git::commit(root.path(), "fixture").unwrap();
     root
 }
@@ -392,4 +399,264 @@ fn unsafe_requested_writes_stop_for_review_with_a_revise_example() {
             assert!(error.contains("write_scope_conflict"), "{error}");
         }
     }
+}
+
+/// Lets `git submodule` clone a local file:// repository in tests.
+fn allow_file_protocol(config: &mut Config) {
+    for (key, value) in [
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
+        ("GIT_CONFIG_VALUE_0", "always"),
+    ] {
+        config.environment.insert(key.into(), value.into());
+    }
+}
+/// A separate repository added as the `vendor/lib` submodule.
+fn add_submodule(root: &Path) -> tempfile::TempDir {
+    let library = tempfile::tempdir().unwrap();
+    put(library.path(), "lib.txt", "shared library\n");
+    git::command(library.path(), &["init", "-q", "-b", "main"], None).unwrap();
+    git::commit(library.path(), "library").unwrap();
+    git::command(
+        root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            library.path().to_str().unwrap(),
+            "vendor/lib",
+        ],
+        None,
+    )
+    .unwrap();
+    library
+}
+
+#[test]
+fn init_submodules_fills_worker_and_integration_checkouts() {
+    for enabled in [true, false] {
+        let library = std::cell::RefCell::new(None);
+        let root = fixture_with(
+            |c| {
+                c.execution.init_submodules = enabled;
+                allow_file_protocol(c);
+            },
+            |root| *library.borrow_mut() = Some(add_submodule(root)),
+        );
+        let root = root.path();
+        let (run_id, wave) = start(root);
+        let request = work(&wave, "value");
+        let worktree = Path::new(request["worktree"].as_str().unwrap());
+        let integration = saved(root, &run_id).integration;
+        for checkout in [worktree, Path::new(&integration)] {
+            assert_eq!(
+                checkout.join("vendor/lib/lib.txt").is_file(),
+                enabled,
+                "{} enabled={enabled}",
+                checkout.display()
+            );
+        }
+        if enabled {
+            // Initialized submodules leave the checkout clean, so the task still integrates.
+            write_value(request);
+            let accepted = submit(root, request, receipt(&packet(root, request)));
+            assert_ne!(accepted["status"], "needs_input", "{accepted}");
+            assert!(
+                saved(root, &run_id)
+                    .completed_tasks
+                    .contains(&Run::key("P001", "value")),
+                "{accepted}"
+            );
+        }
+    }
+}
+
+#[test]
+fn worker_prepare_runs_in_each_writing_checkout_before_issue() {
+    let hook = "const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/prepared.json',JSON.stringify({cwd:process.cwd(),checkout:process.env.SA_WORKER_CHECKOUT,project:process.env.SA_WORKER_PROJECT,task:process.env.SA_WORKER_TASK_ID,kind:process.env.SA_WORKER_KIND,origin:process.env.SA_ORIGIN_CHECKOUT}))";
+    let root = fixture_with(
+        |c| {
+            c.hooks.insert(
+                "worker_prepare".into(),
+                spec_autonomous_core::config::Hook {
+                    argv: vec!["node".into(), "scripts/worker-prepare.cjs".into()],
+                    idempotent: true,
+                },
+            );
+        },
+        |root| put(root, "scripts/worker-prepare.cjs", hook),
+    );
+    let root = root.path();
+    let (_, wave) = start(root);
+    for task in ["value", "other"] {
+        let request = work(&wave, task);
+        let worktree = fs::canonicalize(request["worktree"].as_str().unwrap()).unwrap();
+        let marker: Value = serde_json::from_slice(
+            &fs::read(worktree.join("dist/prepared.json")).expect("hook ran before issue"),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::canonicalize(marker["cwd"].as_str().unwrap()).unwrap(),
+            worktree
+        );
+        assert_eq!(
+            fs::canonicalize(marker["checkout"].as_str().unwrap()).unwrap(),
+            worktree
+        );
+        assert_eq!(marker["task"], task);
+        assert_eq!(marker["kind"], "implement");
+        assert!(marker["project"].is_string() && marker["origin"].is_string());
+    }
+    // Ignored preparation output does not count as a worker change.
+    let request = work(&wave, "value");
+    write_value(request);
+    let accepted = submit(root, request, receipt(&packet(root, request)));
+    assert_ne!(accepted["status"], "needs_input", "{accepted}");
+}
+
+#[test]
+fn failed_worker_preparation_issues_nothing_and_recovers_after_a_fix() {
+    let hook = |code: i32| spec_autonomous_core::config::Hook {
+        argv: vec![
+            "node".into(),
+            "-e".into(),
+            format!("console.error('uv sync failed');process.exit({code})"),
+        ],
+        idempotent: true,
+    };
+    let root = fixture(|c| {
+        c.hooks.insert("worker_prepare".into(), hook(3));
+    });
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let stopped = answer_plan(root, &first["work"][0]);
+    assert_eq!(stopped["status"], "needs_input", "{stopped}");
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(blocker.contains("worker_prepare_failed"), "{blocker}");
+    assert!(blocker.contains("exited with 3"), "{blocker}");
+    assert!(blocker.contains("uv sync failed"), "{blocker}");
+    assert!(blocker.contains("prepare --run-id"), "{blocker}");
+    let run = saved(root, &run_id);
+    let implement: Vec<_> = run
+        .attempts
+        .iter()
+        .filter(|a| a.kind == "implement")
+        .collect();
+    assert_eq!(implement.len(), 1);
+    assert_eq!(implement[0].status, "superseded");
+    assert!(
+        !run.host
+            .as_ref()
+            .unwrap()
+            .requests
+            .contains_key(&implement[0].id)
+    );
+
+    let mut config = Config::load(root).unwrap();
+    config.hooks.insert("worker_prepare".into(), hook(0));
+    put(
+        root,
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    let resumed = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full","reload_config":true}),
+    )
+    .unwrap();
+    let retry = work(&resumed, "value");
+    assert!(retry["token"].is_string(), "{resumed}");
+
+    let mut lax = Config::default();
+    lax.hooks.insert(
+        "worker_prepare".into(),
+        spec_autonomous_core::config::Hook {
+            idempotent: false,
+            ..hook(0)
+        },
+    );
+    assert!(
+        lax.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("worker_prepare must be idempotent")
+    );
+}
+
+#[test]
+fn doctor_warns_about_unbound_prepare_scripts_and_uninitialized_submodules() {
+    let library = std::cell::RefCell::new(None);
+    let root = fixture_with(
+        |_| {},
+        |root| {
+            *library.borrow_mut() = Some(add_submodule(root));
+            put(
+                root,
+                ".spec-autonomous/verification-prepare.sh",
+                "#!/bin/sh\n",
+            );
+            put(
+                root,
+                ".spec-autonomous/scripts/worker-prepare.py",
+                "print()\n",
+            );
+        },
+    );
+    let root = root.path();
+    let diagnostics = |root: &Path| -> Vec<String> {
+        serde_json::from_value(
+            api::invoke(root, "doctor", &json!({})).unwrap()["diagnostics"].clone(),
+        )
+        .unwrap()
+    };
+    let report = diagnostics(root);
+    let find = |code: &str| report.iter().find(|d| d.starts_with(code)).cloned();
+    let verification = find("hook_unbound_warning: .spec-autonomous/verification-prepare.sh")
+        .unwrap_or_else(|| panic!("{report:?}"));
+    assert!(verification.contains("[hooks.verification_prepare]"));
+    let worker = find("hook_unbound_warning: .spec-autonomous/scripts/worker-prepare.py")
+        .unwrap_or_else(|| panic!("{report:?}"));
+    assert!(worker.contains("[hooks.worker_prepare]"));
+    assert!(find("submodules_warning").is_some(), "{report:?}");
+
+    let mut config = Config::load(root).unwrap();
+    for (name, script) in [
+        (
+            "verification_prepare",
+            ".spec-autonomous/verification-prepare.sh",
+        ),
+        (
+            "worker_prepare",
+            ".spec-autonomous/scripts/worker-prepare.py",
+        ),
+    ] {
+        config.hooks.insert(
+            name.into(),
+            spec_autonomous_core::config::Hook {
+                argv: vec!["sh".into(), script.into()],
+                idempotent: true,
+            },
+        );
+    }
+    put(
+        root,
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    let report = diagnostics(root);
+    assert!(
+        !report
+            .iter()
+            .any(|d| d.starts_with("hook_unbound_warning") || d.starts_with("submodules_warning")),
+        "{report:?}"
+    );
 }

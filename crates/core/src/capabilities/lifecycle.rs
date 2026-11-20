@@ -347,6 +347,8 @@ pub fn doctor(root: &Path) -> Result<Value> {
             );
         }
         diagnostics.extend(config.budget_warnings());
+        let repository = Repository::discover(root).ok().map(|r| r.root.clone());
+        diagnostics.extend(config.preparation_warnings(root, repository.as_deref()));
     }
     let inventory = crate::progress::snapshot(root).unwrap_or_else(|e| {
         diagnostics.push(e.to_string());

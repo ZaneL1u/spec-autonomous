@@ -212,6 +212,21 @@ pub fn start(
         plan::validate_plan(supplied, &snapshot)?;
     }
     let (integration, branch) = repo.add_worktree(&id, &origin_head)?;
+    if config.execution.init_submodules {
+        let logs = tempfile::tempdir()?;
+        let mut env = config.environment.clone();
+        env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
+        prepare_step(
+            &config,
+            cancel.clone(),
+            "submodules",
+            &["git", "submodule", "update", "--init", "--recursive"].map(String::from),
+            &integration,
+            &env,
+            logs.path(),
+        )
+        .context("submodules_failed: the integration checkout could not initialize submodules")?;
+    }
     let project = integration.join(&relative);
     provider::copy_ignored_context(root, &project)?;
     let accepted = git::commit(&integration, "sa: preserve native planning context")?;
@@ -694,6 +709,7 @@ impl Coordinator<'_> {
             &worktree.join(&self.run.project_relative),
         )?;
         let dir = self.store.attempt_dir(&self.run.id, &id)?;
+        let writing = !matches!(kind, "plan-tasks" | "audit");
         let index = self.run.attempts.len();
         self.run.attempts.push(Attempt {
             id,
@@ -716,7 +732,87 @@ impl Coordinator<'_> {
             worktree_state: None,
         });
         self.save("attempt_started")?;
+        if writing && let Err(error) = self.prepare_worker(index, &worktree, &dir) {
+            // Nothing was issued: the attempt closes without counting as a task failure.
+            let message = format!(
+                "needs_input: worker_prepare_failed: {error:#}. Fix the environment, [execution] init_submodules or [hooks.worker_prepare] (pass reload_config after a configuration change), then run `spec-autonomous prepare --run-id {}`",
+                self.run.id
+            );
+            let attempt = &mut self.run.attempts[index];
+            attempt.status = "superseded".into();
+            attempt.finished_at = Some(paths::now());
+            attempt.error = Some(message.clone());
+            self.save("worker_prepare_failed")?;
+            bail!(message);
+        }
         Ok((index, worktree, dir))
+    }
+    /// Initialize submodules in a checkout the coordinator created, when configured.
+    /// Logs go to `<dir>/submodules/`.
+    pub(crate) fn init_submodules(&self, checkout: &Path, dir: &Path) -> Result<()> {
+        if !self.run.config.execution.init_submodules {
+            return Ok(());
+        }
+        let argv = ["git", "submodule", "update", "--init", "--recursive"].map(String::from);
+        let mut env = self.run.config.environment.clone();
+        env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
+        prepare_step(
+            &self.run.config,
+            self.cancel.clone(),
+            "submodules",
+            &argv,
+            checkout,
+            &env,
+            dir,
+        )
+    }
+    /// Bring a fresh writing checkout to the state its packet assumes: submodules
+    /// (`[execution] init_submodules`) and the `[hooks.worker_prepare]` hook, both run at
+    /// the worktree root before anything is issued.
+    fn prepare_worker(&mut self, index: usize, worktree: &Path, dir: &Path) -> Result<()> {
+        self.init_submodules(worktree, dir)?;
+        let Some(hook) = self
+            .run
+            .config
+            .hooks
+            .get(crate::config::WORKER_PREPARE)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let attempt = &self.run.attempts[index];
+        let mut env = self.run.config.environment.clone();
+        for (key, value) in [
+            (
+                "SA_WORKER_CHECKOUT",
+                worktree.to_string_lossy().into_owned(),
+            ),
+            (
+                "SA_WORKER_PROJECT",
+                worktree
+                    .join(&self.run.project_relative)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            ("SA_WORKER_ATTEMPT_ID", attempt.id.clone()),
+            ("SA_WORKER_KIND", attempt.kind.clone()),
+            ("SA_WORKER_TASK_ID", attempt.task_id.clone()),
+            ("SA_WORKER_PHASE_ID", attempt.phase_id.clone()),
+            ("SA_WORKER_BASE_COMMIT", attempt.base_commit.clone()),
+            ("SA_ORIGIN_CHECKOUT", self.run.origin.clone()),
+            ("SA_RUN_ID", self.run.id.clone()),
+        ] {
+            env.insert(key.into(), value);
+        }
+        prepare_step(
+            &self.run.config,
+            self.cancel.clone(),
+            "worker-prepare",
+            &hook.argv,
+            worktree,
+            &env,
+            dir,
+        )
     }
     fn input(
         &self,
@@ -825,6 +921,54 @@ impl Coordinator<'_> {
     ) -> Result<(WorkerResult, PathBuf, usize)> {
         self.invoke_host(kind, task, phase, instruction, snapshot)
     }
+}
+/// Run one checkout preparation step with bounded time and logs in `<dir>/<name>/`.
+pub(crate) fn prepare_step(
+    config: &crate::config::Config,
+    cancel: Arc<AtomicBool>,
+    name: &str,
+    argv: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    dir: &Path,
+) -> Result<()> {
+    let logs = dir.join(name);
+    let output = process::execute(process::Request {
+        argv,
+        cwd,
+        env,
+        stdin: None,
+        directory: &logs,
+        timeout: Duration::from_secs(config.execution.attempt_timeout_seconds),
+        max_log_bytes: config.execution.max_log_bytes,
+        cancel,
+    })
+    .with_context(|| format!("{name} could not start {argv:?}"))?;
+    if output.timed_out || output.cancelled || output.code != 0 {
+        let tail: String = fs::read_to_string(logs.join("stderr.log"))
+            .unwrap_or_default()
+            .lines()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        bail!(
+            "{name} {argv:?} {} in {}; logs in {}: {tail}",
+            if output.timed_out {
+                "timed out".to_string()
+            } else if output.cancelled {
+                "was cancelled".to_string()
+            } else {
+                format!("exited with {}", output.code)
+            },
+            cwd.display(),
+            logs.display()
+        );
+    }
+    Ok(())
 }
 fn failpoint(name: &str) {
     #[cfg(debug_assertions)]

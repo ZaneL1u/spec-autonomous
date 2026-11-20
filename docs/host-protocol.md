@@ -40,6 +40,10 @@
 
 implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
 
+## worker 检出准备
+
+写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。
+
 ## 原生任务子条目
 
 规划包里 `snapshot.tasks[].description` 仍只取复选框那一行，以便与 OpenSpec 原生输出逐字比对；复选框下方缩进更深的非复选框行（子列表、验收命令、围栏代码块原样保留）放在 `details`，遇到下一个复选框、标题或缩进回退即止，没有子条目时不输出该字段。planner 按指令把 `details` 写进对应 Task 的 `description`，其中可执行的验收命令转成该任务的 `verification`。

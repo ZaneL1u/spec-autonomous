@@ -63,6 +63,8 @@ idempotent = true
 
 钩子每波次执行一次，先于检查，使用同一组环境变量。它应只准备该波次拥有的资源，将连接信息或资源凭据放在受保护的波次目录中，检查读取这些文件；子进程修改环境不会自动传回协调器。以波次 ID 保证幂等，不同候选/阶段使用不同数据库或可重建夹具，禁止复用已被消费的状态。准备失败则不运行后续检查。不得修改被验证源码。
 
+写入型 worker 的 worktree 另有 `[hooks.worker_prepare]`（同样要求 `idempotent = true`）：在 worktree 创建后、工作包签发前于 worktree 根目录运行，环境变量为 `SA_WORKER_CHECKOUT` / `SA_WORKER_PROJECT` / `SA_WORKER_TASK_ID` 等；失败则不签发并以 `worker_prepare_failed` 停在 `needs_input`。`[execution] init_submodules = true` 让集成检出、worker worktree 与集成候选都先初始化子模块。两者让 worker 与验证波次看到同一环境，依赖安装请用共享包缓存（如 uv cache、pnpm store）而不是软链主 checkout 的 `.venv`，示例见配置参考。
+
 这是准备契约，不是通用数据库管理器。数据库销毁、VM 所有权及凭据保护仍由项目的准备脚本负责。本次不会替现有业务脚本自动重置数据库。
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。

@@ -39,6 +39,7 @@ lease_seconds = 1800
 | `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支 |
+| `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
 
@@ -54,6 +55,39 @@ lease_seconds = 1800
 把快速的单元测试放进 `task_verification`，把 `make race`、全量集成这类昂贵套件放进 `phase_verification` 或 `milestone_verification`，每个任务就不再重复跑整套。规划器拿到的「项目级检查」是 `verification` 与 `task_verification` 之和。
 
 检查的 argv 不能内嵌脚本：单个元素超过 1024 字节，或含 base64 / b85decode / zlib.decompress 这类编码载荷，会被 `invalid_command: inline_script_argv` 拒绝。需要脚本时，把它写成任务 `writes` 里声明的文件再执行；preflight 会把尚不存在但已声明的脚本和可执行文件视为 deferred 而不是缺失。
+
+## 检出准备钩子
+
+`[hooks]` 下两个可选钩子都要求 `idempotent = true`，argv 不经 shell：
+
+| 钩子 | 时机 | cwd | 环境变量 |
+| --- | --- | --- | --- |
+| `verification_prepare` | 每个验证波次第一条实际执行的检查之前 | 被验证的项目目录 | `SA_VERIFY_*`（见长期运行文档） |
+| `worker_prepare` | 写入型 attempt（implement / converge 等）的 worktree 创建并初始化子模块之后、签发工作包之前；只读的规划 / 审计包不运行 | worktree 根目录 | `SA_WORKER_CHECKOUT`、`SA_WORKER_PROJECT`、`SA_WORKER_ATTEMPT_ID`、`SA_WORKER_KIND`、`SA_WORKER_TASK_ID`、`SA_WORKER_PHASE_ID`、`SA_WORKER_BASE_COMMIT`、`SA_ORIGIN_CHECKOUT`、`SA_RUN_ID`，以及 `[environment]` |
+
+`worker_prepare` 退出码非零、超时（`attempt_timeout_seconds`）或无法启动时，该 attempt 记为 `superseded`（不计入任务失败次数），run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头并给出 stderr 末尾与日志目录（attempt 目录下的 `worker-prepare/`、`submodules/`）。修好环境或配置后 `prepare --run-id <id>`（改过配置时加 `reload_config`）。
+
+让 worker 环境与验证环境一致：两个钩子可以指向同一个脚本。依赖安装请走共享的包管理缓存，而不要把主 checkout 的 `.venv` / `node_modules` 软链进 worktree —— editable 安装和工作区链接会指回主 checkout 的旧源码，worker 测到的就不是自己的改动。钩子产物应在 `.gitignore` 中，否则会被当作 worker 改动。
+
+```toml
+# Python（uv）：每个 worktree 自建 .venv，包从全局缓存硬链接，通常几秒完成
+[hooks.worker_prepare]
+argv = ["uv", "sync", "--frozen"]
+idempotent = true
+
+[hooks.verification_prepare]
+argv = ["uv", "sync", "--frozen"]
+idempotent = true
+```
+
+```toml
+# Node（pnpm）：内容寻址 store 共享，离线优先
+[hooks.worker_prepare]
+argv = ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]
+idempotent = true
+```
+
+需要多步时写成提交在仓库里的脚本（例如 `scripts/worker-prepare.sh`），并在 `[environment]` 里固定 `UV_CACHE_DIR` / `PNPM_STORE_DIR` 等缓存位置。doctor 会对两类遗漏给出警告：`.spec-autonomous/` 下存在 `verification-prepare.*` / `worker-prepare.*` 脚本却没有对应 `[hooks.*]`（`hook_unbound_warning`）；仓库声明了子模块，但 `init_submodules = false` 且没有 `verification_prepare`（`submodules_warning`）。
 
 ## `host`
 

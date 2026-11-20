@@ -61,7 +61,18 @@ pub struct Execution {
     pub reclaim_worktrees: String,
     /// Newest failed worktrees kept per task for inspection while the task is open.
     pub retain_failed_worktrees: u32,
+    /// Run `git submodule update --init --recursive` in every checkout the coordinator
+    /// creates for writing or verification. Off by default; omitted from serialized
+    /// configuration while off so existing identities do not change.
+    #[serde(skip_serializing_if = "is_false")]
+    pub init_submodules: bool,
 }
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+/// Hook run in a writing worker's checkout after it is created and before its packet
+/// is issued, for example to sync a virtual environment from a shared cache.
+pub const WORKER_PREPARE: &str = "worker_prepare";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Runner {
@@ -129,6 +140,7 @@ impl Default for Execution {
             unsafe_budgets: false,
             reclaim_worktrees: "terminal".into(),
             retain_failed_worktrees: 1,
+            init_submodules: false,
         }
     }
 }
@@ -218,6 +230,69 @@ impl Config {
         }
         out
     }
+    /// Checkout preparation that looks forgotten: a `verification-prepare.*` or
+    /// `worker-prepare.*` script under `.spec-autonomous/` with no hook bound to it, or
+    /// Git submodules that no configured step initializes in fresh worktrees.
+    pub fn preparation_warnings(&self, project: &Path, repository: Option<&Path>) -> Vec<String> {
+        fn scripts(dir: &Path, depth: usize, found: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() && depth > 0 {
+                    scripts(&entry.path(), depth - 1, found);
+                } else if kind.is_file() {
+                    found.push(entry.path());
+                }
+            }
+        }
+        let mut out = vec![];
+        let base = project.join(".spec-autonomous");
+        let mut files = vec![];
+        scripts(&base, 1, &mut files);
+        files.sort();
+        for (hook, stem) in [
+            ("verification_prepare", "verification-prepare"),
+            (WORKER_PREPARE, "worker-prepare"),
+        ] {
+            if self.hooks.contains_key(hook) {
+                continue;
+            }
+            let unbound: Vec<String> = files
+                .iter()
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .and_then(|n| n.split_once('.'))
+                        .is_some_and(|(name, _)| name == stem || name == hook)
+                })
+                .filter_map(|path| path.strip_prefix(project).ok())
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect();
+            if !unbound.is_empty() {
+                out.push(format!(
+                    "hook_unbound_warning: {} exists but [hooks.{hook}] is not configured, so it never runs; bind it with argv and idempotent = true",
+                    unbound.join(", ")
+                ));
+            }
+        }
+        let submodules = repository
+            .map(|root| root.join(".gitmodules"))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|text| text.contains("[submodule"));
+        if submodules
+            && !self.execution.init_submodules
+            && !self.hooks.contains_key("verification_prepare")
+        {
+            out.push(
+                "submodules_warning: the repository declares Git submodules but [execution] init_submodules = false and no [hooks.verification_prepare] is configured; worker and verification worktrees start without submodule contents".into(),
+            );
+        }
+        out
+    }
     pub fn validate(&self) -> Result<()> {
         if ![SCHEMA, 2].contains(&self.schema_version) {
             bail!("schema_unsupported: config version");
@@ -284,6 +359,15 @@ impl Config {
             .is_some_and(|h| !h.idempotent)
         {
             bail!("invalid_config: verification_prepare must be idempotent for each wave identity");
+        }
+        if self
+            .hooks
+            .get(WORKER_PREPARE)
+            .is_some_and(|h| !h.idempotent)
+        {
+            bail!(
+                "invalid_config: worker_prepare must be idempotent; it may run again for a re-issued attempt"
+            );
         }
         for hook in self.hooks.values() {
             validate_check(&Check {
