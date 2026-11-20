@@ -466,6 +466,78 @@ fn git_preflight_and_delivery_preserve_dirty_or_unborn_checkout() {
 }
 
 #[test]
+fn dirty_checkout_errors_name_modified_untracked_and_submodule_paths() {
+    let (_dir, repo) = repository();
+    // A nested repository registered as a submodule, then changed inside.
+    let (_sub_dir, sub) = repository();
+    git::command(
+        &repo.root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--quiet",
+            sub.root.to_str().unwrap(),
+            "vendor/sub",
+        ],
+        None,
+    )
+    .unwrap();
+    git::commit(&repo.root, "add submodule").unwrap();
+    assert!(repo.preflight().is_ok());
+
+    fs::write(repo.root.join("seed.txt"), "user-owned edit\n").unwrap();
+    fs::write(repo.root.join("staged file.txt"), "staged\n").unwrap();
+    git::command(&repo.root, &["add", "staged file.txt"], None).unwrap();
+    fs::create_dir(repo.root.join("notes")).unwrap();
+    for n in 0..25 {
+        fs::write(repo.root.join(format!("notes/n{n:02}.md")), "x").unwrap();
+    }
+    fs::write(
+        repo.root.join("vendor/sub/seed.txt"),
+        "changed in submodule\n",
+    )
+    .unwrap();
+
+    let summary = git::dirty_summary(&repo.root).unwrap();
+    assert_eq!(summary["modified"]["count"], 2, "{summary}");
+    assert_eq!(summary["modified"]["staged"], 1, "{summary}");
+    let modified: BTreeSet<_> = summary["modified"]["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert_eq!(modified, BTreeSet::from(["seed.txt", "staged file.txt"]));
+    assert_eq!(summary["untracked"]["count"], 25);
+    assert_eq!(
+        summary["untracked"]["paths"].as_array().unwrap().len(),
+        git::DIRTY_PATH_LIMIT
+    );
+    assert_eq!(summary["untracked"]["truncated"], true);
+    assert_eq!(summary["submodules"]["count"], 1);
+    assert_eq!(summary["submodules"]["paths"][0], "vendor/sub");
+    assert_eq!(summary["submodules"]["truncated"], false);
+
+    let message = repo.preflight().unwrap_err().to_string();
+    assert!(
+        message.starts_with(
+            "dirty_checkout: commit or move existing changes before autonomous execution; dirty: "
+        ),
+        "{message}"
+    );
+    let embedded: Value = serde_json::from_str(message.split_once("; dirty: ").unwrap().1).unwrap();
+    assert_eq!(embedded, summary);
+    // Reporting never stages, stashes or rewrites anything.
+    assert_eq!(
+        fs::read_to_string(repo.root.join("seed.txt")).unwrap(),
+        "user-owned edit\n"
+    );
+    assert_eq!(git::dirty_summary(&repo.root).unwrap(), summary);
+}
+
+#[test]
 fn invalid_managed_worktree_identifiers_cannot_escape_the_runtime_root() {
     let (_dir, repo) = repository();
     let base = repo.head().unwrap();

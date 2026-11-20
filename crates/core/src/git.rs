@@ -111,7 +111,10 @@ impl Repository {
             .context("git_preflight: an initial commit is required")?;
         self.branch()?;
         if !clean(&self.root)? {
-            bail!("dirty_checkout: commit or move existing changes before autonomous execution");
+            return Err(dirty_error(
+                &self.root,
+                "commit or move existing changes before autonomous execution",
+            ));
         }
         Ok(())
     }
@@ -228,6 +231,76 @@ pub fn clean(root: &Path) -> Result<bool> {
     )?
     .is_empty())
 }
+/// Paths listed per dirty-checkout category in [`dirty_summary`].
+pub const DIRTY_PATH_LIMIT: usize = 20;
+
+/// What makes a checkout dirty, grouped as `modified` (tracked changes, staged or not,
+/// including renames and conflicts), `untracked` and `submodules`. Each group carries
+/// its full `count` and at most [`DIRTY_PATH_LIMIT`] `paths`; `modified` also counts the
+/// `staged` entries. Read-only: it never stages or stashes anything.
+pub fn dirty_summary(root: &Path) -> Result<serde_json::Value> {
+    let output = command(
+        root,
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        None,
+    )?;
+    let mut groups: [(usize, Vec<String>); 3] = Default::default();
+    let mut staged = 0usize;
+    let mut fields = output.split('\0').filter(|f| !f.is_empty());
+    while let Some(entry) = fields.next() {
+        let (kind, rest) = entry.split_at(entry.find(' ').unwrap_or(entry.len()));
+        let rest = rest.trim_start();
+        let (group, path) = match kind {
+            "?" => (1, rest.to_string()),
+            "1" | "2" | "u" => {
+                // `1 XY sub mH mI mW hH hI path`; `2` adds a score field and is
+                // followed by the original path; `u` has three stages of modes/hashes.
+                let skip = match kind {
+                    "1" => 7,
+                    "2" => 8,
+                    _ => 9,
+                };
+                let parts: Vec<&str> = rest.splitn(skip + 1, ' ').collect();
+                if kind == "2" {
+                    fields.next();
+                }
+                let xy = parts.first().copied().unwrap_or("..");
+                let submodule = parts.get(1).is_some_and(|sub| sub.starts_with('S'));
+                if !submodule && kind != "u" && !xy.starts_with('.') {
+                    staged += 1;
+                }
+                (
+                    if submodule { 2 } else { 0 },
+                    parts.get(skip).copied().unwrap_or_default().to_string(),
+                )
+            }
+            _ => continue,
+        };
+        let (count, paths) = &mut groups[group];
+        *count += 1;
+        if paths.len() < DIRTY_PATH_LIMIT {
+            paths.push(path);
+        }
+    }
+    let group = |(count, paths): &(usize, Vec<String>)| serde_json::json!({"count":count,"paths":paths,"truncated":*count > paths.len()});
+    let mut modified = group(&groups[0]);
+    modified["staged"] = serde_json::json!(staged);
+    Ok(serde_json::json!({
+        "modified": modified,
+        "untracked": group(&groups[1]),
+        "submodules": group(&groups[2]),
+    }))
+}
+
+/// A `dirty_checkout` error naming what is dirty, so the operator need not run
+/// `git status` to find out. The error code and leading sentence are unchanged.
+pub fn dirty_error(root: &Path, action: &str) -> anyhow::Error {
+    match dirty_summary(root) {
+        Ok(summary) => anyhow::anyhow!("dirty_checkout: {action}; dirty: {summary}"),
+        Err(_) => anyhow::anyhow!("dirty_checkout: {action}"),
+    }
+}
+
 pub fn commit(root: &Path, message: &str) -> Result<String> {
     command(root, &["add", "--all"], None)?;
     if !command(root, &["diff", "--cached", "--name-only"], None)?.is_empty()
@@ -303,7 +376,7 @@ pub fn ancestor(root: &Path, older: &str, newer: &str) -> bool {
 }
 pub fn advance(root: &Path, target: &str) -> Result<()> {
     if !clean(root)? {
-        bail!("dirty_checkout: cannot advance a changed checkout");
+        return Err(dirty_error(root, "cannot advance a changed checkout"));
     }
     command(root, &["merge", "--ff-only", "--no-edit", target], None)?;
     Ok(())

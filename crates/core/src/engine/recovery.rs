@@ -194,7 +194,10 @@ impl Coordinator<'_> {
         if self.run.status == "handed_off" || self.run.status == "plan_ready" {
             let integration = Path::new(&self.run.integration);
             if !git::clean(integration)? {
-                bail!("dirty_checkout: commit native handoff changes before resume");
+                return Err(git::dirty_error(
+                    integration,
+                    "commit native handoff changes before resume",
+                ));
             }
             let actual = git::head(integration)?;
             if actual != self.run.accepted_head {
@@ -286,7 +289,10 @@ impl Coordinator<'_> {
             return Ok(());
         }
         if !git::clean(origin)? {
-            bail!("dirty_checkout: commit native changes before resuming");
+            return Err(git::dirty_error(
+                origin,
+                "commit native changes before resuming",
+            ));
         }
         if !git::ancestor(origin, &self.run.origin_head, &current) {
             bail!(

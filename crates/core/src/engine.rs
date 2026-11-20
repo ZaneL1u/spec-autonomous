@@ -390,7 +390,10 @@ pub fn resolve_hook(
         process::reconcile_process(&dir.join("process.json"))?;
     }
     if !git::clean(Path::new(&run.integration))? {
-        bail!("dirty_checkout: inspect and commit hook effects in the integration checkout first");
+        return Err(git::dirty_error(
+            Path::new(&run.integration),
+            "inspect and commit hook effects in the integration checkout first",
+        ));
     }
     run.accepted_head = git::head(Path::new(&run.integration))?;
     if outcome == "completed" {
