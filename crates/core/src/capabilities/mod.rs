@@ -204,10 +204,10 @@ pub fn invoke(root: &Path, name: &str, args: &Value) -> Result<Value> {
             let mut run = run;
             if args["discussion_auto"] == true
                 && run.status == "needs_input"
-                && run
-                    .blocker
-                    .as_deref()
-                    .is_some_and(|b| b.starts_with("discussion_required"))
+                && run.blocker.as_deref().is_some_and(|b| {
+                    b.trim_start_matches("needs_input: ")
+                        .starts_with("discussion_required")
+                })
                 && let Some(phase) = run.current_phase.clone()
             {
                 // The caller accepted the recommended defaults up front: apply them and
