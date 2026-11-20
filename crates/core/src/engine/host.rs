@@ -685,7 +685,10 @@ impl Coordinator<'_> {
                 a.kind == kind && a.task_id == task && a.phase_id == phase && a.error.is_some()
             })
             .and_then(|a| a.error.clone());
-        let input = self.input(index, instruction, snapshot, task_spec, failure);
+        let mut input = self.input(index, instruction, snapshot, task_spec, failure);
+        if kind == "implement" {
+            input.previous_candidate = self.previous_candidate(index, &dir)?;
+        }
         work_packet::prepare(
             &input,
             &worktree.join(&self.run.project_relative),

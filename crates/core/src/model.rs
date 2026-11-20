@@ -154,6 +154,22 @@ pub struct WorkerInput {
     pub snapshot: Option<Snapshot>,
     pub milestone: Option<Milestone>,
     pub failure: Option<String>,
+    /// Uncommitted changes the previous failed or blocked attempt of this task left.
+    /// Absent unless there were any, so existing packets keep their input hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_candidate: Option<PreviousCandidate>,
+}
+/// A reusable patch from an earlier attempt of the same task, stored in the new
+/// attempt's directory. Paths in the patch are relative to the worktree root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviousCandidate {
+    pub attempt_id: String,
+    /// The commit the patch was made against.
+    pub base_commit: String,
+    pub patch_path: String,
+    pub files: Vec<String>,
+    /// True when the new attempt starts from the same commit, so the patch applies as is.
+    pub same_base: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditItem {

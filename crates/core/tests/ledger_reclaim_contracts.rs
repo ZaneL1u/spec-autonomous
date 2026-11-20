@@ -389,3 +389,93 @@ fn prepare_echoes_declared_host_capacity() {
         "true"
     );
 }
+
+/// A blocked implement attempt's uncommitted changes reach the re-dispatched attempt as
+/// a patch it can apply, whether the old worktree is retained or already reclaimed.
+#[test]
+fn redispatched_implement_inherits_the_blocked_attempts_changes() {
+    for retain in [1, 0] {
+        let root = fixture(|c| c.execution.retain_failed_worktrees = retain);
+        let root = root.path();
+        let first = api::invoke(
+            root,
+            "prepare",
+            &json!({"feature":"specs/feature","host":host(),"view":"full"}),
+        )
+        .unwrap();
+        let run_id = first["id"].as_str().unwrap().to_owned();
+        let implement = answer_plan(root, &first["work"][0]);
+        let request = &implement["work"][0];
+        assert_eq!(request["kind"], "implement", "{implement}");
+        let fresh = fs::read_to_string(request["input_path"].as_str().unwrap()).unwrap();
+        assert!(
+            !fresh.contains("previous_candidate"),
+            "first packets keep their old shape and input hash"
+        );
+        let old_worktree = request["worktree"].as_str().unwrap().to_owned();
+        let project = Path::new(request["project"].as_str().unwrap());
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(project.join("src/value.txt"), "42").unwrap();
+        let input = packet(root, request);
+        let mut blocked = receipt(&input);
+        blocked.status = "blocked".into();
+        blocked.blockers = vec!["needs a decision on the value format".into()];
+        let stopped = submit(root, request, blocked);
+        assert_eq!(stopped["status"], "needs_input", "{stopped}");
+        assert_eq!(Path::new(&old_worktree).is_dir(), retain > 0);
+
+        let resumed = api::invoke(
+            root,
+            "prepare",
+            &json!({"run_id":run_id,"host":host(),"view":"full"}),
+        )
+        .unwrap();
+        let retry = &resumed["work"][0];
+        assert_eq!(retry["kind"], "implement", "{resumed}");
+        assert_ne!(retry["request_id"], request["request_id"]);
+        let next = packet(root, retry);
+        let previous = next
+            .previous_candidate
+            .clone()
+            .expect("previous candidate offered");
+        assert_eq!(previous.attempt_id, input.attempt_id);
+        assert_eq!(previous.base_commit, input.base_commit);
+        assert!(previous.same_base);
+        assert_eq!(previous.files, ["src/value.txt"]);
+        let patch = Path::new(&previous.patch_path);
+        assert!(patch.ends_with("previous-candidate.diff"));
+        assert!(
+            patch.starts_with(
+                Path::new(retry["input_path"].as_str().unwrap())
+                    .parent()
+                    .unwrap()
+            )
+        );
+        let worktree = Path::new(retry["worktree"].as_str().unwrap());
+        git::command(
+            worktree,
+            &["apply", "--index", patch.to_str().unwrap()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(Path::new(retry["project"].as_str().unwrap()).join("src/value.txt"))
+                .unwrap(),
+            "42"
+        );
+        let prompt = fs::read_to_string(retry["prompt_path"].as_str().unwrap()).unwrap();
+        assert!(prompt.contains("PREVIOUS CANDIDATE"));
+        assert!(prompt.contains("git apply --index"));
+        assert!(prompt.contains("verification checks again"));
+        // The reused patch passes the task's real check once submitted.
+        let accepted = submit(root, retry, receipt(&next));
+        assert_ne!(accepted["status"], "needs_input", "{accepted}");
+        assert!(
+            saved(root, &run_id)
+                .completed_tasks
+                .iter()
+                .any(|k| k.ends_with("value")),
+            "{accepted}"
+        );
+    }
+}

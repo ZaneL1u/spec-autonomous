@@ -271,6 +271,7 @@ fn worker_input(attempt: &str) -> WorkerInput {
         snapshot: None,
         milestone: None,
         failure: None,
+        previous_candidate: None,
     }
 }
 

@@ -57,6 +57,20 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
         "You are a fresh Spec Autonomous worker. Your task is the JSON request below. Follow its native SDD instructions and repository rules. Work only inside the assigned checkout. If context_reference is present, read the immutable complete request before acting. The host owns your session and must report it with the receipt. Do not start other autonomous coordinators, write shared task checkboxes, commit, push or publish. The coordinator owns native extension hooks: do not invoke hooks yourself, including hooks mentioned by native skills. Native planning may create only snapshot.next_action.outputs; Spec Kit feature.json may be updated locally by the native command but will be restored before integration. Return a single JSON object matching WorkerResult: schema_version=1, run_id/task_id/attempt_id copied exactly, status=candidate|blocked|failed, summary<=8192 bytes, blockers array, milestone or null, plan or null, audit array. Roadmap work returns milestone; task planning returns plan; verification returns requirement/evidence/passed audit items. Never claim integrated/verified. Only implementation/native-planning/converge work may edit allowed files.\n\nREQUEST:\n{}",
         String::from_utf8_lossy(&data)
     );
+    let prompt = match &input.previous_candidate {
+        Some(previous) => format!(
+            "{prompt}\n\nPREVIOUS CANDIDATE: attempt {} of this task failed or was blocked (see failure) after changing {}. Its uncommitted changes are saved at {}. {} Review them against the failure before reusing anything; reused code is not evidence, so run this task's verification checks again before returning a candidate.",
+            previous.attempt_id,
+            previous.files.join(", "),
+            previous.patch_path,
+            if previous.same_base {
+                "This checkout starts from the same commit, so `git apply --index <patch>` run from the worktree root restores them."
+            } else {
+                "This checkout starts from a newer commit; try `git apply --3way --index <patch>` from the worktree root, or use the patch as a reference."
+            }
+        ),
+        None => prompt,
+    };
     if prompt.len() > budget {
         bail!("context_too_large: prompt exceeds configured byte budget");
     }

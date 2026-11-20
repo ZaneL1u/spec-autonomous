@@ -741,7 +741,43 @@ impl Coordinator<'_> {
             snapshot,
             milestone: Some(self.run.milestone.clone()),
             failure,
+            previous_candidate: None,
         }
+    }
+    /// The uncommitted changes of the latest failed attempt of the same task, copied to
+    /// `previous-candidate.diff` in the new attempt directory. Reads the checkout while
+    /// it exists and the patch kept by reclamation after it was removed.
+    fn previous_candidate(&self, index: usize, dir: &Path) -> Result<Option<PreviousCandidate>> {
+        let current = &self.run.attempts[index];
+        let Some(previous) = self.run.attempts[..index].iter().rev().find(|a| {
+            a.kind == current.kind
+                && a.task_id == current.task_id
+                && a.phase_id == current.phase_id
+                && a.status == "failed"
+        }) else {
+            return Ok(None);
+        };
+        let worktree = Path::new(&previous.worktree);
+        let patch = if worktree.is_dir() {
+            git::patch(worktree, &previous.base_commit).ok()
+        } else {
+            self.store
+                .attempt_dir(&self.run.id, &previous.id)
+                .ok()
+                .and_then(|d| fs::read_to_string(d.join("patch.diff")).ok())
+        };
+        let Some(patch) = patch.filter(|p| !p.trim().is_empty()) else {
+            return Ok(None);
+        };
+        let path = dir.join("previous-candidate.diff");
+        paths::atomic_write(&path, patch.as_bytes())?;
+        Ok(Some(PreviousCandidate {
+            attempt_id: previous.id.clone(),
+            base_commit: previous.base_commit.clone(),
+            patch_path: path.to_string_lossy().into_owned(),
+            files: git::patch_files(&patch),
+            same_base: previous.base_commit == current.base_commit,
+        }))
     }
     /// Files an attempt changed against its base. Reads the checkout while it exists and
     /// the stored patch after the worktree was reclaimed.
