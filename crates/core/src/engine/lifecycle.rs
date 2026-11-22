@@ -1170,7 +1170,7 @@ impl Coordinator<'_> {
             };
             if let Some(pass) = hit {
                 let cwd = paths::inside(project, &check.cwd)?;
-                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at},"cache_key":key});
+                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"declared_cwd":check.cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at},"cache_key":key});
                 self.run.evidence.push(Evidence {
                     argv: check.argv.clone(),
                     cwd: cwd.to_string_lossy().into_owned(),
@@ -1201,7 +1201,7 @@ impl Coordinator<'_> {
                     .map(|t| t.id.as_str())
                     .collect();
                 let cwd = paths::inside(project, &check.cwd)?;
-                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at,"scope":"affected","owners":owners,"changed_files":changed.len(),"changed_sample":changed.iter().take(20).collect::<Vec<_>>()},"cache_key":command_key});
+                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"declared_cwd":check.cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at,"scope":"affected","owners":owners,"changed_files":changed.len(),"changed_sample":changed.iter().take(20).collect::<Vec<_>>()},"cache_key":command_key});
                 self.run.evidence.push(Evidence {
                     argv: check.argv.clone(),
                     cwd: cwd.to_string_lossy().into_owned(),

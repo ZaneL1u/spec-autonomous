@@ -38,6 +38,8 @@
 
 `input.json` 按类型裁剪：只有 audit 带 `snapshot.metadata.acceptance`；implement 不带 `metadata.documents`，`snapshot.next_action.instruction` 由 OpenSpec apply 的整份 JSON 换成其中的 `instruction` 文本（附 `warnings` 与 `context`，任务表与上下文文件已在 `snapshot.tasks` / `snapshot.context_files`）；规划包中与顶层 `failure` 相同的 `previous_planning_failure.error` 换成 `error_in: "failure"`。`context_files` 原样保留。converge 包的 `instruction` 只在 `Gaps (<n> failed; <m> passed audit items omitted): [...]` 中列出 `passed: false` 的审计条目，已通过条目只计数；请求键仍按完整审计计算，升级前签发的 converge 请求照常匹配回执。
 
+审计包的 `snapshot.metadata.execution_evidence` 保留原有字段（`path`、`sha256`、`attempt_count`、`verification_count`、`accepted_head` 等），另加 `checks`：每条不同的检查（按 stage、step、argv 与计划声明的 cwd 区分）最近一次记录，最新在前，至多 40 条（`checks_distinct` 为总数，`checks_truncated` 标明是否截断）。每条带 `argv`、实际执行的 `executed_argv`（复用的记录没有）、检出内的绝对 `cwd` 与计划里的 `declared_cwd`、`stage`、`step`、`revision`、`exit_code`、`failure_kind`、`duration_ms`（复用为 0）、`reused_from`（复用时指向原 wave、revision、manifest 与 tree，按范围沿用另有 `scope`、`owners`、`changed_files`）、`manifest`（该次的 `result.json`）、`finished_at` 与 `runs`（同一检查被记录的次数）；把 `revision` 与 `accepted_head` 对照即可知道全量测试跑在哪个提交上。`path` 指向的 `execution-evidence.json` 里 `verification` 列出全部记录，原有的 `revision` / `exit_code` / `tree_unchanged` / `log` / `log_hash` 不变，其后追加同样的字段。这些内容在请求键算出之后才写入包，不进入请求键：升级前签发的审计请求照常匹配回执，已签发未回执的包仍用磁盘上的原 `input.json`。新的验证证据清单（`result.json`）同时记录 `declared_cwd`。
+
 `input_hash` 是签发时 `input.json` 字节的哈希，只对新签发的包改变。升级前已签发、尚未回执的包仍使用磁盘上原有的 `input.json` / `prompt.md`，回执与 `work.context` 按原哈希校验，不受影响。
 
 ## 重派时继承上次改动

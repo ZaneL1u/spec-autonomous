@@ -141,7 +141,7 @@ impl Wave {
             failure = Some("source_changed");
         }
         let manifest = directory.join("result.json");
-        let details = json!({"schema_version":1,"wave_id":self.directory.file_name().unwrap().to_string_lossy(),"stage":self.stage,"step":if preparation {"preparation"} else {"check"},"duration_ms":duration_ms,"failure_kind":failure,"exit_code":exit_code,"argv":check.argv,"executed_argv":argv,"cwd":cwd,"revision":self.revision,"tree_unchanged":tree_unchanged,"stdout":log,"stdout_sha256":stdout_hash,"stderr":stderr,"stderr_sha256":stderr_hash,"manifest":manifest,"output_directory":artifacts,"diagnostics_directory":directory});
+        let details = json!({"schema_version":1,"wave_id":self.directory.file_name().unwrap().to_string_lossy(),"stage":self.stage,"step":if preparation {"preparation"} else {"check"},"duration_ms":duration_ms,"failure_kind":failure,"exit_code":exit_code,"argv":check.argv,"executed_argv":argv,"cwd":cwd,"declared_cwd":check.cwd,"revision":self.revision,"tree_unchanged":tree_unchanged,"stdout":log,"stdout_sha256":stdout_hash,"stderr":stderr,"stderr_sha256":stderr_hash,"manifest":manifest,"output_directory":artifacts,"diagnostics_directory":directory});
         let mut details = details;
         if !check.env.is_empty() {
             // Names only: values stay in the plan, never in shared diagnostics.

@@ -523,3 +523,116 @@ fn prepare_read_only_can_be_turned_off_and_is_omitted_while_on() {
         ["implement"]
     );
 }
+
+// ---------------------------------------------------------------------------------
+// 3. Execution evidence an auditor can use without opening every manifest
+
+#[test]
+fn audit_packets_list_each_check_with_command_revision_stage_and_reuse() {
+    // Without project checks the phase gate falls back to the task checks, and declared
+    // reads let an untouched task's check stand on its earlier pass.
+    let root = fixture(|c| c.verification.clear());
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let planning = &first["work"][0];
+    let input = packet(root, planning);
+    let snapshot = input.snapshot.clone().unwrap();
+    let mut value = task("value", &snapshot.tasks[0].id, "src/value.txt");
+    value.reads = vec!["tests/value.mjs".into()];
+    let mut other = task("other", &snapshot.tasks[1].id, "src/other.txt");
+    other.reads = vec!["src/other.txt".into()];
+    let mut result = receipt(&input);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![value, other],
+        milestone: input.milestone.clone(),
+    });
+    let wave = submit(root, planning, result);
+    let response = finish_tasks(root, &wave);
+    let audit = find_kind(&response, "audit")
+        .unwrap_or_else(|| panic!("{response}"))
+        .clone();
+    let input = packet(root, &audit);
+    let evidence = &input.snapshot.as_ref().unwrap().metadata["execution_evidence"];
+    // Existing summary fields are unchanged.
+    for key in [
+        "schema_version",
+        "run_id",
+        "path",
+        "sha256",
+        "attempt_count",
+        "verification_count",
+        "execution_model",
+        "accepted_head",
+    ] {
+        assert!(!evidence[key].is_null(), "{key}: {evidence}");
+    }
+    let run = saved(root, &run_id);
+    let checks = evidence["checks"].as_array().unwrap();
+    assert!(!checks.is_empty(), "{evidence}");
+    assert_eq!(evidence["checks_truncated"], false);
+    assert_eq!(evidence["checks_distinct"], checks.len());
+    for check in checks {
+        for key in [
+            "argv",
+            "cwd",
+            "exit_code",
+            "revision",
+            "stage",
+            "duration_ms",
+            "runs",
+        ] {
+            assert!(!check[key].is_null(), "{key}: {check}");
+        }
+    }
+    let value_test = checks
+        .iter()
+        .find(|c| c["argv"] == json!(["node", "--test", "tests/value.mjs"]))
+        .unwrap_or_else(|| panic!("{evidence}"));
+    assert!(value_test["revision"].is_string(), "{value_test}");
+    assert!(
+        checks.iter().any(|c| c["executed_argv"].is_array()),
+        "{evidence}"
+    );
+    // A check that stood on an earlier pass names it.
+    let reused = checks
+        .iter()
+        .find(|c| c["reused_from"].is_object())
+        .unwrap_or_else(|| panic!("no reused check: {evidence}"));
+    assert!(reused["reused_from"]["revision"].is_string(), "{reused}");
+    assert_eq!(reused["duration_ms"], 0, "{reused}");
+
+    // The full file keeps every record with the original fields and the new ones.
+    let file: Value =
+        serde_json::from_slice(&fs::read(evidence["path"].as_str().unwrap()).unwrap()).unwrap();
+    let records = file["verification"].as_array().unwrap();
+    assert_eq!(records.len(), run.evidence.len());
+    for record in records {
+        for key in [
+            "revision",
+            "exit_code",
+            "tree_unchanged",
+            "log",
+            "log_hash",
+            "argv",
+            "cwd",
+            "stage",
+            "duration_ms",
+        ] {
+            assert!(record.get(key).is_some(), "{key}: {record}");
+        }
+    }
+    let prompt = fs::read_to_string(audit["prompt_path"].as_str().unwrap()).unwrap();
+    assert!(
+        prompt.contains("snapshot.metadata.execution_evidence.checks"),
+        "{prompt}"
+    );
+}

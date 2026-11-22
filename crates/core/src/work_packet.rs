@@ -328,6 +328,15 @@ fn summary(input: &WorkerInput) -> String {
             if acceptance.len() > 60 {
                 lines.push(format!("- … {} more in input.json", acceptance.len() - 60));
             }
+            if let Some(evidence) = snapshot.map(|s| &s.metadata["execution_evidence"])
+                && let Some(checks) = evidence["checks"].as_array()
+            {
+                lines.push(format!(
+                    "snapshot.metadata.execution_evidence.checks ({} of {} distinct checks, newest first): argv / executed_argv, cwd, stage, revision (compare with execution_evidence.accepted_head), exit_code, duration_ms and reused_from (the earlier pass a reused check stands on). Every record is in `verification` of the file at execution_evidence.path.",
+                    checks.len(),
+                    evidence["checks_distinct"].as_u64().unwrap_or(checks.len() as u64)
+                ));
+            }
         }
         _ => {}
     }

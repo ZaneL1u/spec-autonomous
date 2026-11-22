@@ -34,6 +34,7 @@
 - 检查可以声明 `env`（只对该检查生效的非敏感环境变量，如 `PYTHONDONTWRITEBYTECODE=1`）：键名受校验，不能覆盖 `PATH` / `HOME` / `SA_*` / `GIT_*` 等，凭证类名字被拒绝；值进入验证复用身份，证据清单只记变量名。规划包的指令与结果 schema 同步说明。
 - 规划指令明确任务 `writes` / `reads` 可以用目录前缀和 glob（如 `server/*/migrations/*.py`、`tests/**`），并说明保守的冲突串行规则；glob 或目录项不再能放开原生规格上下文文件，需逐字列出。
 - implement 与 audit 的结果可以带 `deferred_evidence`（`live` / `manual` / `external`），表示要宿主在真实环境补的证据：它不算失败，协调器在 run 视图、`next`、`progress` 中列出，里程碑完成时以 `deferred_evidence_pending` 警告和待办列表交给宿主。
+- 审计包的执行证据可以直接用：`snapshot.metadata.execution_evidence.checks` 列出每条检查最近一次的 `argv` / `executed_argv`、`cwd`（含计划声明的 `declared_cwd`）、`stage`、`revision`、`exit_code`、`duration_ms` 与 `reused_from`，审计者不必再逐个翻 `verify-*/check-*/result.json` 才知道全量测试跑在哪个提交、跑的什么命令；`execution-evidence.json` 的 `verification` 每条在原字段后追加同样的信息。原有字段不变，新内容不进入请求键。
 - 审计不再把「规格只举例、实现多支持了几种」判失败：审计包要求把不矛盾的合理扩展判为通过并以 `extension:` 标注证据，协调器对这类条目不排修复轮，converge 也不为它们生成修复任务；与规格矛盾或缺失仍判失败。
 
 ### 安全
