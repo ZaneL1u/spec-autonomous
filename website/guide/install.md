@@ -40,6 +40,31 @@ bun run pack:local
 npm install -g ./.artifacts/local/spec-autonomous-0.1.0-alpha.16.tgz
 ```
 
+## 从本地源码目录安装（没有 Bun 时）
+
+`npm install -g <源码目录>` 只会建一个指向该目录的软链，**不会**安装 `dependencies`（`commander`、`@inquirer/prompts`），第一次运行会报 `ERR_MODULE_NOT_FOUND`；目录里也没有本机二进制。只有 Node、npm、Rust 时按下面做：
+
+```sh
+cd /path/to/spec-autonomous
+npm install --omit=dev                 # 把运行时依赖装进源码目录的 node_modules
+node scripts/build-native.mts          # cargo build --release，并复制到 packages/cli/native/<平台>/
+npm install -g .                       # 全局软链，依赖从上一步的 node_modules 解析
+spec-autonomous --version
+```
+
+- `build-native` 需要 Rust 1.98.1；启动层优先使用 `packages/cli/native/<平台>/` 里的二进制，也可以用 `SPEC_AUTONOMOUS_BINARY=/绝对路径/spec-autonomous` 指定。
+- 更新源码后重新执行后两步；`git pull` 改了 `package.json` 依赖时再跑一次 `npm install --omit=dev`。
+- 有 Bun 时仍推荐上面的 `bun run pack:local` + 安装 tgz：tgz 安装会正常装依赖，且不依赖源码目录继续存在。
+
+## MCP 命令与 PATH
+
+`spec-autonomous init --mcp` 写入的 MCP 配置原本固定为 `command: "spec-autonomous"`。宿主（尤其从桌面启动的 IDE / Claude Code）继承的 PATH 里没有它时，MCP 进程直接 `ENOENT`，会话里所有 `sa_*` 工具不可用，而 doctor 也无从提示。现在：
+
+- 通过 npm 启动层（`spec-autonomous init ...`）运行时，若 `spec-autonomous` 在当前 PATH 上，仍写可移植的裸命令；不在 PATH 上时写绝对路径：`command` 为 Node 可执行文件，`args` 以启动脚本 `bin/spec-autonomous.mjs` 的绝对路径开头，再接 `--path <项目> mcp`。
+- 直接运行原生二进制且 PATH 上没有 `spec-autonomous` 时，仍写裸命令，并在结果的 `warnings` 中给出 `mcp_command_not_on_path`。
+- `spec-autonomous doctor` 检查 `.mcp.json` 与 `.codex/config.toml` 里 `spec_autonomous` 的命令：裸命令不在 PATH 上报 `mcp_command_not_on_path`，绝对路径不存在报 `mcp_command_missing`。注意桌面启动的宿主看到的 PATH 可能比终端短。
+- 修复办法：把 CLI 放到宿主可见的 PATH 上，或在 PATH 之外通过启动层重新运行 `spec-autonomous init --agent <codex|claude> --mcp`（只替换本工具写入且未被修改的条目）。
+
 ## OpenSpec / Spec Kit 要提前装吗
 
 通常不用。启动层会在需要执行原生流程时检查 provider：

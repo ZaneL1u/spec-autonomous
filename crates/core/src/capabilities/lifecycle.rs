@@ -415,6 +415,7 @@ pub fn doctor(root: &Path) -> Result<Value> {
         }
     }
     diagnostics.extend(crate::skills::content_diagnostics(root));
+    diagnostics.extend(crate::skills_mcp::diagnostics(root));
     if let Some(ids) = inventory["worktrees"].as_array() {
         let stale: Vec<String> = ids
             .iter()

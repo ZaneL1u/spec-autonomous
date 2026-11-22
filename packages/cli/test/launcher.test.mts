@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { platformFor } from '../lib/platform.mjs';
+import { bridgeEnvironment } from '../lib/provider-cli.mjs';
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 // These two paths stay `.mjs`: they are the committed build output that users
 // actually execute, so the launcher contract is verified against the artifact.
@@ -48,4 +51,12 @@ test('forwards SIGTERM to the native child', { skip: process.platform === 'win32
   await once(child.stdout!, 'data');
   child.kill('SIGTERM');
   assert.equal((await exit)[0], 42);
+});
+
+test('native commands receive the absolute launcher for MCP configuration', () => {
+  const env = bridgeEnvironment({ ...process.env });
+  const argv = JSON.parse(env.SPEC_AUTONOMOUS_LAUNCHER!) as string[];
+  assert.equal(argv.length, 2);
+  assert.ok(argv.every(part => isAbsolute(part) && existsSync(part)), argv.join(' '));
+  assert.equal(argv[1], launcher);
 });

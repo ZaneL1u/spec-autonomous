@@ -972,3 +972,81 @@ fn converge_lists_real_gaps_and_leaves_extension_items_out() {
     assert!(instruction.contains("FR-001 value is missing"));
     assert!(!instruction.contains("handles plugins/"), "{instruction}");
 }
+
+// ---------------------------------------------------------------------------------
+// #1/#2 MCP launch commands
+
+#[test]
+fn mcp_launch_command_prefers_path_then_an_absolute_launcher() {
+    use spec_autonomous_core::skills_mcp::launch_command;
+    let (argv, warning) = launch_command(true, Some("[\"/nope\"]"));
+    assert_eq!(argv, ["spec-autonomous"]);
+    assert!(warning.is_none());
+    let exe = std::env::current_exe().unwrap();
+    let script = tempfile::NamedTempFile::new().unwrap();
+    let launcher =
+        serde_json::to_string(&[exe.to_str().unwrap(), script.path().to_str().unwrap()]).unwrap();
+    let (argv, warning) = launch_command(false, Some(&launcher));
+    assert_eq!(
+        argv,
+        [
+            exe.to_str().unwrap().to_owned(),
+            script.path().to_str().unwrap().to_owned()
+        ]
+    );
+    assert!(warning.is_none());
+    for bad in [
+        None,
+        Some("not json"),
+        Some("[\"relative/cli.mjs\"]"),
+        Some("[\"/missing/x\"]"),
+        Some("[]"),
+    ] {
+        let (argv, warning) = launch_command(false, bad);
+        assert_eq!(argv, ["spec-autonomous"], "{bad:?}");
+        assert!(
+            warning.unwrap().starts_with("mcp_command_not_on_path"),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn doctor_reports_mcp_commands_that_cannot_start() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    put(
+        root,
+        ".mcp.json",
+        &json!({"mcpServers":{"spec_autonomous":{"command":"sa-not-installed-9183","args":["mcp"]}}})
+            .to_string(),
+    );
+    put(
+        root,
+        ".codex/config.toml",
+        "[mcp_servers.spec_autonomous]\ncommand = \"/missing/spec-autonomous-9183\"\nargs = [\"mcp\"]\n",
+    );
+    let report = doctor_diagnostics(root);
+    let path = report
+        .iter()
+        .find(|d| d.starts_with("mcp_command_not_on_path: .mcp.json"))
+        .unwrap_or_else(|| panic!("{report:?}"));
+    assert!(path.contains("ENOENT"), "{path}");
+    assert!(
+        report
+            .iter()
+            .any(|d| d.starts_with("mcp_command_missing: .codex/config.toml")),
+        "{report:?}"
+    );
+    put(
+        root,
+        ".mcp.json",
+        &json!({"mcpServers":{"spec_autonomous":{"command":"git","args":["mcp"]}}}).to_string(),
+    );
+    fs::remove_file(root.join(".codex/config.toml")).unwrap();
+    let report = doctor_diagnostics(root);
+    assert!(
+        !report.iter().any(|d| d.starts_with("mcp_command")),
+        "{report:?}"
+    );
+}

@@ -705,6 +705,14 @@ fn effective_environment(name: &str, overrides: &BTreeMap<String, String>) -> Op
         .map(|(_, value)| OsString::from(value))
         .or_else(|| env::var_os(name))
 }
+/// Where `command` resolves on the current process PATH (PATHEXT on Windows), if anywhere.
+pub fn find_on_path(command: &str) -> Option<PathBuf> {
+    resolve_executable(
+        Path::new(""),
+        command,
+        &SearchEnvironment::new(&BTreeMap::new()),
+    )
+}
 fn resolve_executable(cwd: &Path, command: &str, search: &SearchEnvironment) -> Option<PathBuf> {
     if command.is_empty() {
         return None;

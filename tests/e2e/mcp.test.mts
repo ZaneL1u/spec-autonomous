@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {writeFileSync,readFileSync,existsSync,mkdirSync} from 'node:fs';
-import {join} from 'node:path';
+import {writeFileSync,readFileSync,existsSync,mkdirSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,dirname,delimiter} from 'node:path';
 import {fixture,git,workspace} from './helpers.mts';
 import {raw,binary,cleanEnv} from '../mock-host.mts';
 function connect(t: any,root: any){
@@ -42,6 +43,21 @@ for(const agent of ['codex','claude'])test(`${agent}: opt-in MCP binding preserv
  mkdirSync(join(root,path,'..'),{recursive:true});writeFileSync(join(root,path),original);
  const installed=raw(root,['init','--agent',agent,'--mcp']);assert.equal(installed.status,0,installed.details);const body=readFileSync(join(root,path),'utf8');assert.ok(body.includes('spec_autonomous'));if(agent==='codex')assert.ok(body.startsWith(original));else assert.deepEqual(JSON.parse(body).mcpServers.other,{command:'cat'});
  const uninstalled=raw(root,['skills','uninstall']);assert.equal(uninstalled.status,0,uninstalled.details);const after=readFileSync(join(root,path),'utf8');assert.ok(!after.includes('spec_autonomous'));assert.ok(after.includes('other'));
+});
+
+test('init --mcp writes an absolute launcher when spec-autonomous is not on PATH',{skip:process.platform==='win32'},t=>{
+ const PATH=[dirname(process.execPath),'/usr/bin','/bin'].join(delimiter);
+ if(PATH.split(delimiter).some(dir=>existsSync(join(dir,'spec-autonomous')))){t.skip('spec-autonomous is installed in a base directory');return;}
+ const scratch=mkdtempSync(join(tmpdir(),'sa-launcher-'));t.after(()=>rmSync(scratch,{recursive:true,force:true}));
+ const script=join(scratch,'spec-autonomous.mjs');writeFileSync(script,'');
+ for(const agent of ['claude','codex']){
+  const root=fixture(t,'speckit');
+  const installed=raw(root,['init','--agent',agent,'--mcp'],{PATH,SPEC_AUTONOMOUS_LAUNCHER:JSON.stringify([process.execPath,script])});assert.equal(installed.status,0,installed.details);
+  if(agent==='claude'){const entry=JSON.parse(readFileSync(join(root,'.mcp.json'),'utf8')).mcpServers.spec_autonomous;assert.equal(entry.command,process.execPath);assert.equal(entry.args[0],script);assert.deepEqual(entry.args.slice(-1),['mcp']);}
+  else{const body=readFileSync(join(root,'.codex/config.toml'),'utf8');assert.ok(body.includes(`command = ${JSON.stringify(process.execPath)}`),body);assert.ok(body.includes(JSON.stringify(script)),body);}
+  const unresolved=raw(root,['init','--agent',agent,'--mcp'],{PATH});assert.equal(unresolved.status,0,unresolved.details);assert.match(unresolved.stdout,/mcp_command_not_on_path/);
+  const doctor=raw(root,['doctor'],{PATH});assert.ok(doctor.data.diagnostics.some((d: string)=>d.startsWith('mcp_command_not_on_path')),doctor.details);
+ }
 });
 
 test('an existing foreign MCP entry is preflighted before any skill or config writes',t=>{
