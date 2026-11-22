@@ -725,13 +725,27 @@ impl Coordinator<'_> {
         instruction: String,
         snapshot: Option<Snapshot>,
     ) -> Result<(WorkerResult, PathBuf, usize)> {
+        let key_text = instruction.clone();
+        self.invoke_host_keyed(kind, task, phase, instruction, &key_text, snapshot)
+    }
+    /// Like `invoke_host`, but the request key hashes `key_text` instead of the issued
+    /// instruction, so a shortened instruction still matches requests issued before.
+    pub(super) fn invoke_host_keyed(
+        &mut self,
+        kind: &str,
+        task: &str,
+        phase: &str,
+        instruction: String,
+        key_text: &str,
+        snapshot: Option<Snapshot>,
+    ) -> Result<(WorkerResult, PathBuf, usize)> {
         let key = paths::hash(serde_json::to_vec(&(
             kind,
             task,
             phase,
             &self.run.accepted_head,
             &self.run.milestone.goal,
-            &instruction,
+            key_text,
             &snapshot,
         ))?);
         self.supersede_replaced_submissions()?;

@@ -797,3 +797,71 @@ fn trimming_unwraps_native_apply_json_and_dedupes_planning_failures() {
         json!({"documents":[1],"acceptance":[2]})
     );
 }
+
+/// Integrate both planned tasks and return the response that carries the phase audit.
+fn finish_tasks(root: &Path, wave: &Value) -> Value {
+    let request = work(wave, "value").clone();
+    write_value(&request);
+    submit(root, &request, receipt(&packet(root, &request)));
+    let other = work(wave, "other").clone();
+    put(
+        Path::new(other["project"].as_str().unwrap()),
+        "src/other.txt",
+        "other",
+    );
+    submit(root, &other, receipt(&packet(root, &other)))
+}
+fn find_kind<'a>(response: &'a Value, kind: &str) -> &'a Value {
+    response["work"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["kind"] == kind)
+        .unwrap_or_else(|| panic!("no {kind} work: {response}"))
+}
+
+#[test]
+fn converge_instruction_lists_only_failed_audit_items() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (_, wave) = start(root);
+    let audited = finish_tasks(root, &wave);
+    let audit = find_kind(&audited, "audit").clone();
+    let input = packet(root, &audit);
+    let ids: Vec<String> = input.snapshot.as_ref().unwrap().metadata["acceptance"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(ids.len() >= 2, "{ids:?}");
+    let long = "passed evidence ".repeat(200);
+    let mut result = receipt(&input);
+    result.audit = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| AuditItem {
+            requirement: id.clone(),
+            evidence: if i == 0 {
+                "FR-001 value is missing".into()
+            } else {
+                long.clone()
+            },
+            passed: i != 0,
+        })
+        .collect();
+    let failed = submit(root, &audit, result);
+    let converge = find_kind(&failed, "converge");
+    let instruction = packet(root, converge).instruction;
+    assert!(
+        instruction.contains(&format!(
+            "Gaps (1 failed; {} passed audit items omitted)",
+            ids.len() - 1
+        )),
+        "{instruction}"
+    );
+    assert!(instruction.contains(&ids[0]), "{instruction}");
+    assert!(instruction.contains("FR-001 value is missing"));
+    assert!(!instruction.contains("passed evidence"), "{instruction}");
+    assert!(!instruction.contains(&format!("\"{}\"", ids[1])));
+}

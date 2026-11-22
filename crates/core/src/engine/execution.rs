@@ -570,15 +570,24 @@ impl Coordinator<'_> {
         audit: &[AuditItem],
     ) -> Result<()> {
         self.hooks(phase, "before_converge")?;
+        const RULES: &str = "Append only in-scope repair tasks to the native tracking file. Preserve every previous byte and task ID; do not change code or existing specifications.";
+        // Only failed items are gaps; passed items (often with long evidence) are left out
+        // and counted. The request key keeps the full audit, so repairs issued before this
+        // change still match their receipts.
+        let gaps: Vec<&AuditItem> = audit.iter().filter(|a| !a.passed).collect();
         let instruction = format!(
-            "Append only in-scope repair tasks to the native tracking file. Preserve every previous byte and task ID; do not change code or existing specifications. Gaps: {}",
-            serde_json::to_string(audit)?
+            "{RULES} Gaps ({} failed; {} passed audit items omitted): {}",
+            gaps.len(),
+            audit.len() - gaps.len(),
+            serde_json::to_string(&gaps)?
         );
-        let (_, worker, index) = self.invoke(
+        let key_text = format!("{RULES} Gaps: {}", serde_json::to_string(audit)?);
+        let (_, worker, index) = self.invoke_host_keyed(
             "converge",
             &format!("converge-{}", phase.id),
             &phase.id,
             instruction,
+            &key_text,
             Some(snap.clone()),
         )?;
         let tracking = snap

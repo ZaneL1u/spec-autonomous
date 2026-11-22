@@ -36,7 +36,7 @@
 
 `prompt.md` 只放 worker 规则、`input.json` 的绝对路径与 sha256，以及按工作类型的摘要：implement 列出 `task.id` / `description` / `source_ids` / `depends_on` / `writes` / `reads` / `verification`、原生指令摘录与 `previous_candidate`；规划列出来源、`source_hash` 与 `snapshot.tasks` 概要；审计列出验收 id。完整请求只在 `input.json`（超出 `max_context_bytes` 时仍由 `context_reference` 指向 `context-full.json`），worker 必须先完整读取它，摘要不能替代它。
 
-`input.json` 按类型裁剪：只有 audit 带 `snapshot.metadata.acceptance`；implement 不带 `metadata.documents`，`snapshot.next_action.instruction` 由 OpenSpec apply 的整份 JSON 换成其中的 `instruction` 文本（附 `warnings` 与 `context`，任务表与上下文文件已在 `snapshot.tasks` / `snapshot.context_files`）；规划包中与顶层 `failure` 相同的 `previous_planning_failure.error` 换成 `error_in: "failure"`。`context_files` 原样保留。
+`input.json` 按类型裁剪：只有 audit 带 `snapshot.metadata.acceptance`；implement 不带 `metadata.documents`，`snapshot.next_action.instruction` 由 OpenSpec apply 的整份 JSON 换成其中的 `instruction` 文本（附 `warnings` 与 `context`，任务表与上下文文件已在 `snapshot.tasks` / `snapshot.context_files`）；规划包中与顶层 `failure` 相同的 `previous_planning_failure.error` 换成 `error_in: "failure"`。`context_files` 原样保留。converge 包的 `instruction` 只在 `Gaps (<n> failed; <m> passed audit items omitted): [...]` 中列出 `passed: false` 的审计条目，已通过条目只计数；请求键仍按完整审计计算，升级前签发的 converge 请求照常匹配回执。
 
 `input_hash` 是签发时 `input.json` 字节的哈希，只对新签发的包改变。升级前已签发、尚未回执的包仍使用磁盘上原有的 `input.json` / `prompt.md`，回执与 `work.context` 按原哈希校验，不受影响。
 
