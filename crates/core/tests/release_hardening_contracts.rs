@@ -400,3 +400,66 @@ fn an_interruption_between_integration_checks_keeps_the_candidate() {
         assert!(!run.attempts.iter().any(|a| a.status == "failed"));
     }
 }
+
+#[test]
+fn cleanup_removes_clean_checkouts_with_initialized_submodules() {
+    let library = std::cell::RefCell::new(None);
+    let root = fixture_with(
+        |c| {
+            c.execution.init_submodules = true;
+            c.execution.automatic_cleanup = false;
+            allow_file_protocol(c);
+        },
+        |root| *library.borrow_mut() = Some(add_submodule(root)),
+    );
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    let worktree = request["worktree"].as_str().unwrap().to_owned();
+    assert!(Path::new(&worktree).join("vendor/lib/lib.txt").is_file());
+    write_value(&request);
+    let accepted = submit(root, &request, receipt(&packet(root, &request)));
+    assert_ne!(accepted["status"], "needs_input", "{accepted}");
+    let other = work(&accepted, "other").clone();
+    let dirty = other["worktree"].as_str().unwrap().to_owned();
+    // The other worker left an untracked file inside its submodule.
+    put(Path::new(&dirty), "vendor/lib/scratch.txt", "local");
+    api::invoke(
+        root,
+        "work.revoke",
+        &json!({"run_id":run_id,"request_id":other["request_id"],"host_stopped":true,"reason":"stop","host":other["owner"]}),
+    )
+    .unwrap();
+    api::invoke(root, "run.cancel", &json!({"run_id":run_id})).unwrap();
+    let integration = saved(root, &run_id).integration;
+    assert!(Path::new(&integration).join("vendor/lib/lib.txt").is_file());
+
+    let args = json!({"run_id":run_id,"delete_integration":true});
+    let preview = api::invoke(root, "run.cleanup", &args).unwrap();
+    let result = api::invoke(
+        root,
+        "run.cleanup",
+        &json!({"run_id":run_id,"delete_integration":true,"apply":true,"plan_hash":preview["plan_hash"]}),
+    )
+    .unwrap();
+    let removed: Vec<String> = serde_json::from_value(result["removed"].clone()).unwrap();
+    let same = |a: &str, b: &str| {
+        fs::canonicalize(a)
+            .ok()
+            .zip(fs::canonicalize(b).ok())
+            .is_some_and(|(a, b)| a == b)
+            || a == b
+    };
+    assert!(removed.iter().any(|p| same(p, &worktree)), "{result}");
+    assert!(removed.iter().any(|p| same(p, &integration)), "{result}");
+    assert!(!Path::new(&worktree).exists() && !Path::new(&integration).exists());
+    // A submodule with local changes is never forced away.
+    assert!(
+        Path::new(&dirty).join("vendor/lib/scratch.txt").is_file(),
+        "{result}"
+    );
+    assert!(!removed.iter().any(|p| same(p, &dirty)), "{result}");
+    // The user's checkout keeps its initialized submodule.
+    let status = git::command(root, &["submodule", "status"], None).unwrap();
+    assert!(status.starts_with(' '), "{status}");
+}

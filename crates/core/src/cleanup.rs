@@ -346,13 +346,7 @@ fn execute(
                 || git::head(integration)? != run.accepted_head
             {
                 retained.push(json!({"path":run.integration,"branch":run.integration_branch,"reason":"integration_not_safe_to_remove"}));
-            } else if git::command(
-                &repo.root,
-                &["worktree", "remove", "--", &run.integration],
-                None,
-            )
-            .is_ok()
-            {
+            } else if remove_worktree(&repo, integration, false).is_ok() {
                 removed.push(run.integration.clone());
             } else {
                 retained.push(json!({"path":run.integration,"branch":run.integration_branch,"reason":"integration_remove_failed"}));
@@ -362,8 +356,7 @@ fn execute(
             let path = item["path"].as_str().unwrap();
             // Git repeats dirtiness/lock checks at mutation time; never force removal.
             let unchanged = git::head(Path::new(path)).is_ok_and(|h| h == item["head"]);
-            let removal = unchanged
-                && git::command(&repo.root, &["worktree", "remove", "--", path], None).is_ok();
+            let removal = unchanged && remove_worktree(&repo, Path::new(path), false).is_ok();
             if removal {
                 removed.push(path.to_owned());
             } else {
@@ -404,6 +397,58 @@ fn execute(
     Ok(result)
 }
 
+/// Remove a closed worktree without forcing past changes. `git worktree remove` refuses
+/// any checkout whose submodules were ever initialized (`init_submodules`), even a clean
+/// one. For those, re-check right here that the superproject and every submodule are
+/// clean (untracked files included) and only then pass `--force`, which still refuses a
+/// locked worktree. `git submodule deinit` is not used: it edits the configuration the
+/// worktree shares with the user's checkout. `keep_ignored` also retains ignored files
+/// inside submodules, as automatic maintenance does for the superproject.
+pub(crate) fn remove_worktree(repo: &Repository, path: &Path, keep_ignored: bool) -> Result<()> {
+    let text = path.to_string_lossy();
+    let plain = git::command(&repo.root, &["worktree", "remove", "--", &text], None);
+    if plain.is_ok() || !path.join(".gitmodules").is_file() {
+        return plain.map(|_| ());
+    }
+    let status = git::command(
+        path,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+        None,
+    )?;
+    if !status.is_empty() {
+        bail!("worktree_dirty: {text} or one of its submodules has local changes");
+    }
+    let nested = git::command(
+        path,
+        &[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            if keep_ignored {
+                "git status --porcelain --untracked-files=all --ignored"
+            } else {
+                "git status --porcelain --untracked-files=all"
+            },
+        ],
+        None,
+    )?;
+    if !nested.trim().is_empty() {
+        bail!("worktree_dirty: {text} has local or retained files inside a submodule");
+    }
+    git::command(
+        &repo.root,
+        &["worktree", "remove", "--force", "--", &text],
+        None,
+    )?;
+    Ok(())
+}
+
 /// Called only by a coordinator already holding the repository writer lease.
 /// Unlike explicit terminal cleanup, automatic maintenance always retains ignored data.
 pub(crate) fn at_handoff(repo: &Repository, run: &Run, runs: &[Run]) -> Result<Value> {
@@ -421,7 +466,7 @@ pub(crate) fn at_handoff(repo: &Repository, run: &Run, runs: &[Run]) -> Result<V
         if !ignored.is_empty() {
             retained.push(json!({"path":path,"reason":"ignored_artifacts_retained"}));
         } else if git::head(checkout).is_ok_and(|h| h == item["head"])
-            && git::command(&repo.root, &["worktree", "remove", "--", path], None).is_ok()
+            && remove_worktree(repo, checkout, true).is_ok()
         {
             removed.push(path.to_owned());
         } else {

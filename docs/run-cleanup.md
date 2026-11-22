@@ -15,6 +15,8 @@ MCP 对应 `sa_tools` 的 `operation: "call"`、`capability: "run.cleanup"`，�
 
 默认保留集成工作树及其分支；运行账本、验证日志与证据文件始终保留。清理不会改写已验证进度，也不会清理外部或未登记的工作树。工作树或计划在预览之后发生变化会拒绝旧哈希；执行时再次检查 Git 状态，无法安全移除的项留在结果中供下一次处理。
 
+开启 `init_submodules` 后，worker / 集成 / 候选工作树带有已初始化的子模块，`git worktree remove` 对这类工作树即使干净也拒绝。清理在执行时先确认父仓库与每个子模块都干净（含未跟踪文件；自动维护还要求子模块内没有 ignored 文件），再以 `--force` 移除；锁定的工作树仍不移除，子模块有本地改动时按 `worktree_changed_or_remove_failed` 保留。不使用 `git submodule deinit`，因为它会改写与用户检出共享的 Git 配置。
+
 历史命令 `spec-autonomous cleanup <run-id>` 保持兼容：立即移除符合条件的干净工作树并保留全部分支。需要审阅清单或删除安全分支时使用 `tools call run.cleanup`。
 
 
