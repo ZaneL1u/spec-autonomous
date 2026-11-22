@@ -25,7 +25,7 @@ Fresh workers, task DAGs and isolation support this end-to-end product outcome.
 - Do not mark planned features complete because proposal/design/tasks exist.
 - Update the relevant OpenSpec checkbox only after its stated verification passes.
 
-- Read openspec/changes/recoverable-autonomy and docs/run-revision.md / docs/run-cleanup.md for alpha.9 revisions, verification readiness, batch claims and cleanup. Run-local revisions use ledger schema 3 to reject older writers; JSON/MCP and config schema remain stable.
+- Read openspec/changes/recoverable-autonomy and docs/run-revision.md / docs/run-cleanup.md for alpha.9 revisions, verification readiness, batch claims and cleanup. Run-local revisions use ledger schema 3 to reject older writers; JSON/MCP and config schema remain stable. Ledger schema 5 (0.2.0) keeps the schema 4 tables and only rejects older CLIs whose payload handling would drop or fail on new run fields; read-only opens never migrate.
 
 ## Structure and tools
 

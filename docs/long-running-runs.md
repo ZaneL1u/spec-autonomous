@@ -105,6 +105,8 @@ attempt 进入 integrated / superseded / revoked / operator_resolved、非 imple
 
 账本 schema 4 把 attempts 和 evidence 拆成 `run_attempts` / `run_evidence` 行：心跳、单条验证或一次状态变更只写一行，而不是整体重写几 MB 的 run 载荷。首次以新版本写入时在同一事务内从 schema 2/3 的整体载荷迁移，迁移前先做 `VACUUM INTO` 备份；旧版 CLI 以只读方式仍能读取旧格式，但拒绝写入新版账本。JSON/MCP 的 run 形状不变。
 
+账本 schema 5（0.2.0）沿用 schema 4 的表结构，只标记 run 载荷里有旧版 CLI 会读错的内容：冻结配置中的 `init_submodules` / `baseline_checks`（旧版按 `deny_unknown_fields` 直接加载失败）、`task_writes` 写集修订（旧版重新规划时静默丢弃）、活动时间锚点 `active_at` 与 `host.baselines`。0.2.0 首次以写方式打开 schema 4 账本时先 `VACUUM INTO state.v4.<uuid>.backup.db` 备份，再在同一事务里把 `user_version` 改为 5，不改写任何 run、attempt 或 evidence 行；schema 2/3 账本照旧先拆表再标记为 5。只读打开（`progress`、`state.get`、doctor）和 `run.pause` / `run.cancel` 不触发迁移。迁移后 alpha.16 及更早的 CLI 读写都会以 `schema_unsupported` 拒绝该账本；需要回退时停掉新版服务，用备份文件替换 `state.db`。升级后重启项目的 MCP 服务。
+
 ### run.forensics
 
 只读的 `run.forensics {run_id}` 返回异常列表与度量：同一命令多次失败（`repeated_failing_check`）、单任务 attempt 过多（`task_attempt_churn`）、超过两小时无心跳的在途请求（`idle_outstanding_request`）、phase 被重复完成、频繁源对账、反复 handoff、待合并源、stale phase、worktree 积压、修复轮签名，以及尝试分布、执行/复用检查数、事件数、账本跨度。它不修改任何状态；先看它，再决定 revoke、revise 还是继续。

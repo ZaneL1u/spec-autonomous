@@ -941,3 +941,80 @@ fn baseline_checks_report_failures_that_predate_the_plan() {
         assert_ne!(wave["status"], "needs_input", "{wave}");
     }
 }
+
+#[test]
+fn ledger_schema_5_upgrades_a_schema_4_ledger_without_losing_rows() {
+    assert_eq!(spec_autonomous_core::state::SCHEMA_VERSION, 5);
+    let root = fixture(|c| c.execution.init_submodules = false);
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    submit(root, &request, receipt(&packet(root, &request)));
+    let before = saved(root, &run_id);
+    assert!(before.attempts.len() >= 3 && !before.evidence.is_empty());
+    let repo = Repository::discover(root).unwrap();
+    let runtime = repo.runtime().unwrap();
+    let version = |path: &Path| -> u32 {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(version(&runtime.join("state.db")), 5);
+    // The same tables as alpha.16 (schema 4) wrote them.
+    rusqlite::Connection::open(runtime.join("state.db"))
+        .unwrap()
+        .pragma_update(None, "user_version", 4)
+        .unwrap();
+
+    // Readers and control writers use the split rows of a schema-4 ledger as they are.
+    let reader = Store::open(&repo, false).unwrap().unwrap();
+    let read = reader.get(&run_id).unwrap();
+    assert_eq!(read.attempts.len(), before.attempts.len());
+    assert_eq!(read.evidence.len(), before.evidence.len());
+    drop(reader);
+    spec_autonomous_core::state::Store::for_control(&repo)
+        .unwrap()
+        .control(&run_id, "")
+        .unwrap();
+    assert_eq!(
+        version(&runtime.join("state.db")),
+        4,
+        "reading never migrates"
+    );
+
+    // The first writer backs the ledger up and only stamps the new version.
+    let store = Store::open(&repo, true).unwrap().unwrap();
+    assert_eq!(store.user_version().unwrap(), 5);
+    let migrated = store.get(&run_id).unwrap();
+    assert_eq!(
+        migrated.attempts.len(),
+        before.attempts.len(),
+        "no attempt rows lost"
+    );
+    assert_eq!(
+        migrated.evidence.len(),
+        before.evidence.len(),
+        "no evidence rows lost"
+    );
+    drop(store);
+    let backups: Vec<_> = fs::read_dir(&runtime)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            name.starts_with("state.v4.") && name.ends_with(".backup.db")
+        })
+        .collect();
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    assert_eq!(version(&backups[0]), 4);
+    // The run continues normally on the upgraded ledger.
+    let resumed = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full"}),
+    )
+    .unwrap();
+    assert_ne!(resumed["status"], "needs_input", "{resumed}");
+}

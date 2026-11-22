@@ -14,6 +14,7 @@
 - 规划与 worker 工作包说明 `openspec` 映射：PATH 上没有 `openspec` 时，`managed_commands.openspec` 与 prompt 的 `TOOLS:` 给出协调器实际执行的绝对 argv 和 `providers exec` 写法；`verification_environment.executables` 新增 `pnpm`、`uv`、`openspec`。
 - run 预算改按活动时间计：协调器运行与宿主持有工作包（`awaiting_host`）的时间计入，停在 `needs_input` / `paused` 的时间不计；`budget_exhausted` 说明 72 小时上限下最多还能延长多少，到顶时直接提示需要 `unsafe_budgets`。旧 run 从已记录的用量继续累计。
 - 新增可选的 `[execution] baseline_checks`（默认关闭）：计划被接受后先在集成检出上跑一次已能运行的检查，把基线上已经失败的检查作为 `baseline_failure:` 警告报告，并写进该 phase 的实现包，避免它们拖到最后一个任务才暴露。
+- 升级须知：账本 schema 升到 5（表结构同 schema 4），首次写入前自动备份为 `state.v4.<uuid>.backup.db`；之后 alpha.16 及更早的 CLI 会以 `schema_unsupported` 拒绝该账本，避免它们读不了 `init_submodules` 配置或在重新规划时丢掉写集修订。升级后重启项目的 MCP 服务，详见[长任务维护](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/long-running-runs.md)。
 
 ## 0.1.0-alpha.16
 
