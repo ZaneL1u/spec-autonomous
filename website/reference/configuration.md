@@ -40,6 +40,7 @@ lease_seconds = 1800
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支 |
 | `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
+| `baseline_checks` | 默认 `false`。为 `true` 时，phase 计划被接受后、签发该 phase 的实现工作前，协调器在集成检出（`accepted_head`）上把计划里已经能跑的检查跑一次（预检为 `deferred`、或 argv 指向任务将写入且尚不存在的文件的检查跳过；配置了 `verification_prepare` 时先运行它），失败的检查记为已知基线失败：响应 `warnings[]` 给出 `baseline_failure: phase <id>: ...`（含命令、退出码与脱敏的输出末尾），该 phase 的 implement / converge 包在 `snapshot.metadata.baseline_failures` 中带上同一列表。基线失败不阻塞、不计失败、不排修复轮。默认关闭是因为每个 phase 计划要多跑一遍这些检查（包括全量测试）；全量检查昂贵而基线可能已坏的仓库建议开启。基线检查留下的文件会被清除，集成检出回到 `accepted_head` |
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
 

@@ -80,6 +80,7 @@ impl Coordinator<'_> {
         if plan.phase_id != phase.id {
             bail!("invalid_plan: supplied plan has wrong phase binding");
         }
+        self.baseline_checks(phase, &plan)?;
         let done_ids: Vec<_> = plan
             .tasks
             .iter()

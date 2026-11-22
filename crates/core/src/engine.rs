@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod baseline;
 mod execution;
 mod host;
 mod lifecycle;

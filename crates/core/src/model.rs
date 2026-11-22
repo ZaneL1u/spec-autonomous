@@ -378,6 +378,10 @@ pub struct HostState {
     /// reload_config, before run-local overrides; responses compare it to the source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_hash: Option<String>,
+    /// `[execution] baseline_checks` results per phase: the accepted head, the checks
+    /// run and those already failing before any task of the plan ran.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub baselines: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationPass {

@@ -846,3 +846,98 @@ fn legacy_runs_resume_from_recorded_time_and_cap_hints_name_unsafe_budgets() {
         "{blocker}"
     );
 }
+
+#[test]
+fn baseline_checks_report_failures_that_predate_the_plan() {
+    let stale = "import assert from 'node:assert/strict';import {writeFileSync} from 'node:fs';writeFileSync('leftover.txt','x');assert.equal('volar','gopls','stale expectation in settings test');\n";
+    for enabled in [true, false] {
+        let root = fixture_with(
+            |c| c.execution.baseline_checks = enabled,
+            |root| put(root, "tests/stale.mjs", stale),
+        );
+        let root = root.path();
+        let first = api::invoke(
+            root,
+            "prepare",
+            &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+        )
+        .unwrap();
+        let run_id = first["id"].as_str().unwrap().to_owned();
+        let planning = &first["work"][0];
+        let input = packet(root, planning);
+        let snapshot = input.snapshot.clone().unwrap();
+        let mut other = task("other", &snapshot.tasks[1].id, "src/other.txt");
+        other.writes.push("tests/new.mjs".into());
+        other.verification = vec![
+            Check {
+                argv: vec!["node".into(), "tests/stale.mjs".into()],
+                cwd: ".".into(),
+            },
+            // Written by the task itself: deferred, so the baseline skips it.
+            Check {
+                argv: vec!["node".into(), "tests/new.mjs".into()],
+                cwd: ".".into(),
+            },
+        ];
+        let mut result = receipt(&input);
+        result.plan = Some(Plan {
+            schema_version: 1,
+            phase_id: "P001".into(),
+            source_hash: snapshot.source_hash,
+            tasks: vec![task("value", &snapshot.tasks[0].id, "src/value.txt"), other],
+            milestone: input.milestone.clone(),
+        });
+        let wave = submit(root, planning, result);
+        let run = saved(root, &run_id);
+        let warnings: Vec<String> =
+            serde_json::from_value(wave["warnings"].clone()).unwrap_or_default();
+        if !enabled {
+            assert!(run.host.as_ref().unwrap().baselines.is_empty());
+            assert!(
+                !warnings.iter().any(|w| w.starts_with("baseline_failure")),
+                "{wave}"
+            );
+            continue;
+        }
+        let baseline = &run.host.as_ref().unwrap().baselines["P001"];
+        assert_eq!(baseline["head"], json!(run.accepted_head), "{baseline}");
+        // node --version, tests/value.mjs (src/value.txt is not written yet) and the stale test.
+        assert_eq!(baseline["checks_run"], 3, "{baseline}");
+        let failed: Vec<Value> = baseline["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["argv"].clone())
+            .collect();
+        assert_eq!(
+            failed,
+            [
+                json!(["node", "--test", "tests/value.mjs"]),
+                json!(["node", "tests/stale.mjs"])
+            ],
+            "{baseline}"
+        );
+        let stale_warning = warnings
+            .iter()
+            .find(|w| w.contains("tests/stale.mjs") && w.contains("actual: 'volar'"))
+            .unwrap_or_else(|| panic!("{wave}"));
+        assert!(
+            stale_warning.starts_with("baseline_failure: phase P001: "),
+            "{stale_warning}"
+        );
+        assert!(
+            !warnings.iter().any(|w| w.contains("tests/new.mjs")),
+            "{warnings:?}"
+        );
+        assert!(
+            git::clean(Path::new(&run.integration)).unwrap(),
+            "the baseline leaves the integration checkout clean"
+        );
+        let implement = packet(root, work(&wave, "other"));
+        let known = &implement.snapshot.unwrap().metadata["baseline_failures"];
+        assert_eq!(known.as_array().unwrap().len(), 2, "{known}");
+        // Nothing failed or retried because of the baseline.
+        assert!(!run.attempts.iter().any(|a| a.status == "failed"));
+        assert_ne!(wave["status"], "needs_input", "{wave}");
+    }
+}

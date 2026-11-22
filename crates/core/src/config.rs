@@ -66,6 +66,11 @@ pub struct Execution {
     /// configuration while off so existing identities do not change.
     #[serde(skip_serializing_if = "is_false")]
     pub init_submodules: bool,
+    /// Run a newly accepted plan's already runnable checks once on the integration
+    /// checkout and report the ones that fail before any task ran. Off by default: it
+    /// costs one extra run of those checks per phase plan (a full test suite included).
+    #[serde(skip_serializing_if = "is_false")]
+    pub baseline_checks: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -141,6 +146,7 @@ impl Default for Execution {
             reclaim_worktrees: "terminal".into(),
             retain_failed_worktrees: 1,
             init_submodules: false,
+            baseline_checks: false,
         }
     }
 }
