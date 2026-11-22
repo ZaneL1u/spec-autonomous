@@ -53,6 +53,15 @@
 - glob 或目录项不会放开原生规格上下文文件（`snapshot.context_files`）；任务确需改它们时必须逐字列出该文件。`.git/`、`.spec-autonomous/` 永远不可写。
 - 规划包指令末尾的附加说明给出上述写法，不进入请求键。
 
+## 待宿主补的真实环境证据
+
+implement 与 audit 的 WorkerResult 可以带可选的 `deferred_evidence: [{kind, description, reason, requirement?}]`（`kind` 取 `live` / `manual` / `external`，至多 20 条，`description` / `reason` 非空且各不超过 2048 字节；结果 schema 中仅这两类包有该字段，其他类型的包带它会被判 `worker_protocol_error`）。它表示 checkout 里无法产生、需要宿主在真实环境补的证据（部署、外部服务、设备、发布产物或人工查看）：
+
+- 它不是失败。worker 把能在 checkout 里验证的都做完，仍返回 `status: "candidate"`；审计项在其余条件成立时 `passed: true`，并在对应条目的 `requirement` 写该验收 id（必须是本包 `snapshot.metadata.acceptance[].id`）。`passed` 布尔的含义不变：判 `false` 的审计项仍按缺口进入修复。
+- 协调器把回执里的条目记到 attempt 上。每个 implement 任务取最近一次 `integrated` 的 attempt、每个审计批次取最近一次 `accepted` 的 attempt，汇总成 run 视图（`prepare` / `apply-result` / `state.get`，紧凑视图同样保留）与 `next` 响应里的 `deferred_evidence` 列表（带 `attempt_id`、`kind_of_work`、`phase_id`、`task_id`）；`progress` 的每个 run 摘要带 `deferred_evidence: {count, items}`。同一单元后来被接受的 attempt 会替换旧列表。
+- 里程碑（或范围）完成时 run 照常进入 `completed` / `scope_completed`，若仍有条目，`warnings` 附 `deferred_evidence_pending: <n> item(s) ...`，列表即宿主的待办。协调器不会替宿主执行或勾销这些条目。
+- 没有该字段的回执序列化结果不变，旧回执与旧账本照常读取。
+
 ## 追加写集
 
 implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。

@@ -95,6 +95,7 @@ fn receipt(root: &Path, request: &Value) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {

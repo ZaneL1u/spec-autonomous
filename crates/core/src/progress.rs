@@ -324,7 +324,8 @@ pub fn summary(run: &Run) -> Value {
     let unique_checkouts: std::collections::BTreeSet<_> =
         run.attempts.iter().map(|a| &a.worktree).collect();
     let overhead = json!({"verification_reuses":run.verification_reuses,"attempt_checkouts":unique_checkouts.len(),"read_only_attempts":run.attempts.iter().filter(|a|matches!(a.kind.as_str(),"plan-tasks"|"audit")).count(),"attempts_by_kind_status":attempt_states,"verification_checks":run.evidence.len(),"executed_checks":executed,"reused_checks":reused,"historical_failed_checks":run.evidence.iter().filter(|e|e.exit_code != 0).count(),"measured_checks":measured.len(),"measured_duration_ms":duration_ms,"duration_coverage":if measured.len()==executed{"complete"}else{"partial"},"verification_revisions":run.host.as_ref().map_or(0,|h|h.verification_revisions.len())});
-    json!({"overhead":overhead,"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
+    let deferred = run.open_deferred_evidence();
+    json!({"overhead":overhead,"deferred_evidence":{"count":deferred.len(),"items":deferred},"run_id":run.id,"milestone_id":run.milestone.id,"status":run.status,"stage":run.stage,"selected_phases":run.selected_phases,"completed_phases":run.completed_phases,"verified_tasks":run.completed_tasks.len(),"attempts":run.attempts.len(),"blocker":run.blocker,"checkout":run.integration,"accepted_head":run.accepted_head,"next_action":if run.terminal(){String::new()}else{format!("spec-autonomous resume {}",run.id)}})
 }
 pub fn public_run(run: &Run) -> Value {
     let mut value = serde_json::to_value(run).unwrap();
@@ -335,6 +336,10 @@ pub fn public_run(run: &Run) -> Value {
     } else {
         "legacy"
     });
+    let deferred = run.open_deferred_evidence();
+    if !deferred.is_empty() {
+        value["deferred_evidence"] = json!(deferred);
+    }
     // Hooks show their name, argv and idempotence so a host can confirm which are active;
     // environment values stay redacted.
     value["config"] = json!({"schema_version":run.config.schema_version,"execution":run.config.execution,"host":run.config.host,"hooks":run.config.hooks,"environment":"redacted","runner":{"profile":run.config.runner.profile,"sandbox":run.config.runner.sandbox,"environment":"redacted"}});

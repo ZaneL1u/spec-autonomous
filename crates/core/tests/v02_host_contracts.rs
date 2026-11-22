@@ -109,6 +109,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {
@@ -491,4 +492,233 @@ fn a_planned_glob_write_is_accepted_and_serializes_overlapping_tasks() {
             .collect::<Vec<_>>()
     );
     work(&next, "other");
+}
+
+// ---------------------------------------------------------------------------------
+// #35 deferred real-environment evidence
+
+/// Integrate both planned tasks and return the response that carries the phase audit.
+fn finish_tasks(root: &Path, wave: &Value) -> Value {
+    let request = work(wave, "value").clone();
+    write_value(&request);
+    submit(root, &request, receipt(&packet(root, &request)));
+    let other = work(wave, "other").clone();
+    put(
+        Path::new(other["project"].as_str().unwrap()),
+        "src/other.txt",
+        "other",
+    );
+    submit(root, &other, receipt(&packet(root, &other)))
+}
+fn find_kind<'a>(response: &'a Value, kind: &str) -> Option<&'a Value> {
+    response["work"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["kind"] == kind)
+}
+fn acceptance_ids(input: &WorkerInput) -> Vec<String> {
+    input.snapshot.as_ref().unwrap().metadata["acceptance"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+fn live(description: &str, requirement: Option<&str>) -> DeferredEvidence {
+    DeferredEvidence {
+        kind: "live".into(),
+        description: description.into(),
+        reason: "needs the staging deployment".into(),
+        requirement: requirement.map(str::to_owned),
+    }
+}
+
+#[test]
+fn implement_receipts_carry_deferred_evidence_into_views_and_progress() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    let schema: Value =
+        serde_json::from_slice(&fs::read(request["result_schema_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(
+        schema["properties"]["deferred_evidence"]["items"]["properties"]["kind"]["enum"],
+        json!(["live", "manual", "external"])
+    );
+    assert!(
+        !schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("deferred_evidence"))
+    );
+    let prompt = fs::read_to_string(request["prompt_path"].as_str().unwrap()).unwrap();
+    assert!(prompt.contains("DEFERRED EVIDENCE"), "{prompt}");
+    write_value(&request);
+    let input = packet(root, &request);
+
+    // A bad kind is a protocol error and nothing is integrated.
+    let mut bad = receipt(&input);
+    bad.deferred_evidence = vec![DeferredEvidence {
+        kind: "maybe".into(),
+        ..live("curl the staging endpoint", None)
+    }];
+    let rejected = api::invoke(
+        root,
+        "apply-result",
+        &json!({"token":request["token"],"host":request["owner"],"result":bad,"view":"full"}),
+    );
+    let text = format!("{rejected:?}");
+    assert!(text.contains("deferred_evidence kind"), "{text}");
+
+    let request = work(
+        &api::invoke(
+            root,
+            "prepare",
+            &json!({"run_id":run_id,"host":host(),"view":"full"}),
+        )
+        .unwrap(),
+        "value",
+    )
+    .clone();
+    let project = Path::new(request["project"].as_str().unwrap());
+    if !project.join("src/value.txt").exists() {
+        write_value(&request);
+    }
+    let mut result = receipt(&packet(root, &request));
+    result.deferred_evidence = vec![live("curl https://staging/value returns 42", None)];
+    let response = submit(root, &request, result);
+    let run = saved(root, &run_id);
+    assert!(
+        run.completed_tasks.contains(&Run::key("P001", "value")),
+        "{response}"
+    );
+    let listed = response["deferred_evidence"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{response}"));
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["task_id"], "value");
+    assert_eq!(listed[0]["kind"], "live");
+    assert_eq!(listed[0]["kind_of_work"], "implement");
+    assert_ne!(
+        response["status"], "needs_input",
+        "not a failure: {response}"
+    );
+    let compact = api::invoke(root, "next", &json!({"run_id":run_id})).unwrap();
+    assert_eq!(
+        compact["deferred_evidence"][0]["task_id"], "value",
+        "{compact}"
+    );
+    let progress = api::invoke(root, "progress", &json!({})).unwrap();
+    let text = progress.to_string();
+    assert!(
+        text.contains("curl https://staging/value returns 42"),
+        "{progress}"
+    );
+}
+
+#[test]
+fn audit_items_may_defer_live_evidence_and_the_run_completes_with_follow_ups() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let mut response = finish_tasks(root, &wave);
+    let mut first = true;
+    let mut rounds = 0;
+    while let Some(audit) = find_kind(&response, "audit").cloned() {
+        rounds += 1;
+        assert!(rounds < 5, "{response}");
+        let input = packet(root, &audit);
+        let schema: Value = serde_json::from_slice(
+            &fs::read(audit["result_schema_path"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert!(schema["properties"]["deferred_evidence"].is_object());
+        let ids = acceptance_ids(&input);
+        let mut result = receipt(&input);
+        result.audit = ids
+            .iter()
+            .map(|id| AuditItem {
+                requirement: id.clone(),
+                evidence: "src/value.txt contains 42; node --test tests/value.mjs".into(),
+                passed: true,
+            })
+            .collect();
+        if first {
+            // An id outside this packet is refused.
+            let mut wrong = result.clone();
+            wrong.deferred_evidence = vec![live("x", Some("FR-999-not-here"))];
+            let error = api::invoke(
+                root,
+                "apply-result",
+                &json!({"token":audit["token"],"host":audit["owner"],"result":wrong,"view":"full"}),
+            );
+            assert!(
+                format!("{error:?}").contains("is not an acceptance id"),
+                "{error:?}"
+            );
+            let audit = find_kind(
+                &api::invoke(
+                    root,
+                    "prepare",
+                    &json!({"run_id":run_id,"host":host(),"view":"full"}),
+                )
+                .unwrap(),
+                "audit",
+            )
+            .unwrap()
+            .clone();
+            let input = packet(root, &audit);
+            result = receipt(&input);
+            result.audit = acceptance_ids(&input)
+                .iter()
+                .map(|id| AuditItem {
+                    requirement: id.clone(),
+                    evidence: "verified in checkout".into(),
+                    passed: true,
+                })
+                .collect();
+            result.deferred_evidence = vec![live(
+                "value visible on staging",
+                Some(&acceptance_ids(&input)[0]),
+            )];
+            first = false;
+            response = submit(root, &audit, result);
+            continue;
+        }
+        response = submit(root, &audit, result);
+    }
+    assert_eq!(response["status"], "completed", "{response}");
+    let warnings = response["warnings"].to_string();
+    assert!(
+        warnings.contains("deferred_evidence_pending: 1 item"),
+        "{response}"
+    );
+    let items = response["deferred_evidence"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{response}");
+    assert_eq!(items[0]["kind_of_work"], "audit");
+    assert!(items[0]["requirement"].is_string());
+}
+
+#[test]
+fn receipts_without_deferred_evidence_keep_their_bytes() {
+    let result = WorkerResult {
+        schema_version: 1,
+        run_id: "r".into(),
+        task_id: "t".into(),
+        attempt_id: "a".into(),
+        status: "candidate".into(),
+        summary: "s".into(),
+        blockers: vec![],
+        milestone: None,
+        plan: None,
+        audit: vec![],
+        requested_writes: vec![],
+        deferred_evidence: vec![],
+    };
+    let text = serde_json::to_string(&result).unwrap();
+    assert!(!text.contains("deferred_evidence"), "{text}");
+    let old: WorkerResult = serde_json::from_str(&text).unwrap();
+    assert!(old.deferred_evidence.is_empty());
 }

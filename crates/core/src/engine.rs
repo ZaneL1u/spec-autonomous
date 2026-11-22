@@ -750,6 +750,7 @@ impl Coordinator<'_> {
             usage: None,
             patch_hash: None,
             worktree_state: None,
+            deferred_evidence: vec![],
         });
         self.save("attempt_started")?;
         if writing && let Err(error) = self.prepare_worker(index, &worktree, &dir) {
@@ -923,6 +924,7 @@ impl Coordinator<'_> {
             Ok(r) => {
                 a.status = "candidate".into();
                 a.summary = r.summary.clone();
+                a.deferred_evidence = r.deferred_evidence.clone();
             }
             Err(e) => {
                 a.status = "failed".into();

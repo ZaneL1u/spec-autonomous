@@ -192,6 +192,22 @@ pub struct PreviousCandidate {
     /// True when the new attempt starts from the same commit, so the patch applies as is.
     pub same_base: bool,
 }
+/// Evidence a worker could not produce in its checkout and leaves to the host, for
+/// example a check against a real deployment. It is a follow-up, not a failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeferredEvidence {
+    /// `live` (a real environment or service), `manual` (a person must look) or
+    /// `external` (another system or release artifact).
+    pub kind: String,
+    pub description: String,
+    pub reason: String,
+    /// The acceptance id an audit item defers; absent for implement work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
+}
+pub const DEFERRED_EVIDENCE_KINDS: &[&str] = &["live", "manual", "external"];
+pub const MAX_DEFERRED_EVIDENCE: usize = 20;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditItem {
     pub requirement: String,
@@ -216,6 +232,10 @@ pub struct WorkerResult {
     /// Omitted when empty so receipts without it keep their hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requested_writes: Vec<String>,
+    /// Evidence that needs a real environment and is left to the host. Omitted when
+    /// empty so receipts without it keep their hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_evidence: Vec<DeferredEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +279,9 @@ pub struct Attempt {
     /// `reclaimed` once the worktree directory was removed; the branch and patch stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_state: Option<String>,
+    /// Deferred evidence the accepted receipt reported, copied when the receipt is read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_evidence: Vec<DeferredEvidence>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationIntent {
@@ -332,6 +355,44 @@ impl Run {
     }
     pub fn key(phase: &str, task: &str) -> String {
         format!("{phase}/{task}")
+    }
+    /// Deferred evidence still owed to the host: what the latest integrated implement
+    /// or accepted audit attempt of each unit reported. A newer accepted attempt of the
+    /// same unit replaces the older list, so a re-implemented task or repeated audit
+    /// clears items it no longer reports.
+    pub fn open_deferred_evidence(&self) -> Vec<serde_json::Value> {
+        let mut latest = BTreeMap::<(&str, &str, &str), usize>::new();
+        for (index, attempt) in self.attempts.iter().enumerate() {
+            let done = match attempt.kind.as_str() {
+                "implement" => attempt.status == "integrated",
+                "audit" => attempt.status == "accepted",
+                _ => false,
+            };
+            if done {
+                latest.insert((&attempt.kind, &attempt.phase_id, &attempt.task_id), index);
+            }
+        }
+        latest
+            .values()
+            .flat_map(|&index| {
+                let attempt = &self.attempts[index];
+                attempt.deferred_evidence.iter().map(move |item| {
+                    let mut value = serde_json::json!({
+                        "attempt_id": attempt.id,
+                        "kind_of_work": attempt.kind,
+                        "phase_id": attempt.phase_id,
+                        "task_id": attempt.task_id,
+                        "kind": item.kind,
+                        "description": item.description,
+                        "reason": item.reason,
+                    });
+                    if let Some(requirement) = &item.requirement {
+                        value["requirement"] = serde_json::json!(requirement);
+                    }
+                    value
+                })
+            })
+            .collect()
     }
     pub fn has_outstanding_host_work(&self) -> bool {
         // Index the latest success per unit once instead of rescanning per attempt.

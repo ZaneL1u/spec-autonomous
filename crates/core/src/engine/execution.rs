@@ -801,6 +801,7 @@ impl Coordinator<'_> {
                 usage: None,
                 patch_hash: None,
                 worktree_state: None,
+                deferred_evidence: vec![],
             });
             self.run.stage = format!("hook_{event}");
             self.save("hook_started")?;

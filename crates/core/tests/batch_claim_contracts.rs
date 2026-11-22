@@ -145,6 +145,7 @@ fn fixture() -> (tempfile::TempDir, Value) {
         }),
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     };
     let wave = api::invoke(root.path(), "apply-result", &json!({"token":request["token"], "host":{"host_id":"test-host", "session_id":"planner", "fresh_context":true}, "result":result, "view":"full"})).unwrap();
     assert_eq!(wave["work"].as_array().unwrap().len(), 2, "{wave}");

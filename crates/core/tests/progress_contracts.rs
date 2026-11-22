@@ -107,6 +107,7 @@ impl Fixture {
             usage: None,
             patch_hash: None,
             worktree_state: None,
+            deferred_evidence: vec![],
         }
     }
 
