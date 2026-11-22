@@ -53,10 +53,16 @@ Skills 是给宿主 Agent 看的操作说明。它们不包含另一套执行引
 恢复已有 run：
 
 - 先读 `next` 和 `progress`；
-- 用原 run ID 调用 `prepare`；
+- 用原 run ID 调用 `prepare`（CLI 为 `prepare --run-id <id>`，不再带 `--change` / `--feature`）；
 - reconcile 回执文件、Git intent 和账本；
 - 保留原 provider、范围、已验收工作和历史证据；
 - 避免接管仍 claimed / stale 的宿主会话。
+
+`autonomous`、`auto` 与 `resume` 对几类停止原因给出同样的处理：
+
+- `verification_environment_unavailable`：计划保留，修好环境（安装可执行文件、建目录或改正 `runner.environment` / 验证配置）后 `prepare --run-id <id>` 只重跑预检，不重新规划；改过配置时带 `reload_config`。
+- `worker_prepare_failed`：工作包没有签发，修好 `[hooks.worker_prepare]` 或其依赖后 `prepare --run-id <id>`（改过配置时带 `reload_config`）。
+- `warnings[]` 中以 `config_drift:` 开头的条目：run 仍使用启动时冻结的配置，只有用户希望应用新配置时才在下一次 `prepare --run-id <id>` 带 `reload_config: true`。
 
 旧 alpha.1 run 只读，不会重新激活历史 runner。
 

@@ -515,3 +515,29 @@ fn doctor_warns_about_submodules_until_workers_get_them() {
         .is_none()
     );
 }
+
+#[test]
+fn skills_name_run_id_resumes_and_environment_blockers() {
+    for name in ["autonomous", "auto", "resume"] {
+        let body = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/cli/skills")
+                .join(name)
+                .join("SKILL.md"),
+        )
+        .unwrap();
+        assert!(!body.contains("same `run_id`"), "{name}");
+        assert!(!body.contains("same run_id"), "{name}");
+        for expected in [
+            "prepare --run-id <id>",
+            "--change` / `--feature",
+            "verification_environment_unavailable",
+            "nothing is replanned",
+            "worker_prepare_failed",
+            "config_drift:",
+            "reload_config: true",
+        ] {
+            assert!(body.contains(expected), "{name} must mention {expected}");
+        }
+    }
+}
