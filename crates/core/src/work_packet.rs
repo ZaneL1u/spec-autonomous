@@ -211,6 +211,11 @@ fn summary(input: &WorkerInput) -> String {
                     "task.verification: {}",
                     listed(&checks, "project-level checks only")
                 ));
+                if task.verify_only {
+                    lines.push(
+                        "task.verify_only: true — the coordinator's run of these checks failed on the integrated tree; failure holds the output excerpt".into(),
+                    );
+                }
             }
             if let Some(snapshot) = snapshot {
                 lines.push(format!(
@@ -350,6 +355,9 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     let task = object(
         json!({"id":string,"description":string,"source_ids":strings,"depends_on":strings,"reads":strings,"writes":strings,"verification":checks}),
     );
+    let mut task = task;
+    // Optional, so plans written before verify-only tasks stay valid.
+    task["properties"]["verify_only"] = json!({"type":"boolean","description":"True for a task that only runs its verification checks and changes no files (writes must be empty). The coordinator runs the checks itself and issues an implement packet only when they fail."});
     let plan = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"phase_id":string,"source_hash":string,"tasks":{"type":"array","items":{"$ref":"#/$defs/task"}},"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]}}),
     );

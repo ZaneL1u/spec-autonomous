@@ -123,6 +123,7 @@ fn task(id: &str, source: &str, writes: &[&str], depends: &[&str], check: Check)
         reads: vec![],
         writes: writes.iter().map(|w| w.to_string()).collect(),
         verification: vec![check],
+        verify_only: false,
     }
 }
 fn saved(root: &Path, id: &str) -> Run {

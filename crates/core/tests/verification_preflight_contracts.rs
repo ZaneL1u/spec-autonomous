@@ -170,6 +170,7 @@ fn plans_defer_dependency_outputs_but_not_unrelated_task_outputs() {
         reads: vec![],
         writes: vec!["count.test.mjs".into()],
         verification: vec![],
+        verify_only: false,
     };
     let verify = Task {
         id: "verify".into(),
@@ -179,6 +180,7 @@ fn plans_defer_dependency_outputs_but_not_unrelated_task_outputs() {
         reads: vec!["count.test.mjs".into()],
         writes: vec![],
         verification: vec![check(&node, &["--test", "count.test.mjs"], ".")],
+        verify_only: false,
     };
     let mut plan = Plan {
         schema_version: 1,

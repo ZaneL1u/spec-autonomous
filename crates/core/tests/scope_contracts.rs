@@ -135,6 +135,7 @@ fn task(id: &str, source: &str, write: &str, check: Check) -> Task {
         reads: vec![write.into()],
         writes: vec![write.into()],
         verification: vec![check],
+        verify_only: false,
     }
 }
 fn saved(root: &Path, id: &str) -> Run {
@@ -626,6 +627,186 @@ fn a_check_whose_owner_declared_no_reads_always_runs_again() {
         counts(&counter)[..3],
         ["combined:value", "combined:other", "combined:value"],
         "without declared reads, value's check is not proven independent of other's change"
+    );
+}
+
+/// A feature whose second native task only runs checks, planned as a verify-only task
+/// depending on `value`.
+fn verify_only_run(root: &Path, check: Check) -> (String, Value) {
+    put(
+        root,
+        "specs/feature/tasks.md",
+        "## Implementation\n- [ ] T001 Write 42 in src/value.txt\n- [ ] T002 Run the following checks in order\n",
+    );
+    git::commit(root, "verify-only native task").unwrap();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let planning = &first["work"][0];
+    let input = packet(root, planning);
+    let schema: Value = serde_json::from_slice(
+        &fs::read(planning["result_schema_path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        schema["$defs"]["task"]["properties"]["verify_only"]["type"],
+        "boolean"
+    );
+    assert!(
+        input.instruction.contains("verify_only: true"),
+        "{}",
+        input.instruction
+    );
+    let snapshot = input.snapshot.clone().unwrap();
+    let mut verify = Task {
+        id: "verify".into(),
+        description: "run the checks".into(),
+        source_ids: vec![snapshot.tasks[1].id.clone()],
+        depends_on: vec!["value".into()],
+        reads: vec!["src/value.txt".into()],
+        writes: vec!["src/value.txt".into()],
+        verification: vec![check],
+        verify_only: true,
+    };
+    let plan = |verify: &Task| Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash.clone(),
+        tasks: vec![
+            task(
+                "value",
+                &snapshot.tasks[0].id,
+                "src/value.txt",
+                counted("value", VALUE),
+            ),
+            verify.clone(),
+        ],
+        milestone: input.milestone.clone(),
+    };
+    // A verify-only task must not declare writes.
+    let mut result = receipt(&input);
+    result.plan = Some(plan(&verify));
+    let rejected = submit(root, planning, result);
+    assert_eq!(rejected["status"], "needs_input", "{rejected}");
+    assert!(
+        rejected["blocker"]
+            .as_str()
+            .unwrap()
+            .contains("verify_only task verify must have empty writes"),
+        "{rejected}"
+    );
+    let resumed = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full"}),
+    )
+    .unwrap();
+    let planning = find(&resumed, "plan-tasks", None).clone();
+    let input = packet(root, &planning);
+    verify.writes.clear();
+    let mut result = receipt(&input);
+    result.plan = Some(plan(&verify));
+    let wave = submit(root, &planning, result);
+    let value = find(&wave, "implement", Some("value")).clone();
+    put(
+        Path::new(value["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    (run_id, submit(root, &value, receipt(&packet(root, &value))))
+}
+
+#[test]
+fn a_passing_verify_only_task_is_accepted_without_a_worker() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("checks.log");
+    let root = fixture(&counter, |_| {});
+    let root = root.path();
+    let (run_id, after) = verify_only_run(root, counted("verify", VALUE));
+    find(&after, "audit", None);
+    let run = saved(root, &run_id);
+    assert!(run.completed_tasks.contains(&Run::key("P001", "verify")));
+    assert!(
+        !run.attempts
+            .iter()
+            .any(|a| a.kind == "implement" && a.task_id == "verify"),
+        "no worker for a passing verify-only task"
+    );
+    let attempt = run
+        .attempts
+        .iter()
+        .find(|a| a.kind == "verify")
+        .expect("coordinator verification attempt");
+    assert_eq!(attempt.status, "integrated");
+    assert!(counts(&counter).contains(&"verify-only:verify".to_string()));
+    let tasks = git::command(
+        Path::new(&run.integration),
+        &["show", "HEAD:specs/feature/tasks.md"],
+        None,
+    )
+    .unwrap();
+    assert_eq!(tasks.matches("[x]").count(), 2, "{tasks}");
+    assert!(
+        git::command(
+            Path::new(&run.integration),
+            &["log", "-1", "--format=%s"],
+            None
+        )
+        .unwrap()
+        .contains("sa: accept verify (verify-only)")
+    );
+}
+
+#[test]
+fn a_failing_verify_only_task_issues_a_repair_with_the_failure_output() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("checks.log");
+    let root = fixture(&counter, |_| {});
+    let root = root.path();
+    let check = counted(
+        "verify",
+        "if(!require('fs').existsSync('src/fixed.txt')){console.error('fixed marker is missing');process.exit(4)}",
+    );
+    let (run_id, after) = verify_only_run(root, check);
+    let repair = find(&after, "implement", Some("verify")).clone();
+    let input = packet(root, &repair);
+    assert!(input.task.as_ref().unwrap().verify_only);
+    assert!(
+        input
+            .instruction
+            .contains("verify-only task's checks failed")
+    );
+    let failure = input.failure.clone().expect("failure carried");
+    assert!(
+        failure.starts_with("verification_failed: verify-only check"),
+        "{failure}"
+    );
+    assert!(failure.contains("fixed marker is missing"), "{failure}");
+    let run = saved(root, &run_id);
+    let attempt = run.attempts.iter().find(|a| a.kind == "verify").unwrap();
+    assert_eq!(attempt.status, "failed");
+    put(
+        Path::new(repair["project"].as_str().unwrap()),
+        "src/fixed.txt",
+        "fixed",
+    );
+    let accepted = submit(root, &repair, receipt(&input));
+    find(&accepted, "audit", None);
+    let run = saved(root, &run_id);
+    assert!(run.completed_tasks.contains(&Run::key("P001", "verify")));
+    let checks = counts(&counter);
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|c| c.ends_with(":verify"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["verify-only:verify", "combined:verify"],
+        "the coordinator ran the checks once, then the repair candidate ran them"
     );
 }
 

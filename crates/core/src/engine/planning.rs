@@ -25,7 +25,7 @@ fn environment_only(report: &crate::verification_preflight::Report) -> bool {
 }
 
 /// How declared scopes narrow verification; appended to the planning instruction.
-pub(super) const PLAN_SCOPE_GUIDANCE: &str = "Declare reads for every task: the files its code and checks depend on beyond its writes (imported modules, fixtures, shared helpers). After a later change, a task's checks are re-run only when the changed files reach its writes or reads; a task with empty reads has its checks re-run after every change.";
+pub(super) const PLAN_SCOPE_GUIDANCE: &str = "Declare reads for every task: the files its code and checks depend on beyond its writes (imported modules, fixtures, shared helpers). After a later change, a task's checks are re-run only when the changed files reach its writes or reads; a task with empty reads has its checks re-run after every change. A native task that only runs checks (for example \"run the following checks in order\") and should change no files is one Task with verify_only: true, writes: [] and those commands as its verification; the coordinator runs them itself and issues a repair packet only if they fail.";
 
 impl Coordinator<'_> {
     /// The newest planning candidate for this batch that only the verification

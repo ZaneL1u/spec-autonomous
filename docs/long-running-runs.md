@@ -47,7 +47,7 @@ progress 的 resource_summary 给出工作树数量、状态分布和压力提�
 | --- | --- |
 | `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的 artifacts 报告/临时准备目录，与正在写入的进程日志分开 |
 | `SA_VERIFY_WAVE_ID` | 波次唯一 ID，可用于生成独立测试资源名称 |
-| `SA_VERIFY_STAGE` | worker、combined、phase 等真实执行阶段 |
+| `SA_VERIFY_STAGE` | worker、combined、phase、verify-only（协调器直接运行核对型任务）等真实执行阶段 |
 | `SA_VERIFY_REVISION` | 正在验证的源码提交 |
 | `SA_VERIFY_CHECKOUT` | 当前验证工作区 |
 

@@ -132,6 +132,7 @@ fn task(id: &str, source: &str, write: &str) -> Task {
                 cwd: ".".into(),
             }
         }],
+        verify_only: false,
     }
 }
 fn answer_plan(root: &Path, request: &Value) -> Value {

@@ -123,6 +123,7 @@ fn fixture() -> (tempfile::TempDir, Value) {
                 argv: vec!["git".into(), "status".into(), "--porcelain".into()],
                 cwd: ".".into(),
             }],
+            verify_only: false,
         })
         .collect();
     let result = WorkerResult {

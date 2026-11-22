@@ -80,6 +80,18 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 `verification_scope = "full"` 时每道门槛都执行全部检查（同树复用仍按 `verification_reuse`）。`verification_reuse = "none"` 或 `reuse_verification = false` 同时关闭两种复用。里程碑门槛由 `milestone_verification_scope` 单独控制，默认 `full`：交付前在最终的集成树上把被沿用过的任务检查实际跑一遍（本树已执行过的仍复用）；设为 `affected` 时按同样规则沿用。
 
+### 核对型任务（verify_only）
+
+计划任务可带可选的 `verify_only: true`，表示该任务只运行检查、不改文件（例如 tasks.md 里“依次运行以下检查”）。规划指令会说明用法；校验要求 `writes` 为空且任务自己的 `verification` 非空，否则以 `invalid_plan: verify_only task ... must have empty writes and its own verification checks` 拒绝该规划。
+
+依赖就绪后，协调器不签发 worker，而是在集成检出上直接运行该任务的检查（`task_checks`：`verification` + `task_verification` + 任务自己的检查；`SA_VERIFY_STAGE=verify-only`），并记一个 `kind: "verify"` 的 attempt：
+
+- **通过**：经一个只勾选原生任务的集成 intent 接受该任务（提交 `sa: accept <task> (verify-only)`），attempt 记为 `integrated`。没有 implement 包，也就没有 worker 自己再跑一遍。
+- **失败**（`verification_failed`）：attempt 记为 `failed`，`error` 是失败信息加失败检查的 argv 与 stdout / stderr 末尾（各至多 40 行、3000 字符）。下一步签发该任务的 implement 修复包，`failure` 即这段内容，instruction 要求以最小改动修复原因；回执照常经过 combined 验证与集成。修复包的 `writes` 为空，即开放范围、与其他任务串行。
+- **被取消**：attempt 记为 `superseded`，不计失败，续跑时重新运行检查。
+
+`verify` attempt 不计入 `max_attempts`，也不进入审计的 `execution_evidence.attempts`（其检查在 `verification` 中）。
+
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。

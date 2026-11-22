@@ -150,6 +150,7 @@ fn plan_with(input: &WorkerInput, checks: Vec<Check>, writes: Vec<String>) -> Wo
             reads: vec![],
             writes,
             verification: checks,
+            verify_only: false,
         }],
         milestone: input.milestone.clone(),
     });
@@ -304,6 +305,7 @@ fn preflight_defers_scripts_and_executables_the_task_will_write() {
                 argv: argv.into_iter().map(String::from).collect(),
                 cwd: ".".into(),
             }],
+            verify_only: false,
         }],
         milestone: None,
     };

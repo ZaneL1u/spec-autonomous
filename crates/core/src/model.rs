@@ -127,6 +127,10 @@ pub struct Task {
     pub writes: Vec<String>,
     #[serde(default)]
     pub verification: Vec<Check>,
+    /// The task only runs its checks and changes no files (empty writes). The
+    /// coordinator runs the checks itself; a worker is issued only to repair a failure.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub verify_only: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {

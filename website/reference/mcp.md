@@ -81,6 +81,8 @@ npm 启动层还会加入 `sa_providers`，用于查询或安装 OpenSpec / Spec
 | `requested_writes` | implement 回执，`status: "blocked"` 时 | 申请追加写集（至多 10 个项目相对路径） |
 | `files` | 审计条目 `audit[]` | 该结论依赖的实现与测试文件（至多 50 个）。之后再次审计（含里程碑审计）时，这些文件与相关写集都没变的已通过条目直接沿用，不再进审计包；不给则每次重审 |
 
+| `verify_only` | plan-tasks 回执的计划任务 `plan.tasks[]` | 只运行检查、不改文件的任务（`writes` 必须为空，`verification` 非空）。协调器直接运行它的检查，通过即接受；失败才签发带失败输出的 implement 修复包 |
+
 审计条目里的 `carried_over` 只由协调器写入（表示沿用自哪次审计），回执中出现会被拒收。规则详见[宿主协议](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/host-protocol.md)。
 
 ## Resources

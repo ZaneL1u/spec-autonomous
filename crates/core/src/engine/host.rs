@@ -686,7 +686,12 @@ impl Coordinator<'_> {
             .iter()
             .rev()
             .find(|a| {
-                a.kind == kind && a.task_id == task && a.phase_id == phase && a.error.is_some()
+                // A failed coordinator run of a verify-only task's checks is what its
+                // repair implement packet fixes.
+                (a.kind == kind || (kind == "implement" && a.kind == "verify"))
+                    && a.task_id == task
+                    && a.phase_id == phase
+                    && a.error.is_some()
             })
             .and_then(|a| a.error.clone());
         let mut input = self.input(index, instruction, snapshot, task_spec, failure);
