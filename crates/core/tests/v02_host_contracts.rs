@@ -371,3 +371,124 @@ fn planning_instruction_documents_check_env() {
         input.instruction
     );
 }
+
+// ---------------------------------------------------------------------------------
+// #8 glob and directory write sets
+
+#[test]
+fn planning_guidance_allows_glob_and_directory_writes() {
+    let guidance = spec_autonomous_core::verification_preflight::planning_guidance_addendum();
+    assert!(guidance.contains("server/*/migrations/*.py"), "{guidance}");
+    assert!(guidance.contains("tests/**"), "{guidance}");
+    assert!(guidance.contains("directory prefixes"), "{guidance}");
+}
+
+#[test]
+fn glob_writes_cover_their_matches_and_conflict_conservatively() {
+    use spec_autonomous_core::plan;
+    let writes = vec!["server/*/migrations/*.py".to_owned(), "tests/**".to_owned()];
+    assert!(plan::allowed(
+        "server/billing/migrations/0043_auto.py",
+        &writes
+    ));
+    assert!(plan::allowed("tests/services/test_index.py", &writes));
+    assert!(!plan::allowed("server/billing/models.py", &writes));
+    assert!(!plan::allowed("web/tests/x.ts", &writes));
+    // Directory entries cover everything below them.
+    assert!(plan::allowed("fixtures/a/b.json", &["fixtures".into()]));
+    // Overlap is judged on the literal prefix before the first wildcard: conservative.
+    assert!(plan::overlaps(
+        "server/*/migrations/*.py",
+        "server/billing/models.py"
+    ));
+    assert!(plan::overlaps("tests/**", "tests/unit/a.py"));
+    assert!(!plan::overlaps(
+        "server/*/migrations/*.py",
+        "web/src/app.ts"
+    ));
+    assert!(plan::overlaps("**/*.py", "web/src/app.ts"));
+    let with = |id: &str, writes: &[&str]| Task {
+        writes: writes.iter().map(|w| (*w).to_owned()).collect(),
+        ..task(id, "T001", "")
+    };
+    let plan_of = |tasks: Vec<Task>| Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: "h".into(),
+        tasks,
+        milestone: None,
+    };
+    let disjoint = plan_of(vec![
+        with("a", &["server/*/migrations/*.py"]),
+        with("b", &["web/**"]),
+    ]);
+    assert_eq!(plan::ready(&disjoint, &[], &[], 4).len(), 2);
+    let overlapping = plan_of(vec![
+        with("a", &["server/*/migrations/*.py"]),
+        with("b", &["server/billing/models.py"]),
+        with("c", &["**/*.md"]),
+    ]);
+    let ready: Vec<_> = plan::ready(&overlapping, &[], &[], 4)
+        .iter()
+        .map(|t| t.id.clone())
+        .collect();
+    assert_eq!(ready, ["a"], "overlapping patterns serialize");
+    // A glob never grants edits to native context; an exact entry still does.
+    let context = ["specs/feature/spec.md"];
+    assert!(plan::worker_write_forbidden(
+        "specs/feature/spec.md",
+        &["specs/**".into()],
+        &context
+    ));
+    assert!(plan::worker_write_forbidden(
+        "specs/feature/spec.md",
+        &["specs/feature".into()],
+        &context
+    ));
+    assert!(!plan::worker_write_forbidden(
+        "specs/feature/spec.md",
+        &["specs/feature/spec.md".into()],
+        &context
+    ));
+    assert!(!plan::worker_write_forbidden(
+        "specs/feature/notes.txt",
+        &["specs/**".into()],
+        &context
+    ));
+}
+
+#[test]
+fn a_planned_glob_write_is_accepted_and_serializes_overlapping_tasks() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (run_id, wave) = start_with(root, |tasks| {
+        tasks[0].writes = vec!["src/*.txt".into()];
+    });
+    let issued: Vec<_> = wave["work"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["kind"] == "implement")
+        .map(|w| w["task_id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        issued,
+        ["value"],
+        "src/*.txt overlaps src/other.txt: {wave}"
+    );
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    let project = Path::new(request["project"].as_str().unwrap());
+    fs::write(project.join("src/extra.txt"), "covered by the glob").unwrap();
+    let next = submit(root, &request, receipt(&packet(root, &request)));
+    let run = saved(root, &run_id);
+    assert!(
+        run.completed_tasks.contains(&Run::key("P001", "value")),
+        "{:?}",
+        run.attempts
+            .iter()
+            .map(|a| (&a.task_id, &a.status, &a.error))
+            .collect::<Vec<_>>()
+    );
+    work(&next, "other");
+}

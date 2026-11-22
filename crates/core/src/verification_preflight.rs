@@ -87,7 +87,7 @@ impl Report {
 /// Guidance appended to issued planning instructions after the 0.1 releases. It is kept
 /// out of the request key so planning requests issued before an upgrade still match.
 pub fn planning_guidance_addendum() -> &'static str {
-    "A check may set plain, non-secret environment variables in env, an object of NAME to string value, for example {\"argv\":[\"python3\",\"-m\",\"pytest\",\"tests\"],\"cwd\":\".\",\"env\":{\"PYTHONDONTWRITEBYTECODE\":\"1\"}}; PATH, HOME, shell, SA_*, GIT_*, LD_*/DYLD_* and credential-like names are refused, and secrets belong in project [environment], never in a plan."
+    "A check may set plain, non-secret environment variables in env, an object of NAME to string value, for example {\"argv\":[\"python3\",\"-m\",\"pytest\",\"tests\"],\"cwd\":\".\",\"env\":{\"PYTHONDONTWRITEBYTECODE\":\"1\"}}; PATH, HOME, shell, SA_*, GIT_*, LD_*/DYLD_* and credential-like names are refused, and secrets belong in project [environment], never in a plan. Task writes and reads may be exact files, directory prefixes (tests/fixtures covers everything below it) or globs such as server/*/migrations/*.py or tests/** when names are unknown before implementation (new migrations, affected existing tests); keep each pattern as narrow as the task allows, because overlapping patterns serialize tasks and a pattern without a literal leading directory (**/*.py) conflicts with every other task. A glob never grants edits to native spec context files; name such a file exactly if the task must change it."
 }
 
 pub fn planning_guidance() -> &'static str {
