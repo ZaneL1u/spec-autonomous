@@ -65,6 +65,10 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 只有需要重审的条目进入审计包：`snapshot.metadata.acceptance` 只列这些 id，`snapshot.metadata.carried_over` 列出沿用的 id 及来源，`instruction` 写明“只需覆盖这些 id”。一批条目全部可沿用时不签发审计包（事件 `audit_carried_over`）。没有 `files` 的条目（包括升级前的回执）每次都重审，所以旧 run 与升级前已签发的审计包行为不变；请求键仍按原审计指令计算。
 
+### 里程碑审计沿用 phase 结论
+
+里程碑审计的验收是各 phase 验收加上里程碑独有项（如 `milestone/<id>/goal`）。对每一条，先找里程碑范围内的上次结论；没有时，若该 id 只属于一个 phase，就取那个 phase 审计的结论，按上一节同样的条件判断（同树也可以，原生文档只看该 phase 自己的文档，其他 phase 的文档改动不影响它）。可沿用的条目带 `carried_over.scope = "phase"`，审计包只含里程碑独有项和依赖已变的条目。只有一个 phase 的里程碑因此只审 `goal`。被多个 phase 共享的 id（例如 Spec Kit 的 constitution）在里程碑审计里总是重审。
+
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。

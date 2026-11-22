@@ -318,6 +318,13 @@ impl Coordinator<'_> {
             .map(|f| f.path.clone())
             .collect();
         let mut diffs = BTreeMap::new();
+        // A milestone audit may stand on the phase audits: map each acceptance id to
+        // the phases whose own audit covered it, with those phases' native documents.
+        let phases = if scope == "milestone" {
+            Some(self.phase_acceptance()?)
+        } else {
+            None
+        };
         for (batch, refs) in required.chunks(32).enumerate() {
             // An audit of the same acceptance ids against the same integration tree has
             // the same inputs; a fully passed one is reused instead of asked again.
@@ -344,8 +351,16 @@ impl Coordinator<'_> {
             let mut carried = vec![];
             let mut pending = vec![];
             for reference in refs {
-                match self.carry_audit(phase, scope, reference, &tree, &head, &context, &mut diffs)
-                {
+                match self.carry_audit(
+                    phase,
+                    scope,
+                    reference,
+                    &tree,
+                    &head,
+                    &context,
+                    phases.as_ref(),
+                    &mut diffs,
+                ) {
                     Some(item) => carried.push(item),
                     None => pending.push(reference.clone()),
                 }
@@ -477,10 +492,11 @@ impl Coordinator<'_> {
         }
     }
     /// The earlier passed conclusion for this acceptance reference when it may stand:
-    /// recorded against another tree of the same phase and scope, for the same
-    /// reference text, naming the files it rests on, and with no change since then to
-    /// those files, the write sets of the tasks that wrote them, the requirement's
-    /// native source, other native documents, global inputs or undeclared files.
+    /// recorded against another tree of the same phase and scope (or, for a milestone
+    /// audit, by the audit of the one phase that owns the id), for the same reference
+    /// text, naming the files it rests on, and with no change since then to those
+    /// files, the write sets of the tasks that wrote them, the requirement's native
+    /// source, its native documents, global inputs or undeclared files.
     #[allow(clippy::too_many_arguments)]
     fn carry_audit(
         &self,
@@ -490,16 +506,40 @@ impl Coordinator<'_> {
         tree: &str,
         head: &str,
         context: &[String],
+        phases: Option<&PhaseAcceptance>,
         diffs: &mut BTreeMap<String, Option<Vec<String>>>,
     ) -> Option<AuditItem> {
         let id = reference["id"].as_str()?;
         let host = self.run.host.as_ref()?;
         // Conclusions of this very tree belong to the audit in progress; carrying them
         // would change the packet that is being answered.
-        let record = host
+        let own = host
             .audit_conclusions
             .get(&audit_conclusion_key(&phase.id, scope, id))
-            .filter(|c| c.tree != tree)?;
+            .filter(|c| c.tree != tree);
+        let (record, context, neutral) = match (own, phases) {
+            (Some(record), _) => (record, context.to_vec(), vec![]),
+            // A milestone item that one phase audit already concluded keeps that
+            // conclusion; an id shared by several phases (for example the
+            // constitution) is audited again for the milestone.
+            (None, Some(phases)) => {
+                let [owner] = phases.owners.get(id)?.as_slice() else {
+                    return None;
+                };
+                let record = host
+                    .audit_conclusions
+                    .get(&audit_conclusion_key(owner, "phase", id))?;
+                let own_docs = phases.documents.get(owner)?.clone();
+                // Other phases' native documents do not bear on this requirement.
+                let neutral = context
+                    .iter()
+                    .filter(|c| !own_docs.contains(c))
+                    .cloned()
+                    .collect();
+                (record, own_docs, neutral)
+            }
+            (None, None) => return None,
+        };
         if !record.passed
             || record.files.is_empty()
             || record.acceptance_hash != acceptance_hash(reference)
@@ -517,7 +557,10 @@ impl Coordinator<'_> {
                     head,
                 )
             })
-            .clone()?;
+            .clone()?
+            .into_iter()
+            .filter(|path| !neutral.contains(path))
+            .collect::<Vec<_>>();
         let mut related = record.files.clone();
         related.extend(reference["source_path"].as_str().map(str::to_string));
         for task in self.run.plans.values().flat_map(|p| &p.tasks) {
@@ -537,7 +580,7 @@ impl Coordinator<'_> {
             head,
             &changed,
             &related,
-            context,
+            &context,
         )
         .is_some()
         {
@@ -561,6 +604,40 @@ impl Coordinator<'_> {
         })
     }
 
+    /// Acceptance ids per phase and each phase's native documents, as the phase audits
+    /// saw them.
+    fn phase_acceptance(&self) -> Result<PhaseAcceptance> {
+        let mut out = PhaseAcceptance::default();
+        for phase in &self.run.milestone.phases {
+            let snapshot = provider::inspect(
+                &self.project(),
+                self.run.milestone.framework,
+                &phase.source.selector,
+                &self.run.config,
+            )?;
+            for reference in snapshot.metadata["acceptance"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                if let Some(id) = reference["id"].as_str() {
+                    out.owners
+                        .entry(id.to_string())
+                        .or_default()
+                        .push(phase.id.clone());
+                }
+            }
+            out.documents.insert(
+                phase.id.clone(),
+                snapshot
+                    .context_files
+                    .iter()
+                    .map(|f| f.path.clone())
+                    .collect(),
+            );
+        }
+        Ok(out)
+    }
     pub(super) fn milestone_snapshot(&self) -> Result<Snapshot> {
         let mut snapshots = vec![];
         for phase in &self.run.milestone.phases {
@@ -1093,6 +1170,14 @@ impl Coordinator<'_> {
 /// The audit instruction issued before incremental audits; request keys still hash it.
 const AUDIT_RULES: &str = "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.";
 const AUDIT_FILES: &str = "Also return files on each item: the project-relative implementation and test files the conclusion rests on (at most 50). A later audit carries a passed item over only while none of those files, the write sets of the tasks that wrote them, the requirement's native source and global inputs changed; an item without files is audited again every time.";
+
+#[derive(Default)]
+struct PhaseAcceptance {
+    /// Acceptance id -> phases whose own audit covers it.
+    owners: BTreeMap<String, Vec<String>>,
+    /// Phase id -> native document paths of that phase.
+    documents: BTreeMap<String, Vec<String>>,
+}
 
 fn audit_scope(snapshot: &Snapshot) -> &'static str {
     if snapshot.metadata["scope"] == "milestone" {

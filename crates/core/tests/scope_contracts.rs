@@ -400,6 +400,52 @@ fn an_item_without_files_or_with_changed_files_is_audited_again() {
 }
 
 #[test]
+fn a_single_phase_milestone_audits_only_its_own_items() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("checks.log");
+    let root = fixture(&counter, |_| {});
+    let root = root.path();
+    let (run_id, audited) = through_first_audit(root);
+    let audit = find(&audited, "audit", None).clone();
+    let milestone = answer_audit(root, &audit, |id| match id {
+        FR1 => (true, vec!["src/value.txt"]),
+        FR2 => (true, vec!["src/other.txt"]),
+        _ => (true, vec!["src/value.txt", "src/other.txt"]),
+    });
+    let request = find(&milestone, "audit", None).clone();
+    assert!(
+        request["task_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("audit-milestone-"),
+        "{request}"
+    );
+    let input = packet(root, &request);
+    let ids = acceptance_ids(&input);
+    assert_eq!(ids.len(), 1, "{ids:?}");
+    assert!(ids[0].starts_with("milestone/") && ids[0].ends_with("/goal"));
+    let carried = input.snapshot.as_ref().unwrap().metadata["carried_over"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let carried_ids: Vec<&str> = carried.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(carried_ids, [CONSTITUTION, FR1, FR2]);
+    assert!(
+        carried.iter().all(
+            |c| c["from"]["scope"] == "phase" && c["from"]["attempt_id"] == audit["request_id"]
+        )
+    );
+    let done = answer_audit(root, &request, |_| (true, vec!["src/value.txt"]));
+    assert_eq!(done["status"], "completed", "{done}");
+    let run = saved(root, &run_id);
+    assert_eq!(
+        run.attempts.iter().filter(|a| a.kind == "audit").count(),
+        2,
+        "one phase audit and one milestone audit for the goal"
+    );
+}
+
+#[test]
 fn bookkeeping_is_only_plans_and_checkbox_or_append_changes_to_tasks_md() {
     use spec_autonomous_core::scope;
     let root = tempfile::tempdir().unwrap();
