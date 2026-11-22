@@ -214,6 +214,19 @@ pub struct AuditItem {
     pub evidence: String,
     pub passed: bool,
 }
+impl AuditItem {
+    /// Evidence starting with `extension:` (or `[extension]`) marks an implementation
+    /// that goes beyond what the specification enumerates without contradicting it.
+    /// Such an item is never a gap: it is passed and gets no repair task.
+    pub fn is_extension(&self) -> bool {
+        let text = self.evidence.trim_start().to_ascii_lowercase();
+        text.starts_with("extension:") || text.starts_with("[extension]")
+    }
+    /// A failed item that still needs repair.
+    pub fn is_gap(&self) -> bool {
+        !self.passed && !self.is_extension()
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerResult {
     pub schema_version: u32,

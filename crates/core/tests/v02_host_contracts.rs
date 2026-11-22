@@ -875,3 +875,100 @@ fn absolute_worktree_roots_are_per_repository_and_never_inside_the_checkout() {
     assert!(repo.in_worktree_roots(elsewhere.path().to_str().unwrap(), &path));
     assert!(!repo.in_worktree_roots("git", &path));
 }
+
+// ---------------------------------------------------------------------------------
+// #36 open-ended specifications: extensions are not gaps
+
+fn audit_item(requirement: &str, evidence: &str, passed: bool) -> AuditItem {
+    AuditItem {
+        requirement: requirement.into(),
+        evidence: evidence.into(),
+        passed,
+    }
+}
+
+#[test]
+fn extension_evidence_marks_an_item_that_is_never_a_gap() {
+    assert!(audit_item("a", "extension: also accepts modules/", true).is_extension());
+    assert!(audit_item("a", "  Extension: plugins/ too", false).is_extension());
+    assert!(audit_item("a", "[extension] services/", false).is_extension());
+    assert!(!audit_item("a", "missing apps/ prefix; extension later", false).is_extension());
+    assert!(audit_item("a", "missing apps/", false).is_gap());
+    assert!(!audit_item("a", "extension: services/", false).is_gap());
+    assert!(!audit_item("a", "ok", true).is_gap());
+}
+
+#[test]
+fn an_audit_failing_only_on_extensions_passes_and_mixed_gaps_omit_them() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (_, wave) = start(root);
+    let audited = finish_tasks(root, &wave);
+    let audit = find_kind(&audited, "audit").unwrap().clone();
+    let prompt = fs::read_to_string(audit["prompt_path"].as_str().unwrap()).unwrap();
+    assert!(prompt.contains("OPEN-ENDED SPECIFICATIONS"), "{prompt}");
+    assert!(
+        prompt.contains("start evidence with `extension:`"),
+        "{prompt}"
+    );
+    let input = packet(root, &audit);
+    let ids = acceptance_ids(&input);
+    assert!(ids.len() >= 2, "{ids:?}");
+    let mut result = receipt(&input);
+    result.audit = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| {
+            if i == 0 {
+                audit_item(
+                    id,
+                    "extension: also accepts services/ beyond the listed prefixes",
+                    false,
+                )
+            } else {
+                audit_item(id, "src/value.txt contains 42", true)
+            }
+        })
+        .collect();
+    let response = submit(root, &audit, result);
+    assert!(
+        find_kind(&response, "converge").is_none(),
+        "an extension never starts a repair: {response}"
+    );
+    assert_ne!(response["status"], "needs_input", "{response}");
+}
+
+#[test]
+fn converge_lists_real_gaps_and_leaves_extension_items_out() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (_, wave) = start(root);
+    let audited = finish_tasks(root, &wave);
+    let audit = find_kind(&audited, "audit").unwrap().clone();
+    let input = packet(root, &audit);
+    let ids = acceptance_ids(&input);
+    let mut result = receipt(&input);
+    result.audit = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| match i {
+            0 => audit_item(id, "FR-001 value is missing", false),
+            1 => audit_item(id, "extension: handles plugins/ as well", false),
+            _ => audit_item(id, "ok", true),
+        })
+        .collect();
+    let failed = submit(root, &audit, result);
+    let converge = find_kind(&failed, "converge")
+        .unwrap_or_else(|| panic!("{failed}"))
+        .clone();
+    let instruction = packet(root, &converge).instruction;
+    assert!(
+        instruction.contains(&format!(
+            "Gaps (1 failed; {} passed audit items omitted)",
+            ids.len() - 1
+        )),
+        "{instruction}"
+    );
+    assert!(instruction.contains("FR-001 value is missing"));
+    assert!(!instruction.contains("handles plugins/"), "{instruction}");
+}

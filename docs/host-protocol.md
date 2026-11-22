@@ -53,6 +53,12 @@
 - glob 或目录项不会放开原生规格上下文文件（`snapshot.context_files`）；任务确需改它们时必须逐字列出该文件。`.git/`、`.spec-autonomous/` 永远不可写。
 - 规划包指令末尾的附加说明给出上述写法，不进入请求键。
 
+## 开放措辞与合理扩展
+
+规格或设计里「如 / 例如 / 等 / such as」列出的往往是示例而不是穷举。审计包的 `prompt.md` 要求审计者：实现覆盖了验收条目要求的全部内容、又额外支持了规格只举例或未列出的情况且不与规格矛盾时，判 `passed: true` 并让 `evidence` 以 `extension:` 开头说明超出部分；只有与规格矛盾（包括条目明确禁止列表之外的情况）或缺少要求的内容时才判 `passed: false`。其余判定规则不变。
+
+协调器读取审计回执时，把 `passed: false` 但 `evidence` 以 `extension:`（或 `[extension]`，不区分大小写）开头的条目按通过处理；converge 包的 `Gaps` 只列真正的缺口，扩展条目不会生成修复任务。这段规则写在 `prompt.md` 而非 `instruction`，审计请求键不变。
+
 ## 待宿主补的真实环境证据
 
 implement 与 audit 的 WorkerResult 可以带可选的 `deferred_evidence: [{kind, description, reason, requirement?}]`（`kind` 取 `live` / `manual` / `external`，至多 20 条，`description` / `reason` 非空且各不超过 2048 字节；结果 schema 中仅这两类包有该字段，其他类型的包带它会被判 `worker_protocol_error`）。它表示 checkout 里无法产生、需要宿主在真实环境补的证据（部署、外部服务、设备、发布产物或人工查看）：

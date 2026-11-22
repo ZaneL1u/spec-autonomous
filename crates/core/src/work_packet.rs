@@ -80,6 +80,13 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
     } else {
         prompt
     };
+    let prompt = if input.kind == "audit" {
+        format!(
+            "{prompt}\n\nOPEN-ENDED SPECIFICATIONS: judge each acceptance item against what the specification requires, not against the literal length of an example list. When the implementation covers everything the item requires and additionally handles cases the specification or design only lists as examples (\"such as\", \"for example\", \"etc.\", \"等\"), or otherwise reasonably goes beyond an enumeration without contradicting it, set passed=true and start evidence with `extension:` followed by what goes beyond the text. Set passed=false only when the implementation contradicts the specification or something it requires is missing; an item that explicitly forbids anything outside its list is a contradiction, not an extension. Extension items never start repair work."
+        )
+    } else {
+        prompt
+    };
     let prompt = if ["implement", "audit"].contains(&input.kind.as_str()) {
         format!(
             "{prompt}\n\nDEFERRED EVIDENCE: if some required evidence can only come from a real environment (a deployment, external service, device, release artifact or a person looking), do not fake it and do not fail for it alone. Do everything verifiable in this checkout, keep status=candidate (audit items: passed=true when the rest holds) and list each missing proof in deferred_evidence as {{kind: live|manual|external, description, reason{}}}. The coordinator shows them to the host as follow-ups; they never count as failures.",
@@ -342,8 +349,18 @@ pub fn read_input(dir: &Path) -> Result<WorkerInput> {
     Ok(input)
 }
 pub fn read_result(dir: &Path) -> Result<WorkerResult> {
-    let result = read_receipt(dir)?;
-    validate_result(&read_input(dir)?, &result)?;
+    let mut result = read_receipt(dir)?;
+    let input = read_input(dir)?;
+    validate_result(&input, &result)?;
+    if input.kind == "audit" {
+        // An auditor that tags a reasonable extension but still says failed is read as
+        // passed: extensions never start a repair round.
+        for item in &mut result.audit {
+            if !item.passed && item.is_extension() {
+                item.passed = true;
+            }
+        }
+    }
     Ok(result)
 }
 /// The stored receipt as submitted, before a blocked or failed status becomes an error.

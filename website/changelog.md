@@ -8,6 +8,7 @@
 - 规划指令明确任务 `writes` / `reads` 可以用目录前缀和 glob（如 `server/*/migrations/*.py`、`tests/**`），并说明保守的冲突串行规则；glob 或目录项不再能放开原生规格上下文文件，需逐字列出。
 - implement 与 audit 的结果可以带 `deferred_evidence`（`live` / `manual` / `external`），表示要宿主在真实环境补的证据：它不算失败，协调器在 run 视图、`next`、`progress` 中列出，里程碑完成时以 `deferred_evidence_pending` 警告和待办列表交给宿主。
 - 新增 `[execution] worktree_root`（`git` / `sibling` / 绝对路径），可把交给 worker 的 worktree 放到 `.git/` 之外，避免跳过 `.git/` 的搜索工具和 IDE 索引找不到代码；默认值不变（仓库外目录的权限与宿主沙箱风险），doctor 以 `worktree_root_notice` 提示。已有 run 不迁移。
+- 审计不再把「规格只举例、实现多支持了几种」判失败：审计包要求把不矛盾的合理扩展判为通过并以 `extension:` 标注证据，协调器对这类条目不排修复轮，converge 也不为它们生成修复任务；与规格矛盾或缺失仍判失败。
 
 ## 0.1.0-alpha.16
 
