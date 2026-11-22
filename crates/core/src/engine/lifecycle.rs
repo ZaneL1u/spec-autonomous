@@ -1,6 +1,9 @@
 //! Native planning and milestone/phase verification.
 use super::*;
 
+/// Prefix of a check cancelled by an interrupt, pause, cancel or the run deadline.
+pub(super) const VERIFICATION_CANCELLED: &str = "paused: verification_cancelled";
+
 impl Coordinator<'_> {
     pub(super) fn drive(&mut self, create_roadmap: bool) -> Result<()> {
         self.run.status = "running".into();
@@ -847,6 +850,17 @@ impl Coordinator<'_> {
             if failure == "source_changed" {
                 bail!(
                     "verification_mutated_tree: diagnostics {}",
+                    details["manifest"]
+                );
+            }
+            // An interrupted, paused or out-of-budget run cancels its checks; that says
+            // nothing about the candidate, so it is not a verification failure.
+            if failure == "cancelled" {
+                bail!(
+                    "{VERIFICATION_CANCELLED}: {label} {} was cancelled (exit {}) before it finished; the candidate is kept and `spec-autonomous prepare --run-id {}` verifies it again; diagnostics {}",
+                    if preparation { "preparation" } else { "check" },
+                    details["exit_code"],
+                    self.run.id,
                     details["manifest"]
                 );
             }

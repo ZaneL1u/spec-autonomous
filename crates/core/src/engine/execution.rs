@@ -133,6 +133,16 @@ impl Coordinator<'_> {
                 result.and_then(|_| self.integrate_task(phase, &plan, &snapshot, task, index));
             if let Err(error) = accepted {
                 let message = format!("{error:#}");
+                if message.starts_with(lifecycle::VERIFICATION_CANCELLED) {
+                    // The receipt stays submitted, so the next resume verifies the same
+                    // candidate again; no failure is counted and nothing is re-implemented.
+                    let a = &mut self.run.attempts[index];
+                    a.status = "submitted".into();
+                    a.finished_at = None;
+                    a.error = None;
+                    self.save("verification_cancelled")?;
+                    return Err(error);
+                }
                 self.run.attempts[index].status = "failed".into();
                 self.run.attempts[index].error = Some(message.clone());
                 self.save("task_retry")?;

@@ -865,3 +865,93 @@ fn converge_instruction_lists_only_failed_audit_items() {
     assert!(!instruction.contains("passed evidence"), "{instruction}");
     assert!(!instruction.contains(&format!("\"{}\"", ids[1])));
 }
+
+#[test]
+fn a_cancelled_integration_check_keeps_the_candidate_and_counts_no_failure() {
+    let scratch = tempfile::tempdir().unwrap();
+    let slow = scratch.path().join("slow");
+    let started = scratch.path().join("started");
+    fs::write(&slow, "").unwrap();
+    let script = format!(
+        "import assert from 'node:assert/strict';import {{readFileSync,existsSync,writeFileSync}} from 'node:fs';\
+         if(existsSync({slow:?})){{writeFileSync({started:?},'1');await new Promise(r=>setTimeout(r,60000));}}\
+         assert.equal(readFileSync('src/value.txt','utf8'),'42');\n",
+        slow = slow.to_str().unwrap(),
+        started = started.to_str().unwrap(),
+    );
+    let root = fixture_with(|_| {}, |root| put(root, "tests/slow-value.mjs", &script));
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let planning = &first["work"][0];
+    let input = packet(root, planning);
+    let snapshot = input.snapshot.clone().unwrap();
+    let mut value = task("value", &snapshot.tasks[0].id, "src/value.txt");
+    value.verification = vec![Check {
+        argv: vec!["node".into(), "tests/slow-value.mjs".into()],
+        cwd: ".".into(),
+    }];
+    let mut result = receipt(&input);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![value, task("other", &snapshot.tasks[1].id, "src/other.txt")],
+        milestone: input.milestone.clone(),
+    });
+    let wave = submit(root, planning, result);
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    let receipt = receipt(&packet(root, &request));
+
+    // The host process is interrupted while apply-result runs the integration check.
+    let stopped = std::thread::scope(|scope| {
+        let apply = scope.spawn(|| submit(root, &request, receipt.clone()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !started.exists() {
+            assert!(std::time::Instant::now() < deadline, "check never started");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        api::invoke(root, "run.pause", &json!({"run_id":run_id})).unwrap();
+        apply.join().unwrap()
+    });
+    assert_eq!(stopped["status"], "paused", "{stopped}");
+    let run = saved(root, &run_id);
+    let cancelled = run.evidence.last().unwrap().details.clone().unwrap();
+    assert_eq!(cancelled["failure_kind"], "cancelled", "{cancelled}");
+    let implement: Vec<_> = run
+        .attempts
+        .iter()
+        .filter(|a| a.kind == "implement" && a.task_id == "value")
+        .collect();
+    assert_eq!(implement.len(), 1);
+    assert_eq!(implement[0].status, "submitted", "{:?}", implement[0]);
+    assert!(implement[0].error.is_none());
+
+    // Resuming verifies the same receipt again instead of issuing new implement work.
+    fs::remove_file(&slow).unwrap();
+    let resumed = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full"}),
+    )
+    .unwrap();
+    let run = saved(root, &run_id);
+    assert!(
+        run.completed_tasks.contains(&Run::key("P001", "value")),
+        "{resumed}"
+    );
+    let implement: Vec<_> = run
+        .attempts
+        .iter()
+        .filter(|a| a.kind == "implement" && a.task_id == "value")
+        .collect();
+    assert_eq!(implement.len(), 1, "no re-implementation");
+    assert_eq!(implement[0].status, "integrated");
+    assert!(!run.attempts.iter().any(|a| a.status == "failed"));
+}
