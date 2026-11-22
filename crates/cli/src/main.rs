@@ -173,6 +173,14 @@ enum Command {
         /// Accept the recommended Smart Discuss defaults when a phase pauses on them.
         #[arg(long)]
         discussion_auto: bool,
+        // These only continue an existing run. `requires` alone is skipped by clap when a
+        // source option that conflicts with --run-id is present, hence the conflicts.
+        #[arg(long,requires="run_id",conflicts_with_all=["milestone","change","feature","goal","plan"])]
+        reload_config: bool,
+        #[arg(long,requires="run_id",conflicts_with_all=["milestone","change","feature","goal","plan"])]
+        extend_seconds: Option<u64>,
+        #[arg(long,requires="run_id",conflicts_with_all=["milestone","change","feature","goal","plan"])]
+        max_attempts: Option<u64>,
     },
     /// Preview ready work and blockers without allocating or executing anything.
     Next {
@@ -452,6 +460,9 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             delivery,
             host,
             discussion_auto,
+            reload_config,
+            extend_seconds,
+            max_attempts,
         } => {
             if autonomous && matches!(mode, Some(Mode::Native)) {
                 bail!("invalid_mode: autonomous conflicts with native");
@@ -463,6 +474,11 @@ fn execute(cli: Cli, format: Format, locale: locale::Locale) -> Result<i32> {
             if discussion_auto {
                 a["discussion_auto"] = json!(true);
             }
+            if reload_config {
+                a["reload_config"] = json!(true);
+            }
+            put(&mut a, "extend_seconds", extend_seconds);
+            put(&mut a, "max_attempts", max_attempts);
             put(&mut a, "run_id", run_id);
             put(&mut a, "goal", goal);
             put(&mut a, "id", id);

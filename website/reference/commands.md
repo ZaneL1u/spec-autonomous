@@ -62,7 +62,10 @@ spec-autonomous prepare --feature specs/001-auth --json
 spec-autonomous prepare --milestone M001 --from 2 --to 4 --json
 spec-autonomous prepare --goal "团队邀请 MVP" --id M001 --json
 spec-autonomous prepare --run-id <run-id> --json
+spec-autonomous prepare --run-id <run-id> --reload-config --extend-seconds 3600 --max-attempts 5 --json
 ```
+
+继续已有 run 时可以带 `--reload-config`（应用当前项目配置，保留此前的时间延长）、`--extend-seconds <n>`（在 run 当前时间预算上追加）和 `--max-attempts <n>`（覆盖该 run 的最大尝试次数）。三者只能与 `--run-id` 一起使用，与 `--change` / `--feature` / `--milestone` / `--goal` / `--plan` 互斥。
 
 常用模式：
 

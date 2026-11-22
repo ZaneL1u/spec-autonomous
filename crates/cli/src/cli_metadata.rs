@@ -155,4 +155,54 @@ mod tests {
         assert_eq!(result["exit_code"], 0);
         assert!(result["stdout"].as_str().unwrap().contains("--goal"));
     }
+    #[test]
+    fn prepare_exposes_run_resume_options_only_with_a_run_id() {
+        let parse = |args: &[&str], language| {
+            invoke(
+                &MetadataCommand::Parse {
+                    argv: args.iter().map(|s| s.to_string()).collect(),
+                },
+                language,
+            )
+        };
+        for language in [locale::Locale::En, locale::Locale::ZhCn] {
+            let result = parse(
+                &[
+                    "prepare",
+                    "--run-id",
+                    "run-1",
+                    "--reload-config",
+                    "--extend-seconds",
+                    "3600",
+                    "--max-attempts",
+                    "5",
+                ],
+                language,
+            );
+            assert_eq!(result["ok"], true, "{result}");
+            let arguments = &result["parsed"]["command"]["arguments"];
+            assert_eq!(arguments["reload_config"], true, "{result}");
+            assert_eq!(arguments["extend_seconds"], 3600);
+            assert_eq!(arguments["max_attempts"], 5);
+            for flag in [
+                vec!["--reload-config"],
+                vec!["--extend-seconds", "60"],
+                vec!["--max-attempts", "2"],
+            ] {
+                for source in [vec![], vec!["--change", "demo"], vec!["--goal", "g"]] {
+                    let mut args = vec!["prepare"];
+                    args.extend(source);
+                    args.extend(flag.clone());
+                    let result = parse(&args, language);
+                    assert_eq!(result["ok"], false, "{args:?}: {result}");
+                    assert_eq!(result["exit_code"], 2);
+                }
+            }
+        }
+        let help = parse(&["prepare", "--help"], locale::Locale::ZhCn);
+        let text = help["stdout"].as_str().unwrap();
+        for flag in ["--reload-config", "--extend-seconds", "--max-attempts"] {
+            assert!(text.contains(flag), "{flag}: {text}");
+        }
+    }
 }
