@@ -486,6 +486,7 @@ impl Coordinator<'_> {
             usage: None,
             patch_hash: None,
             worktree_state: None,
+            deferred_evidence: vec![],
         });
         self.run.stage = "verifying_task".into();
         self.save("verify_only_started")?;

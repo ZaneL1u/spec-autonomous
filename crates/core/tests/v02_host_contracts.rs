@@ -128,6 +128,7 @@ fn task(id: &str, source: &str, write: &str) -> Task {
         depends_on: vec![],
         reads: vec![],
         writes: vec![write.into()],
+        verify_only: false,
         verification: vec![if id == "value" {
             value_check()
         } else {
@@ -643,6 +644,8 @@ fn audit_items_may_defer_live_evidence_and_the_run_completes_with_follow_ups() {
                 requirement: id.clone(),
                 evidence: "src/value.txt contains 42; node --test tests/value.mjs".into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             })
             .collect();
         if first {
@@ -677,6 +680,8 @@ fn audit_items_may_defer_live_evidence_and_the_run_completes_with_follow_ups() {
                     requirement: id.clone(),
                     evidence: "verified in checkout".into(),
                     passed: true,
+                    files: vec![],
+                    carried_over: None,
                 })
                 .collect();
             result.deferred_evidence = vec![live(
@@ -884,6 +889,8 @@ fn audit_item(requirement: &str, evidence: &str, passed: bool) -> AuditItem {
         requirement: requirement.into(),
         evidence: evidence.into(),
         passed,
+        files: vec![],
+        carried_over: None,
     }
 }
 

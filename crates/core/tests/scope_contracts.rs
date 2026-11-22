@@ -28,6 +28,7 @@ fn counted(tag: &str, script: &str) -> Check {
             ),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 const VALUE: &str =
@@ -71,6 +72,7 @@ fn fixture(counter: &Path, configure: impl FnOnce(&mut Config)) -> tempfile::Tem
     config.verification = vec![Check {
         argv: vec!["node".into(), "--version".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     configure(&mut config);
     put(
@@ -116,6 +118,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {
