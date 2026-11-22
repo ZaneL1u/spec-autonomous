@@ -132,6 +132,8 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 `dirty_checkout` 的消息在原句之后附 `; dirty: {...}`，按 `modified`（已跟踪文件的改动，含已暂存、重命名与冲突，另带 `staged` 计数）、`untracked`、`submodules` 三类给出 `count`、最多 20 条 `paths` 与 `truncated`。错误码与信封不变；未跟踪文件仍会阻止开始，提交、移走或加入 ignore 后再 `prepare`。
 
+`delivery = "ff-original"` 交付（以及 `archive` 的最后一步快进）只在真正会冲突时停下：未跟踪文件不与本次交付 diff 涉及的路径重叠时留在原处、不阻挡交付。重叠指路径相同、该文件位于交付改动的路径之下，或交付需要在该文件的位置建目录（按不区分大小写比较）。已跟踪文件的改动（含已暂存）、子模块改动与冲突的未跟踪文件仍让 run 进入 `delivery_pending` 并保留 verified 分支，blocker 形如 `delivery_pending: original checkout changed; verified branch retained; blocking: {...}`：结构同上面的 dirty 摘要，`untracked` 只列冲突的文件，`ignored_untracked` 给出未阻挡的未跟踪文件数。主检出 HEAD 自 run 记录后移动时 blocker 改为 `...; HEAD moved from <旧> to <新>`。处理后 `prepare --run-id <run_id>` 完成交付；操作者已手工快进到 `accepted_head` 时，续跑在只剩未跟踪文件的情况下直接确认交付。
+
 ## 锁
 
 协调器锁最多等待 10 秒再报 `run_already_active`；并发的心跳、回执、认领不再立刻失败。`project_in_use` 仍表示另一个 run 占有该仓库。

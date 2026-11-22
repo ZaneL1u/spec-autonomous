@@ -335,24 +335,30 @@ pub fn clean(root: &Path) -> Result<bool> {
 /// Paths listed per dirty-checkout category in [`dirty_summary`].
 pub const DIRTY_PATH_LIMIT: usize = 20;
 
-/// What makes a checkout dirty, grouped as `modified` (tracked changes, staged or not,
-/// including renames and conflicts), `untracked` and `submodules`. Each group carries
-/// its full `count` and at most [`DIRTY_PATH_LIMIT`] `paths`; `modified` also counts the
-/// `staged` entries. Read-only: it never stages or stashes anything.
-pub fn dirty_summary(root: &Path) -> Result<serde_json::Value> {
+/// Dirty paths of a checkout as reported by `git status`: tracked changes (staged or
+/// not, including renames and conflicts), untracked files and changed submodules, plus
+/// how many tracked changes are staged. Read-only.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DirtyPaths {
+    pub modified: Vec<String>,
+    pub untracked: Vec<String>,
+    pub submodules: Vec<String>,
+    pub staged: usize,
+}
+
+pub fn dirty_paths(root: &Path) -> Result<DirtyPaths> {
     let output = command(
         root,
         &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
         None,
     )?;
-    let mut groups: [(usize, Vec<String>); 3] = Default::default();
-    let mut staged = 0usize;
+    let mut dirty = DirtyPaths::default();
     let mut fields = output.split('\0').filter(|f| !f.is_empty());
     while let Some(entry) = fields.next() {
         let (kind, rest) = entry.split_at(entry.find(' ').unwrap_or(entry.len()));
         let rest = rest.trim_start();
-        let (group, path) = match kind {
-            "?" => (1, rest.to_string()),
+        match kind {
+            "?" => dirty.untracked.push(rest.to_string()),
             "1" | "2" | "u" => {
                 // `1 XY sub mH mI mW hH hI path`; `2` adds a score field and is
                 // followed by the original path; `u` has three stages of modes/hashes.
@@ -368,29 +374,107 @@ pub fn dirty_summary(root: &Path) -> Result<serde_json::Value> {
                 let xy = parts.first().copied().unwrap_or("..");
                 let submodule = parts.get(1).is_some_and(|sub| sub.starts_with('S'));
                 if !submodule && kind != "u" && !xy.starts_with('.') {
-                    staged += 1;
+                    dirty.staged += 1;
                 }
-                (
-                    if submodule { 2 } else { 0 },
-                    parts.get(skip).copied().unwrap_or_default().to_string(),
-                )
+                let path = parts.get(skip).copied().unwrap_or_default().to_string();
+                if submodule {
+                    dirty.submodules.push(path);
+                } else {
+                    dirty.modified.push(path);
+                }
             }
             _ => continue,
-        };
-        let (count, paths) = &mut groups[group];
-        *count += 1;
-        if paths.len() < DIRTY_PATH_LIMIT {
-            paths.push(path);
         }
     }
-    let group = |(count, paths): &(usize, Vec<String>)| serde_json::json!({"count":count,"paths":paths,"truncated":*count > paths.len()});
-    let mut modified = group(&groups[0]);
-    modified["staged"] = serde_json::json!(staged);
-    Ok(serde_json::json!({
-        "modified": modified,
-        "untracked": group(&groups[1]),
-        "submodules": group(&groups[2]),
-    }))
+    Ok(dirty)
+}
+
+impl DirtyPaths {
+    pub fn is_empty(&self) -> bool {
+        self.modified.is_empty() && self.untracked.is_empty() && self.submodules.is_empty()
+    }
+    /// The `dirty_summary` shape: per group `count`, at most [`DIRTY_PATH_LIMIT`]
+    /// `paths` and `truncated`; `modified` also carries `staged`.
+    pub fn summary(&self) -> serde_json::Value {
+        let group = |paths: &Vec<String>| {
+            let shown: Vec<&String> = paths.iter().take(DIRTY_PATH_LIMIT).collect();
+            serde_json::json!({"count":paths.len(),"paths":shown,"truncated":paths.len() > shown.len()})
+        };
+        let mut modified = group(&self.modified);
+        modified["staged"] = serde_json::json!(self.staged);
+        serde_json::json!({
+            "modified": modified,
+            "untracked": group(&self.untracked),
+            "submodules": group(&self.submodules),
+        })
+    }
+}
+
+/// What makes a checkout dirty, grouped as `modified` (tracked changes, staged or not,
+/// including renames and conflicts), `untracked` and `submodules`. Each group carries
+/// its full `count` and at most [`DIRTY_PATH_LIMIT`] `paths`; `modified` also counts the
+/// `staged` entries. Read-only: it never stages or stashes anything.
+pub fn dirty_summary(root: &Path) -> Result<serde_json::Value> {
+    Ok(dirty_paths(root)?.summary())
+}
+
+/// No tracked or submodule changes; untracked files are allowed. After a delivery
+/// fast-forward has landed, remaining untracked files are by construction ones that did
+/// not collide with it.
+pub fn tracked_clean(root: &Path) -> Result<bool> {
+    let dirty = dirty_paths(root)?;
+    Ok(dirty.modified.is_empty() && dirty.submodules.is_empty())
+}
+
+/// Whether two repository-relative paths collide on checkout: equal, or one is a
+/// directory prefix of the other. Compared case-insensitively, because a case-folding
+/// filesystem refuses the same collisions.
+fn paths_collide(a: &str, b: &str) -> bool {
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
+/// What in `root` stops fast-forwarding its checkout to `target`, in the
+/// [`dirty_summary`] shape, or `None` when nothing does. Tracked changes (staged or
+/// not) and changed submodules always block. An untracked file blocks only when it
+/// collides with a path the fast-forward changes: the same path, a file under a changed
+/// path, or a file where the target needs a directory. Other untracked files (notes,
+/// scratch output) stay where they are. The summary adds `ignored_untracked`, the count
+/// of untracked files that did not block. Read-only.
+pub fn fast_forward_blockers(root: &Path, target: &str) -> Result<Option<serde_json::Value>> {
+    let mut dirty = dirty_paths(root)?;
+    if dirty.is_empty() {
+        return Ok(None);
+    }
+    let all_untracked = dirty.untracked.len();
+    if !dirty.untracked.is_empty() {
+        let changed: Vec<String> = command(
+            root,
+            &[
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                "HEAD",
+                target,
+                "--",
+            ],
+            None,
+        )?
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+        dirty
+            .untracked
+            .retain(|path| changed.iter().any(|c| paths_collide(path, c)));
+    }
+    if dirty.is_empty() {
+        return Ok(None);
+    }
+    let mut summary = dirty.summary();
+    summary["ignored_untracked"] = serde_json::json!(all_untracked - dirty.untracked.len());
+    Ok(Some(summary))
 }
 
 /// A `dirty_checkout` error naming what is dirty, so the operator need not run
@@ -478,6 +562,16 @@ pub fn ancestor(root: &Path, older: &str, newer: &str) -> bool {
 pub fn advance(root: &Path, target: &str) -> Result<()> {
     if !clean(root)? {
         return Err(dirty_error(root, "cannot advance a changed checkout"));
+    }
+    command(root, &["merge", "--ff-only", "--no-edit", target], None)?;
+    Ok(())
+}
+/// Fast-forward a user checkout to `target` past untracked files that do not collide
+/// with the change (see [`fast_forward_blockers`]). Anything that does block is
+/// reported as a `dirty_checkout` error naming the blocking paths.
+pub fn advance_delivery(root: &Path, target: &str) -> Result<()> {
+    if let Some(blocking) = fast_forward_blockers(root, target)? {
+        anyhow::bail!("dirty_checkout: cannot advance a changed checkout; blocking: {blocking}");
     }
     command(root, &["merge", "--ff-only", "--no-edit", target], None)?;
     Ok(())

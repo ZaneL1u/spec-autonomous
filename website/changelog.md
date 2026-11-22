@@ -26,6 +26,7 @@
 - 自动追加写集与人工 `run.revise` 一样重置该任务的重试计数，扩写集不再消耗 `max_attempts`；每个任务在整个 run 中至多自动追加 10 条路径。
 - 检查失败的错误直接说明失败的是哪条命令、为什么：带实际执行的 argv、cwd、退出码和脱敏后的 stderr / stdout 末尾几行，日志路径放在后面；重派包的 `failure` 与 no_progress blocker 随之受益。
 - run 预算改按活动时间计：协调器运行与宿主持有工作包（`awaiting_host`）的时间计入，停在 `needs_input` / `paused` 的时间不计；`budget_exhausted` 说明 72 小时上限下最多还能延长多少，到顶时直接提示需要 `unsafe_budgets`。旧 run 从已记录的用量继续累计。
+- `ff-original` 交付不再被无关的未跟踪文件挡住：主检出里的笔记、草稿只要不与交付 diff 的路径重叠（含目录前缀冲突）就留在原处，交付照常快进；已跟踪改动或冲突的未跟踪文件仍进入 `delivery_pending` 并保留 verified 分支，blocker 以 `blocking: {...}` 列出挡住交付的具体路径（`untracked` 只列冲突项，`ignored_untracked` 计数其余）。`archive` 的最后一步快进同样处理。
 - 新增可选的 `[execution] baseline_checks`（默认关闭）：计划被接受后先在集成检出上跑一次已能运行的检查，把基线上已经失败的检查作为 `baseline_failure:` 警告报告，并写进该 phase 的实现包，避免它们拖到最后一个任务才暴露。
 
 ### 计划、结果与审计

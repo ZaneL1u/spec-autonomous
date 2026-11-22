@@ -187,10 +187,15 @@ fn finalize(repo: &Repository, root: &Path, mut op: Operation) -> Result<Value> 
     }
     let actual = repo.head()?;
     if actual != target {
-        if actual != op.expected_head || !git::clean(&repo.root)? {
+        if actual != op.expected_head {
             bail!("delivery_pending: archive candidate retained; original checkout changed");
         }
-        git::advance(&repo.root, &target)?;
+        if let Some(blocking) = git::fast_forward_blockers(&repo.root, &target)? {
+            bail!(
+                "delivery_pending: archive candidate retained; original checkout changed; blocking: {blocking}"
+            );
+        }
+        git::advance_delivery(&repo.root, &target)?;
         testpoint("after_archive_advance");
     }
     op.status = "completed".into();

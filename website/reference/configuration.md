@@ -40,7 +40,7 @@ lease_seconds = 1800
 | `unsafe_budgets` | 默认 `false`：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 259200`（72 小时）；设为 `true` 才允许超出，doctor 会告警 |
 | `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
-| `delivery` | `ff-original` 或保留交付分支 |
+| `delivery` | `ff-original` 或保留交付分支。`ff-original` 在全部门槛通过后把用户检出快进到 `accepted_head`；与交付 diff 不冲突的未跟踪文件（笔记、草稿）不阻挡，已跟踪改动或冲突的未跟踪文件进入 `delivery_pending`，blocker 的 `blocking:` 列出具体路径 |
 | `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
 | `baseline_checks` | 默认 `false`。为 `true` 时，phase 计划被接受后、签发该 phase 的实现工作前，协调器在集成检出（`accepted_head`）上把计划里已经能跑的检查跑一次（预检为 `deferred`、或 argv 指向任务将写入且尚不存在的文件的检查跳过；配置了 `verification_prepare` 时先运行它），失败的检查记为已知基线失败：响应 `warnings[]` 给出 `baseline_failure: phase <id>: ...`（含命令、退出码与脱敏的输出末尾），该 phase 的 implement / converge 包在 `snapshot.metadata.baseline_failures` 中带上同一列表。基线失败不阻塞、不计失败、不排修复轮。默认关闭是因为每个 phase 计划要多跑一遍这些检查（包括全量测试）；全量检查昂贵而基线可能已坏的仓库建议开启。基线检查留下的文件会被清除，集成检出回到 `accepted_head` |
 

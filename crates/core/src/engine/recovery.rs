@@ -30,13 +30,24 @@ impl Coordinator<'_> {
         self.save("delivery_intent")?;
         if self.run.config.execution.delivery == "ff-original" {
             let origin = Path::new(&self.run.origin);
-            if git::head(origin)? != self.run.origin_head || !git::clean(origin)? {
-                bail!("delivery_pending: original checkout changed; verified branch retained");
+            let head = git::head(origin)?;
+            if head != self.run.origin_head {
+                bail!(
+                    "delivery_pending: original checkout changed; verified branch retained; HEAD moved from {} to {head}",
+                    self.run.origin_head
+                );
+            }
+            // Untracked files that do not collide with the delivered diff (notes, scratch
+            // output) stay in place and do not hold delivery back.
+            if let Some(blocking) = git::fast_forward_blockers(origin, &self.run.accepted_head)? {
+                bail!(
+                    "delivery_pending: original checkout changed; verified branch retained; blocking: {blocking}"
+                );
             }
             if Repository::discover(origin)?.branch()? != self.run.origin_branch {
                 bail!("delivery_pending: origin branch changed");
             }
-            git::advance(origin, &self.run.accepted_head)?;
+            git::advance_delivery(origin, &self.run.accepted_head)?;
             failpoint("after_origin_advance");
             if handoff {
                 self.run.origin_head = self.run.accepted_head.clone();
@@ -50,7 +61,7 @@ impl Coordinator<'_> {
         if self.run.stage == "delivering"
             && self.run.config.execution.delivery == "ff-original"
             && git::head(Path::new(&self.run.origin))? == self.run.accepted_head
-            && git::clean(Path::new(&self.run.origin))?
+            && git::tracked_clean(Path::new(&self.run.origin))?
         {
             self.run.origin_head = self.run.accepted_head.clone();
             self.run.origin_sources.clear();
