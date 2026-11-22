@@ -66,9 +66,17 @@ pub struct Execution {
     /// configuration while off so existing identities do not change.
     #[serde(skip_serializing_if = "is_false")]
     pub init_submodules: bool,
+    /// Where worktrees handed to host workers live: `git` (default, under the Git common
+    /// directory), `sibling` (`<repo>.sa-worktrees/` next to the main checkout) or an
+    /// absolute directory. Omitted while `git` so existing identities do not change.
+    #[serde(skip_serializing_if = "is_git_worktree_root")]
+    pub worktree_root: String,
 }
 fn is_false(value: &bool) -> bool {
     !*value
+}
+fn is_git_worktree_root(value: &String) -> bool {
+    value == crate::git::WORKTREE_ROOT_GIT
 }
 /// Hook run in a writing worker's checkout after it is created and before its packet
 /// is issued, for example to sync a virtual environment from a shared cache.
@@ -141,6 +149,7 @@ impl Default for Execution {
             reclaim_worktrees: "terminal".into(),
             retain_failed_worktrees: 1,
             init_submodules: false,
+            worktree_root: crate::git::WORKTREE_ROOT_GIT.into(),
         }
     }
 }
@@ -306,6 +315,16 @@ impl Config {
         }
         if !["same-tree", "none"].contains(&self.execution.verification_reuse.as_str()) {
             bail!("invalid_config: verification_reuse must be same-tree or none");
+        }
+        let root = &self.execution.worktree_root;
+        if ![
+            crate::git::WORKTREE_ROOT_GIT,
+            crate::git::WORKTREE_ROOT_SIBLING,
+        ]
+        .contains(&root.as_str())
+            && (!Path::new(root).is_absolute() || root.contains('\0'))
+        {
+            bail!("invalid_config: worktree_root must be git, sibling or an absolute directory");
         }
         if !["terminal", "never"].contains(&self.execution.reclaim_worktrees.as_str()) {
             bail!("invalid_config: reclaim_worktrees must be terminal or never");

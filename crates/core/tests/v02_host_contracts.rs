@@ -722,3 +722,156 @@ fn receipts_without_deferred_evidence_keep_their_bytes() {
     let old: WorkerResult = serde_json::from_str(&text).unwrap();
     assert!(old.deferred_evidence.is_empty());
 }
+
+// ---------------------------------------------------------------------------------
+// #4/#28 configurable worktree root
+
+fn doctor_diagnostics(root: &Path) -> Vec<String> {
+    serde_json::from_value(api::invoke(root, "doctor", &json!({})).unwrap()["diagnostics"].clone())
+        .unwrap()
+}
+
+#[test]
+fn worktree_root_config_is_validated_and_omitted_while_default() {
+    let config = Config::default();
+    assert_eq!(config.execution.worktree_root, "git");
+    let text = toml::to_string(&config).unwrap();
+    assert!(!text.contains("worktree_root"), "{text}");
+    let mut sibling = Config::default();
+    sibling.execution.worktree_root = "sibling".into();
+    sibling.validate().unwrap();
+    assert!(
+        toml::to_string(&sibling)
+            .unwrap()
+            .contains("worktree_root = \"sibling\"")
+    );
+    let mut relative = Config::default();
+    relative.execution.worktree_root = "worktrees".into();
+    assert!(
+        relative
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("worktree_root must be git, sibling or an absolute directory")
+    );
+}
+
+#[test]
+fn sibling_worktree_root_puts_worker_checkouts_outside_git_and_reclaims_them() {
+    let root = fixture(|config| config.execution.worktree_root = "sibling".into());
+    let root = root.path();
+    let repo = Repository::discover(root).unwrap();
+    let sibling = repo.worktree_root("sibling").unwrap();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(sibling.clone());
+    assert_eq!(
+        sibling.file_name().unwrap().to_string_lossy(),
+        format!(
+            "{}.sa-worktrees",
+            root.canonicalize()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        )
+    );
+    let report = doctor_diagnostics(root);
+    assert!(
+        !report.iter().any(|d| d.starts_with("worktree_root")),
+        "{report:?}"
+    );
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    let worktree = Path::new(request["worktree"].as_str().unwrap());
+    let sibling = sibling.canonicalize().unwrap();
+    assert_eq!(worktree.parent().unwrap(), sibling, "{request}");
+    assert!(!worktree.to_string_lossy().contains("/.git/"));
+    let run = saved(root, &run_id);
+    assert!(
+        run.integration.contains("spec-autonomous/worktrees"),
+        "coordinator checkouts stay in the runtime directory: {}",
+        run.integration
+    );
+    write_value(&request);
+    submit(root, &request, receipt(&packet(root, &request)));
+    let run = saved(root, &run_id);
+    let attempt = run
+        .attempts
+        .iter()
+        .find(|a| a.id == request["request_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(attempt.status, "integrated");
+    assert_eq!(
+        attempt.worktree_state.as_deref(),
+        Some("reclaimed"),
+        "terminal reclaim covers the configured root"
+    );
+    assert!(!worktree.exists());
+}
+
+#[test]
+fn existing_runs_keep_their_worktree_root_and_doctor_explains_the_default() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let report = doctor_diagnostics(root);
+    let notice = report
+        .iter()
+        .find(|d| d.starts_with("worktree_root_notice"))
+        .unwrap_or_else(|| panic!("{report:?}"));
+    assert!(notice.contains("worktree_root = \"sibling\""), "{notice}");
+    assert!(notice.contains(".sa-worktrees"), "{notice}");
+    let (run_id, wave) = start(root);
+    // The project switches to the sibling root; the running run keeps its frozen config.
+    let mut config = Config::load(root).unwrap();
+    config.execution.worktree_root = "sibling".into();
+    put(
+        root,
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    let next = submit(root, &request, receipt(&packet(root, &request)));
+    let other = work(&next, "other");
+    assert!(
+        other["worktree"]
+            .as_str()
+            .unwrap()
+            .contains("spec-autonomous/worktrees"),
+        "{other}"
+    );
+    assert_eq!(saved(root, &run_id).config.execution.worktree_root, "git");
+}
+
+#[test]
+fn absolute_worktree_roots_are_per_repository_and_never_inside_the_checkout() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let repo = Repository::discover(root).unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = repo
+        .worktree_root(elsewhere.path().to_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        path.parent().unwrap(),
+        elsewhere.path().canonicalize().unwrap()
+    );
+    let inside = root.canonicalize().unwrap().join("worktrees");
+    let error = repo
+        .worktree_root(inside.to_str().unwrap())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("inside the main checkout"), "{error}");
+    let (path, branch) = repo
+        .add_worktree_in(elsewhere.path().to_str().unwrap(), "tool-x", "HEAD")
+        .unwrap();
+    assert_eq!(branch, "codex/sa/tool-x");
+    assert!(path.join("tests/value.mjs").is_file());
+    assert!(repo.in_worktree_roots(elsewhere.path().to_str().unwrap(), &path));
+    assert!(!repo.in_worktree_roots("git", &path));
+}

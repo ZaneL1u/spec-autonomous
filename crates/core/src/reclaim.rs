@@ -27,8 +27,8 @@ pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value>
     {
         return Ok(json!({"removed":removed,"retained":retained,"policy":"never"}));
     }
-    let runtime = repo.runtime()?;
-    let worktrees = runtime.join("worktrees");
+    let setting = run.config.execution.worktree_root.clone();
+    let owned = |path: &str| repo.in_worktree_roots(&setting, Path::new(path));
     let keep_failed = run.config.execution.retain_failed_worktrees as usize;
     // Newest failed attempts per open task stay around for inspection.
     let mut failed_rank: BTreeMap<String, usize> = BTreeMap::new();
@@ -54,7 +54,7 @@ pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value>
         if attempt.worktree_state.as_deref() == Some("reclaimed")
             || attempt.worktree == run.integration
             || attempt.worktree == run.origin
-            || !Path::new(&attempt.worktree).starts_with(&worktrees)
+            || !owned(&attempt.worktree)
         {
             continue;
         }
@@ -111,8 +111,8 @@ pub fn reclaim(repo: &Repository, store: &Store, run: &mut Run) -> Result<Value>
         // so its patch is stored before anything is removed.
         if !matches!(intent.state.as_str(), "accepted" | "abandoned")
             || intent.worktree == run.integration
-            || !Path::new(&intent.worktree).starts_with(&worktrees)
             || !Path::new(&intent.worktree).exists()
+            || !owned(&intent.worktree)
             || run.attempts.iter().any(|a| a.worktree == intent.worktree)
         {
             continue;

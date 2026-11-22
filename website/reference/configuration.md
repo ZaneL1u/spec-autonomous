@@ -41,7 +41,30 @@ lease_seconds = 1800
 | `delivery` | `ff-original` 或保留交付分支 |
 | `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
 
+| `worktree_root` | 交给宿主 worker 的 worktree 放在哪里：`git`（默认，`.git/spec-autonomous/worktrees/`）、`sibling`（主检出旁边的 `<仓库目录名>.sa-worktrees/`）或一个绝对路径（其下再建 `<仓库目录名>-<哈希>/`，多个仓库可共用） |
+
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
+
+### worktree 位置
+
+默认的 worker worktree 位于 `.git/spec-autonomous/worktrees/` 之下。很多搜索包装、IDE 索引和「跳过 `.git/`」的工具在这些目录里什么也找不到，worker 会误以为代码不存在。doctor 会给出 `worktree_root_notice` 提示。需要时改成：
+
+```toml
+[execution]
+worktree_root = "sibling"   # 例如 ~/src/app 的 worker 在 ~/src/app.sa-worktrees/<名字>/
+```
+
+默认值暂不改变，原因：
+
+- 仓库外的目录可能不可写（容器只挂载了仓库目录、父目录只读、网络盘），而且限制「只能写当前项目」的宿主沙箱（例如 Claude Code 的沙箱）需要额外放行该目录，否则 worker 写不进自己的 worktree。
+- 仓库内的 `.sa-worktrees/` 被排除在候选之外：嵌套 worktree 会被测试发现、打包器、`tsc`/`eslint` 的 `**` 通配、IDE 与 `git status` 当作项目文件，风险比现在更大，配置不允许把根目录放在主检出内部（`worktree_root_unavailable`）。
+
+行为说明：
+
+- 只有交给宿主的工作检出（规划、审计、实现、converge 等）使用该位置；集成检出、集成候选、归档试跑和 `worktree.create` 的工具检出仍在 `.git/spec-autonomous/worktrees/`。
+- run 启动时冻结配置：已有 run 继续用原位置，不迁移；改配置后新开的 run（或带 `reload_config` 续跑后新建的 worktree）才使用新位置，旧 worktree 照常被识别与回收。
+- 目录建不出来时，签发该工作的 `prepare` / `apply-result` 报 `worktree_root_unavailable` 并给出路径；doctor 对不可写、不是目录的位置提前给出同名诊断。
+- 自动回收（`reclaim_worktrees = "terminal"`）与只读检出复用同时认两个位置。当前 `run.cleanup` 的归属判断仍只认 `.git/` 下的位置，对新位置中残留的 worktree 会以 `ownership_mismatch` 保留，必要时用 `git worktree remove <路径>` 手动删除。
 
 run 启动时冻结配置。`run_timeout_seconds` 按自 run 开始的墙钟时间计（包括等待宿主的时间）。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed ... of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`。
 

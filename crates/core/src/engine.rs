@@ -719,10 +719,18 @@ impl Coordinator<'_> {
         let (worktree, branch) = if matches!(kind, "plan-tasks" | "audit") {
             match self.review_checkout()? {
                 Some(checkout) => checkout,
-                None => self.repo.add_worktree(&name, &self.run.accepted_head)?,
+                None => self.repo.add_worktree_in(
+                    &self.run.config.execution.worktree_root,
+                    &name,
+                    &self.run.accepted_head,
+                )?,
             }
         } else {
-            self.repo.add_worktree(&name, &self.run.accepted_head)?
+            self.repo.add_worktree_in(
+                &self.run.config.execution.worktree_root,
+                &name,
+                &self.run.accepted_head,
+            )?
         };
         provider::copy_ignored_context(
             &self.project(),
