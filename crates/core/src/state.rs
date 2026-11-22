@@ -50,7 +50,12 @@ impl Drop for Lease {
 }
 /// Schema 4 keeps the run core in `runs` and stores attempts and evidence as rows, so a
 /// heartbeat or a single check writes one row instead of the whole multi-megabyte run.
-pub const SCHEMA_VERSION: u32 = 4;
+/// Schema 5 keeps that layout; it marks run payloads that older CLIs would misread
+/// (`init_submodules` / `baseline_checks` in the frozen config, `task_writes` revisions,
+/// active-time accounting and baselines), so they refuse the ledger instead.
+pub const SCHEMA_VERSION: u32 = 5;
+/// First schema that stores attempts and evidence as rows.
+const SPLIT_SCHEMA_VERSION: u32 = 4;
 pub struct Store {
     db: Connection,
     pub root: PathBuf,
@@ -130,7 +135,7 @@ impl Store {
             db,
             root,
             writable: true,
-            split: version >= SCHEMA_VERSION,
+            split: version >= SPLIT_SCHEMA_VERSION,
             saved: Default::default(),
         })
     }
@@ -179,18 +184,22 @@ impl Store {
                 COMMIT;")?;
             if version < SCHEMA_VERSION {
                 // Explode the monolithic payloads of schema 2/3 rows into the split tables so
-                // every later save writes only the rows that changed.
+                // every later save writes only the rows that changed. Schema 4 rows already
+                // are split (their payload has no attempts); they only get the new version.
                 let tx = db.transaction()?;
-                let rows: Vec<(String, String, String)> = {
-                    let mut q =
-                        tx.prepare("SELECT id, payload, updated_at FROM runs ORDER BY updated_at")?;
-                    let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-                    rows.collect::<std::result::Result<_, _>>()?
-                };
-                for (id, payload, updated_at) in rows {
-                    let run: Run = serde_json::from_str(&payload)
-                        .with_context(|| format!("state_corrupt: run payload {id}"))?;
-                    write_split(&tx, &run, &updated_at, None)?;
+                if version < SPLIT_SCHEMA_VERSION {
+                    let rows: Vec<(String, String, String)> = {
+                        let mut q = tx.prepare(
+                            "SELECT id, payload, updated_at FROM runs ORDER BY updated_at",
+                        )?;
+                        let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+                        rows.collect::<std::result::Result<_, _>>()?
+                    };
+                    for (id, payload, updated_at) in rows {
+                        let run: Run = serde_json::from_str(&payload)
+                            .with_context(|| format!("state_corrupt: run payload {id}"))?;
+                        write_split(&tx, &run, &updated_at, None)?;
+                    }
                 }
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 tx.commit()?;
@@ -203,7 +212,7 @@ impl Store {
             bail!("state_unavailable: database is not initialized");
         }
         // A read-only opener of an older ledger still reads its monolithic payloads.
-        let split = writable || version >= SCHEMA_VERSION;
+        let split = writable || version >= SPLIT_SCHEMA_VERSION;
         Ok(Some(Self {
             db,
             root,

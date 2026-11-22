@@ -13,6 +13,20 @@ pub fn doctor(config: &Config) -> Result<serde_json::Value> {
 pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) -> Result<()> {
     let mut mapped = map_input(input, root);
     trim(&mut mapped);
+    // Workers run checks in their own shells; tell them how mapped commands resolve.
+    let managed = crate::verification_preflight::managed_commands(root, config);
+    let tools = managed.as_object().filter(|m| !m.is_empty()).map(|m| {
+        m.values()
+            .filter_map(|c| c["usage"].as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    if tools.is_some()
+        && let Some(snapshot) = mapped.snapshot.as_mut()
+        && let Some(meta) = snapshot.metadata.as_object_mut()
+    {
+        meta.insert("managed_commands".into(), managed.clone());
+    }
     let input_file = dir.join("input.json");
     let result_file = dir.join("result.json");
     if result_file.exists()
@@ -72,9 +86,13 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
         paths::hash(&data),
         summary(input)
     );
+    let prompt = match &tools {
+        Some(tools) => format!("{prompt}\n\nTOOLS: {tools}"),
+        None => prompt,
+    };
     let prompt = if input.kind == "implement" {
         format!(
-            "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative paths (at most {}). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",
+            "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative files (at most {}; literal file paths, not directories or globs). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",
             crate::run_revision::MAX_REQUESTED_WRITES
         )
     } else {
@@ -411,7 +429,7 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     let mut schema = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"run_id":{"type":"string","enum":[input.run_id]},"task_id":{"type":"string","enum":[input.task_id]},"attempt_id":{"type":"string","enum":[input.attempt_id]},"status":{"type":"string","enum":["candidate","blocked","failed"]},"summary":string,"blockers":strings,"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]},"plan":{"anyOf":[{"$ref":"#/$defs/plan"},{"type":"null"}]},"audit":{"type":"array","items":{"$ref":"#/$defs/audit"}}}),
     );
-    schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: project-relative files outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
+    schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: literal project-relative file paths (no directories or globs) outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
     if ["implement", "audit"].contains(&input.kind.as_str()) {
         schema["properties"]["deferred_evidence"] = json!({"type":"array","maxItems":MAX_DEFERRED_EVIDENCE,"items":{"type":"object","additionalProperties":false,"required":["kind","description","reason"],"properties":{"kind":{"type":"string","enum":DEFERRED_EVIDENCE_KINDS},"description":string,"reason":string,"requirement":{"type":"string","description":"Audit: the acceptance id whose real-environment evidence is deferred."}}},"description":"Evidence this checkout cannot produce (a real deployment, service, device or manual look). It is a host follow-up, not a failure: keep status=candidate and, for audit items, passed=true when everything verifiable here holds."});
     }

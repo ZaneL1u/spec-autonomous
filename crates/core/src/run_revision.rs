@@ -115,6 +115,25 @@ fn checks(values: &[Check]) -> Result<()> {
 /// Paths a blocked worker may have added to its task's write set without review.
 pub const MAX_REQUESTED_WRITES: usize = 10;
 
+/// Automatic grants accept literal file paths only. A pattern or a directory grants an
+/// unbounded set of files (a write also covers everything below it), which would defeat
+/// the [`MAX_REQUESTED_WRITES`] bound, so those need a reviewed `run.revise`. A path is a
+/// directory when it ends in `/` or already is one in any of `roots`.
+pub fn literal_file_request(raw: &str, roots: &[&Path]) -> Result<()> {
+    if raw.contains(['*', '?', '[', '{']) {
+        bail!(
+            "write_scope_not_literal: {raw:?} is a pattern; only literal file paths are added without review"
+        );
+    }
+    let path = normalize_write(raw)?;
+    if raw.trim().ends_with('/') || roots.iter().any(|root| root.join(&path).is_dir()) {
+        bail!(
+            "write_scope_not_literal: {path} is a directory; only literal file paths are added without review"
+        );
+    }
+    Ok(())
+}
+
 /// Native context a worker must never edit for one phase: its context files and the
 /// tracking file the coordinator alone checks off.
 pub fn context_paths(snapshot: &crate::model::Snapshot) -> Vec<String> {
@@ -182,8 +201,12 @@ pub fn admissible_writes(
     let mut added: Vec<String> = vec![];
     for raw in add {
         let path = normalize_write(raw)?;
-        let matcher = globset::Glob::new(&path)?.compile_matcher();
-        if let Some(hit) = context.iter().find(|c| **c == path || matcher.is_match(c)) {
+        // Same rule the integration scope check uses: a write also covers everything below
+        // it, so a parent directory of a native context file is as forbidden as the file.
+        if let Some(hit) = context
+            .iter()
+            .find(|c| crate::plan::allowed(c, std::slice::from_ref(&path)))
+        {
             bail!(
                 "write_scope_forbidden: {path} covers native context {hit}; change the spec through the native workflow instead"
             );

@@ -148,8 +148,14 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
         data["verification_revision_count"] = json!(host.verification_revisions.len());
     }
     // Only prepare / next / apply-result read the source configuration again.
-    if readiness && let Some(drift) = super::config_drift(run) {
-        data["warnings"] = json!([drift]);
+    if readiness {
+        let warnings: Vec<String> = super::config_drift(run)
+            .into_iter()
+            .chain(super::baseline::warnings(run))
+            .collect();
+        if !warnings.is_empty() {
+            data["warnings"] = json!(warnings);
+        }
     }
     let deferred = run.open_deferred_evidence();
     if !deferred.is_empty() && run.terminal() {
@@ -692,6 +698,19 @@ impl Coordinator<'_> {
                 s.metadata["execution_evidence"] =
                     crate::provenance::record(&self.run, &self.store.root, &dir)?;
             }
+        }
+        // Checks known to fail before the plan ran, so workers do not chase them.
+        if matches!(kind, "implement" | "converge")
+            && let Some(s) = snapshot.as_mut()
+            && let Some(failures) = self
+                .run
+                .host
+                .as_ref()
+                .and_then(|h| h.baselines.get(phase))
+                .map(|b| b["failures"].clone())
+                .filter(|f| f.as_array().is_some_and(|f| !f.is_empty()))
+        {
+            s.metadata["baseline_failures"] = failures;
         }
         let failure = self.run.attempts[..index]
             .iter()

@@ -370,7 +370,14 @@ pub struct Run {
     pub current_phase: Option<String>,
     pub started_at: String,
     pub updated_at: String,
+    /// Active time used by the run: coordinator work plus the time the host holds issued
+    /// packets. Time spent in `needs_input`, `paused` or any other stop is not counted.
     pub elapsed_ms: u64,
+    /// When the coordinator last brought `elapsed_ms` up to date. While the run waits in
+    /// `awaiting_host` the time since then is active too. Runs saved before 0.2.0 lack it
+    /// and count no time between coordinator calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_at: Option<String>,
     pub blocker: Option<String>,
     pub config: crate::config::Config,
     #[serde(default)]
@@ -515,6 +522,10 @@ pub struct HostState {
     /// reload_config, before run-local overrides; responses compare it to the source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_hash: Option<String>,
+    /// `[execution] baseline_checks` results per phase: the accepted head, the checks
+    /// run and those already failing before any task of the plan ran.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub baselines: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationPass {

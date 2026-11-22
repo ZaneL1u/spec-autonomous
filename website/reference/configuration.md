@@ -42,6 +42,7 @@ lease_seconds = 1800
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支 |
 | `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
+| `baseline_checks` | 默认 `false`。为 `true` 时，phase 计划被接受后、签发该 phase 的实现工作前，协调器在集成检出（`accepted_head`）上把计划里已经能跑的检查跑一次（预检为 `deferred`、或 argv 指向任务将写入且尚不存在的文件的检查跳过；配置了 `verification_prepare` 时先运行它），失败的检查记为已知基线失败：响应 `warnings[]` 给出 `baseline_failure: phase <id>: ...`（含命令、退出码与脱敏的输出末尾），该 phase 的 implement / converge 包在 `snapshot.metadata.baseline_failures` 中带上同一列表。基线失败不阻塞、不计失败、不排修复轮。默认关闭是因为每个 phase 计划要多跑一遍这些检查（包括全量测试）；全量检查昂贵而基线可能已坏的仓库建议开启。基线检查留下的文件会被清除，集成检出回到 `accepted_head` |
 
 | `worktree_root` | 交给宿主 worker 的 worktree 放在哪里：`git`（默认，`.git/spec-autonomous/worktrees/`）、`sibling`（主检出旁边的 `<仓库目录名>.sa-worktrees/`）或一个绝对路径（其下再建 `<仓库目录名>-<哈希>/`，多个仓库可共用） |
 
@@ -66,9 +67,9 @@ worktree_root = "sibling"   # 例如 ~/src/app 的 worker 在 ~/src/app.sa-workt
 - 只有交给宿主的工作检出（规划、审计、实现、converge 等）使用该位置；集成检出、集成候选、归档试跑和 `worktree.create` 的工具检出仍在 `.git/spec-autonomous/worktrees/`。
 - run 启动时冻结配置：已有 run 继续用原位置，不迁移；改配置后新开的 run（或带 `reload_config` 续跑后新建的 worktree）才使用新位置，旧 worktree 照常被识别与回收。
 - 目录建不出来时，签发该工作的 `prepare` / `apply-result` 报 `worktree_root_unavailable` 并给出路径；doctor 对不可写、不是目录的位置提前给出同名诊断。
-- 自动回收（`reclaim_worktrees = "terminal"`）与只读检出复用同时认两个位置。当前 `run.cleanup` 的归属判断仍只认 `.git/` 下的位置，对新位置中残留的 worktree 会以 `ownership_mismatch` 保留，必要时用 `git worktree remove <路径>` 手动删除。
+- 自动回收（`reclaim_worktrees = "terminal"`）、只读检出复用与 `run.cleanup` 的归属判断同时认两个位置。
 
-run 启动时冻结配置。`run_timeout_seconds` 按自 run 开始的墙钟时间计（包括等待宿主的时间）。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed ... of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`。
+run 启动时冻结配置。`run_timeout_seconds` 按活动时间计：协调器运行的时间，加上 run 处于 `awaiting_host`（宿主持有已签发的工作包）的时间；停在 `needs_input`、`paused` 或终态期间不计，宿主离开一天后回来不会因此耗尽预算。账本里 0.2.0 之前写入的 run 没有活动时间锚点，从记录的 `elapsed_ms` 继续累计，此前按墙钟记下的用量保留。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed (active time: ...) of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`；未开 `unsafe_budgets` 时还会说明延长后总上限不能超过 72 小时、本次最多还能加多少，或者已到上限、需要先在项目配置里设 `unsafe_budgets = true` 并 `reload_config`。
 
 ## 分阶段验证命令
 
@@ -116,7 +117,7 @@ argv = ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]
 idempotent = true
 ```
 
-需要多步时写成提交在仓库里的脚本（例如 `scripts/worker-prepare.sh`），并在 `[environment]` 里固定 `UV_CACHE_DIR` / `PNPM_STORE_DIR` 等缓存位置。doctor 会对两类遗漏给出警告：`.spec-autonomous/` 下存在 `verification-prepare.*` / `worker-prepare.*` 脚本却没有对应 `[hooks.*]`（`hook_unbound_warning`）；仓库声明了子模块，但 `init_submodules = false` 且没有 `verification_prepare`（`submodules_warning`）。
+需要多步时写成提交在仓库里的脚本（例如 `scripts/worker-prepare.sh`），并在 `[environment]` 里固定 `UV_CACHE_DIR` / `PNPM_STORE_DIR` 等缓存位置。doctor 会对两类遗漏给出警告：`.spec-autonomous/` 下存在 `verification-prepare.*` / `worker-prepare.*` 脚本却没有对应 `[hooks.*]`（`hook_unbound_warning`）；仓库声明了子模块，但 `init_submodules = false` 且没有 `worker_prepare`（`submodules_warning`；只配了 `verification_prepare` 也会提示，因为它只准备验证检出，worker worktree 仍然没有子模块内容）。
 
 ## `host`
 

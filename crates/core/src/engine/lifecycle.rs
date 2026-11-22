@@ -15,9 +15,9 @@ impl Coordinator<'_> {
                 "{}\n{}\nEnvironment: {}",
                 instruction,
                 crate::verification_preflight::planning_guidance(),
-                crate::verification_preflight::environment_with_overrides(
+                crate::verification_preflight::environment_for_config(
                     &self.project(),
-                    &self.run.config.runner.environment
+                    &self.run.config
                 )
             );
             let (result, _worktree, index) =
@@ -1224,6 +1224,7 @@ impl Coordinator<'_> {
                 prepared = true;
             }
             let details = self.record_check(&wave, project, &check, false)?;
+            self.failpoint_after_check(label)?;
             if reuse && details["tree_unchanged"] == true {
                 if let Some(host) = self.run.host.as_mut() {
                     let pass = VerificationPass {
@@ -1276,8 +1277,7 @@ impl Coordinator<'_> {
                     details["manifest"]
                 );
             }
-            // Retain the existing actionable Node directory diagnosis without
-            // exposing arbitrary child output in a public error.
+            // Retain the existing actionable Node directory diagnosis.
             let stderr =
                 fs::read_to_string(details["stderr"].as_str().unwrap()).unwrap_or_default();
             let readiness = crate::verification_preflight::inspect_checks_with_config(
@@ -1297,10 +1297,21 @@ impl Coordinator<'_> {
                     details["manifest"]
                 );
             }
+            // Name the command and quote redacted output tails first, so the attempt
+            // error, retry packets and clipped blockers say what failed and why. The
+            // verification_prepare hook keeps its argv and output in the config and logs.
             bail!(
-                "verification_failed: {label} {} {failure}, exit {}; diagnostics {}; stdout {}; stderr {}",
+                "verification_failed: {label} {} {failure}, exit {}: {}; diagnostics {}; stdout {}; stderr {}",
                 if preparation { "preparation" } else { "check" },
                 details["exit_code"],
+                if preparation {
+                    format!(
+                        "[hooks.verification_prepare] exited {}",
+                        details["exit_code"]
+                    )
+                } else {
+                    crate::verification::failure_summary(&details, &check.cwd, &self.run.config)
+                },
                 details["manifest"],
                 details["stdout"],
                 details["stderr"]

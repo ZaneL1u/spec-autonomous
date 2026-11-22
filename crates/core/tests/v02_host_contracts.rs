@@ -820,6 +820,53 @@ fn sibling_worktree_root_puts_worker_checkouts_outside_git_and_reclaims_them() {
 }
 
 #[test]
+fn run_cleanup_owns_worker_checkouts_under_the_configured_root() {
+    let root = fixture(|config| {
+        config.execution.worktree_root = "sibling".into();
+        config.execution.reclaim_worktrees = "never".into();
+        config.execution.automatic_cleanup = false;
+    });
+    let root = root.path();
+    let repo = Repository::discover(root).unwrap();
+    let sibling = repo.worktree_root("sibling").unwrap();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(sibling.clone());
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    let worktree = Path::new(request["worktree"].as_str().unwrap()).to_path_buf();
+    write_value(&request);
+    submit(root, &request, receipt(&packet(root, &request)));
+    assert!(
+        worktree.exists(),
+        "reclaim is off, the closed checkout stays"
+    );
+    let cleaned = api::invoke(
+        root,
+        "run.cleanup",
+        &json!({"run_id":run_id,"active":true,"apply":true}),
+    )
+    .unwrap();
+    let path = worktree.to_string_lossy().into_owned();
+    let retained = cleaned["retained_details"].to_string();
+    assert!(
+        !retained.contains("ownership_mismatch"),
+        "a checkout under the configured root is the run's own: {cleaned}"
+    );
+    assert!(
+        cleaned["removed"].as_array().unwrap().iter().any(|p| p
+            .as_str()
+            .is_some_and(|p| Path::new(p) == worktree || p == path)),
+        "{cleaned}"
+    );
+    assert!(!worktree.exists());
+}
+
+#[test]
 fn existing_runs_keep_their_worktree_root_and_doctor_explains_the_default() {
     let root = fixture(|_| {});
     let root = root.path();

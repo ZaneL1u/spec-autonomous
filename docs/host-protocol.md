@@ -28,7 +28,7 @@
 - `token` 只在 `prepare`、`apply-result`、带 `host` 的 `next` 与 `request.get` 中返回。
 - `request.get {run_id, request_id, host?}` 返回一个请求的 `status`、`owner`、`heartbeat_age_ms`、`stale`、`has_receipt`、packet 路径与 `error`；`host_id` 匹配时附 `token`。
 - `stale` 只是信息：所有权从不转移，`apply-result` 不再因心跳过期拒收已持有的回执。`work.heartbeat` 只在 packet 的 `limits` 要求时需要。
-- packet 的 `limits` 自带说明：`enforced: false`（CLI 不计时、不终止宿主 worker）；`applies_to` 说明 `attempt_timeout_seconds` 约束的是 CLI 自己启动的验证检查与钩子子进程；`heartbeat_required: false`；`stale_effect: "informational"`。`run_remaining_ms` 与 `max_result_bytes` 含义不变。
+- packet 的 `limits` 自带说明：`enforced: false`（CLI 不计时、不终止宿主 worker）；`applies_to` 说明 `attempt_timeout_seconds` 约束的是 CLI 自己启动的验证检查与钩子子进程；`heartbeat_required: false`；`stale_effect: "informational"`。`max_result_bytes` 含义不变；`run_remaining_ms` 是 `run_timeout_seconds` 减去已用的活动时间（协调器运行与 `awaiting_host` 期间，`needs_input` / `paused` 不计）。
 - `work.revoke {run_id, request_id, host_stopped: true, reason, token?|host?}`：令牌或拥有者 `host_id` 二选一；只有确认子会话已停止才能调用。
 - 完成与否由 CLI 回执与账本决定，而不是 agent 会话的退出状态：结果已提交则该单元已完成；结果未提交则重新提交同一结果或重派同一 packet。
 
@@ -70,7 +70,7 @@ implement 与 audit 的 WorkerResult 可以带可选的 `deferred_evidence: [{ki
 
 ## 追加写集
 
-implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
+implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器只自动授权字面文件路径（模式与目录返回 `write_scope_not_literal`，需人工 `run.revise`），且在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文（含其父目录）、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；授权会像 `run.revise` 一样重置该任务的重试计数，每个任务在整个 run 中至多自动追加 10 条路径（超出为 `write_scope_limit`）；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_not_literal` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
 
 ## 审计与验证随改动收窄
 
@@ -118,7 +118,7 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 ## worker 检出准备
 
-写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。
+写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本给出警告；仓库有子模块而 `init_submodules = false` 且未配置 `worker_prepare` 时给出 `submodules_warning`（只配 `verification_prepare` 不够，它不准备 worker 检出）。配置与示例见 website/reference/configuration.md。
 
 ## 检查环境变量
 
@@ -139,8 +139,9 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 ## 视图
 
 - `verification_readiness` 只在 `prepare` / `next` / `apply-result` 计算；`work.claim`、`work.claim-batch`、`work.heartbeat` 的响应里它是 `{"status":"not_computed"}`。
-- 检查 argv 以裸 `openspec` 开头且 PATH 解析不到时，预检、检查执行与归档前的配置检查统一改用 run 配置里的 `provider.openspec_command`（受管理或项目本地 OpenSpec）加原参数。`verification_readiness.checks[]` 的 `argv` 仍是声明值，`resolved_argv` 给出实际执行的 argv；证据清单记录 `executed_argv`。
+- 检查 argv 以裸 `openspec` 开头且 PATH 解析不到时，预检、检查执行与归档前的配置检查统一改用 run 配置里的 `provider.openspec_command`（受管理或项目本地 OpenSpec）加原参数。`verification_readiness.checks[]` 的 `argv` 仍是声明值，`resolved_argv` 给出实际执行的 argv；证据清单记录 `executed_argv`。规划包的 `snapshot.metadata.verification_environment.managed_commands` 与写入型 / 规划包的 `snapshot.metadata.managed_commands` 给出同一映射（`openspec.argv`、`usage`），`prompt.md` 末尾附 `TOOLS:` 说明：检查 argv 可以照写裸 `openspec`，worker 在自己的 shell 里改用该绝对 argv 或 `spec-autonomous providers exec openspec -- <args>`。`verification_environment.executables` 另外探测 `pnpm`、`uv`、`openspec`。
 - run 的配置在启动时冻结。`prepare` / `next` / `apply-result` 发现源目录当前的项目配置（用户级与项目 `config.toml` 合并后）与 run 启动或上次 `reload_config` 时加载的不一致时，在 `warnings` 中给出 `config_drift: project configuration changed since the run started; pass reload_config to apply it`，但不会自动重载。`extend_seconds`、`max_attempts`、`max_workers` 这类 run 本地覆盖不算漂移。
+- 开启 `[execution] baseline_checks` 后，phase 计划被接受时先在集成检出上把已能运行的检查跑一次；已经失败的检查以 `baseline_failure: phase <id>: ...` 出现在 `prepare` / `next` / `apply-result` 的 `warnings` 中（直到该 phase 完成），并作为 `snapshot.metadata.baseline_failures` 进入该 phase 的 implement / converge 包。它们只是信息，不阻塞也不计失败。
 - full 视图的 `config` 包含 `hooks`（每个钩子的名称、`argv` 与 `idempotent`），用于确认 `verification_prepare` / `worker_prepare` 等钩子是否生效；`environment` 仍为 `redacted`。
 - 读取能力支持 `fields` / `limit` / `offset`，可分页的数组新增 `attempts`、`work`、`evidence`、`intents`。
 - 不要直接读取 `.git/spec-autonomous/state.db`。缺字段请报协议缺口。
@@ -162,8 +163,10 @@ phase 有灰区时 `prepare` 返回 `needs_input`，`blocker` 以 `discussion_re
 
 `repair_repeated`（同一失败在一轮修复后再次出现）、`budget_cap`、`verification_missing` 和其他 `needs_input` 都是交给操作者的决定，不是重试信号。`verification_preflight_failed` 用 `spec-autonomous prepare --run-id <run_id>`（不要再带 `--change` / `--feature`，二者与 `--run-id` 互斥）即得到带诊断的新规划包。
 
+检查失败的错误（`attempts[].error`、重派包的 `failure` 与 blocker）形如 `verification_failed: <stage> check failed, exit <n>: command [argv] in <cwd> exited <n>; stderr tail: …; stdout tail: …; diagnostics <manifest>; stdout <log>; stderr <log>`：先给实际执行的 argv、声明的 cwd、退出码和 stderr / stdout 末尾至多 8 行（各 600 字符），再给日志路径；`verification_prepare` 钩子失败只给退出码和日志路径，不引用其 argv 与输出。引用前会脱敏：`[environment]` / `runner.environment` 的值、键名含 token / secret / password / api_key / credential 的 `key=value`、Bearer / Basic 凭据与 URL 中的密码都换成 `[redacted]`；输出里的 `needs_input` 等状态词会改写为连字符形式，不会影响 run 状态判断。
+
 `blocker` 只描述本次停止的原因，历史失败在 `attempts[].error` 中。`no_progress: no eligible task remains` 按「最新在前」只列每个未完成任务最近一次失败（每条截断到 600 字符），其余失败只给计数（`(<n> earlier failures are listed in attempts)`）。
 
-检查因宿主进程被中断、`run.pause` / `run.cancel` 或 run 截止时间而被取消（证据 `failure_kind: "cancelled"`，exit 130）时，错误以 `paused: verification_cancelled` 开头而不是 `verification_failed`：被验证的 implement 回执保持 `submitted`，不记失败、不计入 `max_attempts` 与无进展判断，阶段 / 里程碑门禁也不会因此排修复轮；`prepare --run-id <run_id>` 对同一候选重新验证，不重新实现。在此之前该请求仍以 `status: "submitted"` 出现在 `work[]` 中，宿主不要重派它。
+检查因宿主进程被中断、`run.pause` / `run.cancel` 或 run 截止时间而被取消（证据 `failure_kind: "cancelled"`，exit 130）时，错误以 `paused: verification_cancelled` 开头而不是 `verification_failed`。暂停 / 取消请求、进程中断或 run 截止时间在开始集成前或两条检查之间（包括合并验证 `combined` 阶段）被发现时同样处理，错误分别以 `paused:` / `cancel:` / `budget_exhausted:` 开头。两种情况下被验证的 implement 回执都保持 `submitted`，不记失败、不计入 `max_attempts` 与无进展判断，阶段 / 里程碑门禁也不会因此排修复轮；`prepare --run-id <run_id>` 对同一候选重新验证，不重新实现。在此之前该请求仍以 `status: "submitted"` 出现在 `work[]` 中，宿主不要重派它。
 
 `verification_environment_unavailable` 表示预检的全部错误都是项目级（与任务无关）的 `check_executable_missing` / `check_cwd_missing`：计划本身没问题，缺的是环境。该规划 attempt 保持 `candidate`，不计入失败次数；装好可执行文件、建好目录或改正 `runner.environment` / 项目验证配置（改配置时带 `reload_config`）后，再 `prepare --run-id <run_id>` 只重跑预检，通过即直接签发实现工作，不会重新规划。源或基线已变化时旧候选会被标为 `superseded` 并重新规划。任务级的缺失仍按 `verification_preflight_failed` 处理并要求更正计划。

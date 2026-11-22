@@ -80,6 +80,7 @@ impl Coordinator<'_> {
         if plan.phase_id != phase.id {
             bail!("invalid_plan: supplied plan has wrong phase binding");
         }
+        self.baseline_checks(phase, &plan)?;
         let done_ids: Vec<_> = plan
             .tasks
             .iter()
@@ -133,9 +134,12 @@ impl Coordinator<'_> {
                 result.and_then(|_| self.integrate_task(phase, &plan, &snapshot, task, index));
             if let Err(error) = accepted {
                 let message = format!("{error:#}");
-                if message.starts_with(lifecycle::VERIFICATION_CANCELLED) {
+                if interrupted_integration(&message) {
                     // The receipt stays submitted, so the next resume verifies the same
                     // candidate again; no failure is counted and nothing is re-implemented.
+                    // This covers a check cancelled while it ran and a pause, cancel,
+                    // interrupt or run deadline noticed before integration or between
+                    // two checks: none of them says anything about the candidate.
                     let a = &mut self.run.attempts[index];
                     a.status = "submitted".into();
                     a.finished_at = None;
@@ -367,11 +371,19 @@ impl Coordinator<'_> {
         }
         let requested = &receipt.requested_writes;
         let limit = crate::run_revision::MAX_REQUESTED_WRITES;
+        let worker_project = Path::new(&attempt.worktree).join(&self.run.project_relative);
+        let roots = [self.project(), worker_project];
+        let roots: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let checked = if requested.len() > limit {
             Err(anyhow::anyhow!(
                 "write_scope_limit: {} paths requested; at most {limit} are added without review",
                 requested.len()
             ))
+        } else if let Some(error) = requested
+            .iter()
+            .find_map(|raw| crate::run_revision::literal_file_request(raw, &roots).err())
+        {
+            Err(error)
         } else {
             crate::run_revision::admissible_writes(
                 &self.run,
@@ -381,6 +393,19 @@ impl Coordinator<'_> {
                 &crate::run_revision::context_paths(snapshot),
                 Some(&attempt.id),
             )
+            .and_then(|added| {
+                // Each grant resets the task's retry count, so the paths a task receives
+                // without review are bounded over the whole run, not per receipt.
+                let earlier = automatic_grants(&self.run, &phase.id, &attempt.task_id);
+                if earlier + added.len() > limit {
+                    bail!(
+                        "write_scope_limit: task {} already received {earlier} paths without review and asks for {} more; at most {limit} are added automatically per task",
+                        attempt.task_id,
+                        added.len()
+                    );
+                }
+                Ok(added)
+            })
         };
         let now = paths::now();
         match checked {
@@ -407,12 +432,15 @@ impl Coordinator<'_> {
                     "automatic": true,
                     "attempt_id": attempt.id,
                 });
-                self.run
-                    .host
-                    .as_mut()
-                    .context("legacy_run_read_only")?
-                    .verification_revisions
-                    .push(record);
+                let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+                host.verification_revisions.push(record);
+                // Like a reviewed run.revise, a granted scope starts a new retry epoch: the
+                // blocked attempt and earlier failures under the narrower scope do not
+                // count toward max_attempts or no-progress detection.
+                host.task_retry_epochs.insert(
+                    Run::key(&phase.id, &attempt.task_id),
+                    self.run.attempts.len(),
+                );
                 let a = &mut self.run.attempts[index];
                 a.status = "failed".into();
                 a.finished_at = Some(now);
@@ -1018,4 +1046,26 @@ impl Coordinator<'_> {
         }
         Ok(())
     }
+}
+
+/// Errors that stop integrating a submitted candidate without judging it: a cancelled
+/// check, a pause or cancel request (`pause:` before `finish` rewrites it), an
+/// interrupted process and the run deadline.
+fn interrupted_integration(message: &str) -> bool {
+    message.starts_with(lifecycle::VERIFICATION_CANCELLED)
+        || ["paused:", "pause:", "cancel:", "budget_exhausted:"]
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
+}
+
+/// Paths already added to a task's write set by automatic grants in this run.
+fn automatic_grants(run: &Run, phase_id: &str, task_id: &str) -> usize {
+    run.host
+        .iter()
+        .flat_map(|h| &h.verification_revisions)
+        .filter(|r| r["automatic"] == true)
+        .flat_map(|r| r["diff"].as_array().into_iter().flatten())
+        .filter(|d| d["phase_id"] == phase_id && d["task_id"] == task_id)
+        .map(|d| d["added"].as_array().map_or(0, Vec::len))
+        .sum()
 }

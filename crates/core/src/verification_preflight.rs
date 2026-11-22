@@ -103,11 +103,12 @@ pub fn environment_with_overrides(
     overrides: &BTreeMap<String, String>,
 ) -> serde_json::Value {
     let search = SearchEnvironment::new(overrides);
-    let commands: std::collections::BTreeMap<_, _> =
-        ["node", "bun", "npm", "cargo", "python3", "go", "git"]
-            .into_iter()
-            .map(|name| (name, resolve_executable(root, name, &search)))
-            .collect();
+    let commands: std::collections::BTreeMap<_, _> = [
+        "node", "bun", "npm", "pnpm", "cargo", "python3", "uv", "go", "git", "openspec",
+    ]
+    .into_iter()
+    .map(|name| (name, resolve_executable(root, name, &search)))
+    .collect();
     // Real versions, package scripts, existing test files and ignore status let a
     // planner choose runnable argv the first time instead of guessing.
     let versions: BTreeMap<&str, String> = commands
@@ -196,6 +197,34 @@ pub fn environment_with_overrides(
     })
     .collect();
     serde_json::json!({"os":env::consts::OS,"arch":env::consts::ARCH,"executables":commands,"runtime_versions":versions,"package_scripts":package_scripts,"manifests":manifests,"test_files":test_files,"test_file_count":test_file_count,"ignored_directories":ignored,"argv_shell_expansion":false,"verification_executed":false})
+}
+
+/// [`environment_with_overrides`] for a run's configuration, plus `managed_commands`:
+/// the executables the coordinator maps when it runs checks, so planners and workers can
+/// run the same command in their own shells.
+pub fn environment_for_config(root: &Path, config: &Config) -> serde_json::Value {
+    let mut value = environment_with_overrides(root, &config.runner.environment);
+    value["managed_commands"] = managed_commands(root, config);
+    value
+}
+
+/// A bare `openspec` that the check PATH does not resolve runs as the managed or
+/// project-local `provider.openspec_command`. Workers get the mapping in their packets,
+/// because their own shell usually lacks that command on PATH too. Empty when nothing
+/// is mapped.
+pub fn managed_commands(root: &Path, config: &Config) -> serde_json::Value {
+    let search = SearchEnvironment::for_config(config);
+    let mapped = search.resolve_argv(root, &["openspec".to_owned()]);
+    if mapped == ["openspec"] {
+        return serde_json::json!({});
+    }
+    serde_json::json!({"openspec":{
+        "argv": mapped,
+        "on_path": false,
+        "usage": format!(
+            "`openspec` is not on PATH. Checks may still declare a bare `openspec <args>` argv: the coordinator runs it as {mapped:?} followed by <args>. In your own shell run that absolute argv with the same arguments, or `spec-autonomous providers exec openspec -- <args>`."
+        ),
+    }})
 }
 
 pub fn inspect_checks(root: &Path, checks: &[Check], planned_writes: &[String]) -> Report {
