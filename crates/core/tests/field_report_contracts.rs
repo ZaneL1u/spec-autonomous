@@ -636,3 +636,58 @@ fn audit_packets_list_each_check_with_command_revision_stage_and_reuse() {
         "{prompt}"
     );
 }
+
+// ---------------------------------------------------------------------------------
+// 4. Planners learn how OpenSpec tasks parallelize
+
+#[test]
+fn planning_guidance_explains_openspec_parallelism_outside_the_keyed_instruction() {
+    let guidance = spec_autonomous_core::verification_preflight::parallel_planning_guidance();
+    for phrase in ["OpenSpec", "depends_on", "writes do not conflict", "[P]"] {
+        assert!(guidance.contains(phrase), "{phrase}: {guidance}");
+    }
+    let root = fixture(|_| {});
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let input = packet(root, &first["work"][0]);
+    assert!(
+        input.instruction.contains(guidance),
+        "{}",
+        input.instruction
+    );
+    // The keyed instruction is everything before the appended guidance; it still ends
+    // with the original planning guidance.
+    let keyed = input
+        .instruction
+        .split(" Declare reads for every task:")
+        .next()
+        .unwrap();
+    assert!(!keyed.contains("Parallelism by framework"), "{keyed}");
+
+    // The guidance states what validation enforces: two tasks without depends_on are a
+    // valid OpenSpec plan, while Spec Kit tasks without [P] must keep native order.
+    use spec_autonomous_core::plan;
+    let mut snapshot = input.snapshot.clone().unwrap();
+    for source in &mut snapshot.tasks {
+        source.parallel = false;
+    }
+    let independent = Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash.clone(),
+        tasks: vec![
+            task("value", &snapshot.tasks[0].id, "src/value.txt"),
+            task("other", &snapshot.tasks[1].id, "src/other.txt"),
+        ],
+        milestone: None,
+    };
+    let error = plan::validate_plan(&independent, &snapshot).unwrap_err();
+    assert!(error.to_string().contains("native order"), "{error}");
+    snapshot.framework = spec_autonomous_core::Framework::Openspec;
+    plan::validate_plan(&independent, &snapshot).unwrap();
+}

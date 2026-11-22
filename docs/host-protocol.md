@@ -55,6 +55,10 @@
 - glob 或目录项不会放开原生规格上下文文件（`snapshot.context_files`）；任务确需改它们时必须逐字列出该文件。`.git/`、`.spec-autonomous/` 永远不可写。
 - 规划包指令末尾的附加说明给出上述写法，不进入请求键。
 
+## 规划中的并行
+
+规划指令（进入请求键的部分）里「Preserve native order and phase barriers; only independent [P] siblings may parallelize in Spec Kit」只约束 Spec Kit：原生顺序与 phase 屏障是硬约束，只有同一 phase 内的 `[P]` 兄弟任务可以省掉顺序依赖。OpenSpec 的 tasks.md 没有 `[P]` 标记，计划校验也不强制其列表顺序：协调器在两个任务之间没有（直接或传递的）`depends_on`、写集又不冲突时并行运行，否则串行；空写集一律串行。OpenSpec 规划者因此用 `depends_on` 表达真实依赖（需要另一任务的代码、迁移、夹具或生成文件），独立任务留空 `depends_on`，并把写集写得精确、互不重叠。规划批次之间仍有保守屏障。指令末尾的附加说明给出这段规则，不进入请求键。
+
 ## 开放措辞与合理扩展
 
 规格或设计里「如 / 例如 / 等 / such as」列出的往往是示例而不是穷举。审计包的 `prompt.md` 要求审计者：实现覆盖了验收条目要求的全部内容、又额外支持了规格只举例或未列出的情况且不与规格矛盾时，判 `passed: true` 并让 `evidence` 以 `extension:` 开头说明超出部分；只有与规格矛盾（包括条目明确禁止列表之外的情况）或缺少要求的内容时才判 `passed: false`。其余判定规则不变。

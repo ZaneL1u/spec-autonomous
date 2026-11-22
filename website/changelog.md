@@ -32,6 +32,7 @@
 ### 计划、结果与审计
 
 - 检查可以声明 `env`（只对该检查生效的非敏感环境变量，如 `PYTHONDONTWRITEBYTECODE=1`）：键名受校验，不能覆盖 `PATH` / `HOME` / `SA_*` / `GIT_*` 等，凭证类名字被拒绝；值进入验证复用身份，证据清单只记变量名。规划包的指令与结果 schema 同步说明。
+- 规划指令补充按框架的并行规则：`[P]` 规则只针对 Spec Kit；OpenSpec 任务没有原生并行标记，协调器按 `depends_on` 与写集冲突决定串行或并行，规划者用 `depends_on` 表达真实依赖、给独立任务精确且互不重叠的写集。这段说明不进入请求键。
 - 规划指令明确任务 `writes` / `reads` 可以用目录前缀和 glob（如 `server/*/migrations/*.py`、`tests/**`），并说明保守的冲突串行规则；glob 或目录项不再能放开原生规格上下文文件，需逐字列出。
 - implement 与 audit 的结果可以带 `deferred_evidence`（`live` / `manual` / `external`），表示要宿主在真实环境补的证据：它不算失败，协调器在 run 视图、`next`、`progress` 中列出，里程碑完成时以 `deferred_evidence_pending` 警告和待办列表交给宿主。
 - 审计包的执行证据可以直接用：`snapshot.metadata.execution_evidence.checks` 列出每条检查最近一次的 `argv` / `executed_argv`、`cwd`（含计划声明的 `declared_cwd`）、`stage`、`revision`、`exit_code`、`duration_ms` 与 `reused_from`，审计者不必再逐个翻 `verify-*/check-*/result.json` 才知道全量测试跑在哪个提交、跑的什么命令；`execution-evidence.json` 的 `verification` 每条在原字段后追加同样的信息。原有字段不变，新内容不进入请求键。
