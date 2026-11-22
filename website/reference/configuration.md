@@ -43,7 +43,7 @@ lease_seconds = 1800
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
 
-run 启动时冻结配置。`run_timeout_seconds` 按自 run 开始的墙钟时间计（包括等待宿主的时间）。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed ... of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`。
+run 启动时冻结配置。`run_timeout_seconds` 按活动时间计：协调器运行的时间，加上 run 处于 `awaiting_host`（宿主持有已签发的工作包）的时间；停在 `needs_input`、`paused` 或终态期间不计，宿主离开一天后回来不会因此耗尽预算。账本里 0.2.0 之前写入的 run 没有活动时间锚点，从记录的 `elapsed_ms` 继续累计，此前按墙钟记下的用量保留。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed (active time: ...) of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`；未开 `unsafe_budgets` 时还会说明延长后总上限不能超过 72 小时、本次最多还能加多少，或者已到上限、需要先在项目配置里设 `unsafe_budgets = true` 并 `reload_config`。
 
 ## 分阶段验证命令
 

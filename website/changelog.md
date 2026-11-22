@@ -12,6 +12,7 @@
 - 自动追加写集与人工 `run.revise` 一样重置该任务的重试计数，扩写集不再消耗 `max_attempts`；每个任务在整个 run 中至多自动追加 10 条路径。
 - 检查失败的错误直接说明失败的是哪条命令、为什么：带实际执行的 argv、cwd、退出码和脱敏后的 stderr / stdout 末尾几行，日志路径放在后面；重派包的 `failure` 与 no_progress blocker 随之受益。
 - 规划与 worker 工作包说明 `openspec` 映射：PATH 上没有 `openspec` 时，`managed_commands.openspec` 与 prompt 的 `TOOLS:` 给出协调器实际执行的绝对 argv 和 `providers exec` 写法；`verification_environment.executables` 新增 `pnpm`、`uv`、`openspec`。
+- run 预算改按活动时间计：协调器运行与宿主持有工作包（`awaiting_host`）的时间计入，停在 `needs_input` / `paused` 的时间不计；`budget_exhausted` 说明 72 小时上限下最多还能延长多少，到顶时直接提示需要 `unsafe_budgets`。旧 run 从已记录的用量继续累计。
 
 ## 0.1.0-alpha.16
 

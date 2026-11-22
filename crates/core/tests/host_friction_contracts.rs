@@ -985,7 +985,7 @@ fn reload_config_keeps_earlier_extensions_and_budget_stops_say_how_much_to_add()
     resume(json!({"reload_config":true}));
     assert_eq!(timeout(root), 90000);
 
-    // The deadline counts wall time since the run started.
+    // The deadline counts active time; the host holding issued packets is active.
     let root = fixture(|c| c.execution.run_timeout_seconds = 1);
     let root = root.path();
     let first = api::invoke(

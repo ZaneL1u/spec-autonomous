@@ -745,3 +745,104 @@ fn planners_and_workers_learn_how_a_mapped_openspec_runs() {
     // The packet still verifies against its recorded input hash.
     assert_eq!(packet(root, request).task.unwrap().id, "value");
 }
+
+/// Rewrite a stored run, as an older binary or a long absence would have left it.
+fn edit_run(root: &Path, id: &str, edit: impl FnOnce(&mut Run)) {
+    let repo = Repository::discover(root).unwrap();
+    let _lease = spec_autonomous_core::state::Lease::acquire(&repo).unwrap();
+    let mut store = Store::open(&repo, true).unwrap().unwrap();
+    let mut run = store.get(id).unwrap();
+    edit(&mut run);
+    store.save(&run, "test_edit").unwrap();
+}
+fn resume(root: &Path, id: &str) -> Value {
+    api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":id,"host":host(),"view":"full"}),
+    )
+    .unwrap()
+}
+fn exhausted(response: &Value) -> bool {
+    response["blocker"]
+        .as_str()
+        .is_some_and(|b| b.starts_with("budget_exhausted:"))
+}
+
+#[test]
+fn the_run_budget_counts_active_time_only() {
+    // Time stopped in paused (or needs_input) is not spent.
+    let root = fixture(|c| c.execution.run_timeout_seconds = 6);
+    let root = root.path();
+    let (run_id, _) = start(root);
+    api::invoke(root, "run.pause", &json!({"run_id":run_id})).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(6500));
+    let resumed = resume(root, &run_id);
+    assert!(!exhausted(&resumed), "{resumed}");
+    let run = saved(root, &run_id);
+    assert!(run.elapsed_ms < 6000, "{}", run.elapsed_ms);
+    assert!(run.active_at.is_some());
+    let remaining = resumed["work"][0]["limits"]["run_remaining_ms"]
+        .as_u64()
+        .unwrap();
+    assert!(remaining > 0 && remaining <= 6000, "{resumed}");
+
+    // Time the host holds issued packets is active and does spend the budget.
+    std::thread::sleep(std::time::Duration::from_millis(6500));
+    let stopped = resume(root, &run_id);
+    assert!(exhausted(&stopped), "{stopped}");
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(blocker.contains("s elapsed (active time:"), "{blocker}");
+    assert!(
+        blocker.contains("stopped for input or paused is not counted"),
+        "{blocker}"
+    );
+    assert!(
+        !blocker.contains("unsafe_budgets = true in the project config"),
+        "{blocker}"
+    );
+}
+
+#[test]
+fn legacy_runs_resume_from_recorded_time_and_cap_hints_name_unsafe_budgets() {
+    let root = fixture(|c| c.execution.run_timeout_seconds = 3600);
+    let root = root.path();
+    let (run_id, _) = start(root);
+    // A run written before active-time accounting: started long ago, no active_at.
+    edit_run(root, &run_id, |run| {
+        run.started_at = "2026-01-01T00:00:00.000Z".into();
+        run.elapsed_ms = 1000;
+        run.active_at = None;
+    });
+    let resumed = resume(root, &run_id);
+    assert!(!exhausted(&resumed), "{resumed}");
+    assert!(saved(root, &run_id).elapsed_ms < 60_000);
+
+    // At the 72h cap the extension hint says unsafe_budgets is required.
+    let cap = spec_autonomous_core::config::RUN_TIMEOUT_CAP_SECONDS;
+    edit_run(root, &run_id, |run| {
+        run.config.execution.run_timeout_seconds = cap;
+        run.elapsed_ms = cap * 1000 + 5000;
+        run.status = "paused".into();
+    });
+    let stopped = resume(root, &run_id);
+    assert!(exhausted(&stopped), "{stopped}");
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(
+        blocker.contains(
+            "without [execution] unsafe_budgets = true, so this run needs unsafe_budgets = true"
+        ),
+        "{blocker}"
+    );
+    // Below the cap it says how much an extension may still add.
+    edit_run(root, &run_id, |run| {
+        run.config.execution.run_timeout_seconds = cap - 100;
+        run.elapsed_ms = (cap - 100) * 1000 + 5000;
+    });
+    let stopped = resume(root, &run_id);
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(
+        blocker.contains("extend_seconds can add at most 100"),
+        "{blocker}"
+    );
+}

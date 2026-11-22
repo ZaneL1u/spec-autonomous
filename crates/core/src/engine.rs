@@ -254,6 +254,7 @@ pub fn start(
         started_at: now.clone(),
         updated_at: now,
         elapsed_ms: 0,
+        active_at: None,
         blocker: None,
         config,
         completed_phases: completed,
@@ -287,7 +288,7 @@ pub fn start(
     }
     c.capture_sources()?;
     c.save("created")?;
-    let _watchdog = Watchdog::start(&c.repo, &c.run, c.cancel.clone());
+    let _watchdog = Watchdog::start(&c.repo, &c.run, c.elapsed_before, c.cancel.clone());
     let result = c.drive(start.create_roadmap);
     c.finish(result)
 }
@@ -373,7 +374,7 @@ pub fn resume_with(
         started: Instant::now(),
         elapsed_before,
     };
-    let _watchdog = Watchdog::start(&c.repo, &c.run, c.cancel.clone());
+    let _watchdog = Watchdog::start(&c.repo, &c.run, c.elapsed_before, c.cancel.clone());
     let result = (|| {
         c.recover()?;
         if c.run.terminal() {
@@ -495,6 +496,7 @@ impl Coordinator<'_> {
     fn save(&mut self, event: &str) -> Result<()> {
         self.run.updated_at = paths::now();
         self.run.elapsed_ms = self.elapsed_before + self.started.elapsed().as_millis() as u64;
+        self.run.active_at = Some(self.run.updated_at.clone());
         self.store.save(&self.run, event)?;
         (self.observer)(&self.run, event);
         Ok(())
@@ -596,8 +598,9 @@ impl Coordinator<'_> {
         let _ = stage;
         Ok(())
     }
-    /// The budget_exhausted blocker once the run deadline is reached, with the elapsed
-    /// time, the current limit and the smallest extend_seconds that reopens the budget.
+    /// The budget_exhausted blocker once the active-time budget is used, with the time
+    /// used, the current limit and the smallest extend_seconds that reopens the budget.
+    /// When that extension cannot fit under the 72 h cap it says unsafe_budgets is needed.
     fn budget_exhausted(&self) -> Option<String> {
         let elapsed_ms = self.elapsed_before + self.started.elapsed().as_millis() as u64;
         let limit = self.run.config.execution.run_timeout_seconds;
@@ -605,10 +608,23 @@ impl Coordinator<'_> {
             return None;
         }
         let elapsed = elapsed_ms / 1000;
+        let minimum = elapsed.saturating_sub(limit) + 1;
+        let cap = crate::config::RUN_TIMEOUT_CAP_SECONDS;
+        let headroom = cap.saturating_sub(limit);
+        let capped = if self.run.config.execution.unsafe_budgets {
+            String::new()
+        } else if minimum > headroom {
+            format!(
+                "; run_timeout_seconds cannot exceed {cap} (72h) without [execution] unsafe_budgets = true, so this run needs unsafe_budgets = true in the project config and reload_config before any extension"
+            )
+        } else {
+            format!(
+                "; without [execution] unsafe_budgets = true the total run_timeout_seconds stays at most {cap} (72h), so extend_seconds can add at most {headroom}"
+            )
+        };
         Some(format!(
-            "budget_exhausted: run deadline reached: {elapsed}s elapsed (wall time since the run started) of run_timeout_seconds={limit}; continue with `spec-autonomous prepare --run-id {} --extend-seconds <n>` where n (extend_seconds) is at least {} plus the time the remaining work needs",
+            "budget_exhausted: run deadline reached: {elapsed}s elapsed (active time: coordinator work and host-held packets; time the run spends stopped for input or paused is not counted) of run_timeout_seconds={limit}; continue with `spec-autonomous prepare --run-id {} --extend-seconds <n>` where n (extend_seconds) is at least {minimum} plus the time the remaining work needs{capped}",
             self.run.id,
-            elapsed.saturating_sub(limit) + 1
         ))
     }
     fn finish(mut self, result: Result<()>) -> Result<Run> {
@@ -1032,13 +1048,14 @@ struct Watchdog {
     handle: Option<thread::JoinHandle<()>>,
 }
 impl Watchdog {
-    fn start(repo: &Repository, run: &Run, cancel: Arc<AtomicBool>) -> Self {
+    /// `elapsed` is the active time already used, the same base budget_exhausted uses.
+    fn start(repo: &Repository, run: &Run, elapsed: u64, cancel: Arc<AtomicBool>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let end = stop.clone();
         let repo = repo.clone();
         let id = run.id.clone();
         let remaining = Duration::from_millis(
-            (run.config.execution.run_timeout_seconds * 1000).saturating_sub(run.elapsed_ms),
+            (run.config.execution.run_timeout_seconds * 1000).saturating_sub(elapsed),
         );
         let handle = thread::spawn(move || {
             let start = Instant::now();
@@ -1103,12 +1120,17 @@ pub(crate) fn config_drift(run: &Run) -> Option<String> {
         )),
     }
 }
-fn elapsed(run: &Run) -> u64 {
-    chrono::DateTime::parse_from_rfc3339(&run.started_at)
-        .ok()
-        .map(|start| {
-            (chrono::Utc::now().timestamp_millis() - start.timestamp_millis()).max(0) as u64
-        })
-        .unwrap_or(run.elapsed_ms)
-        .max(run.elapsed_ms)
+/// Active time used so far: the recorded coordinator time plus, while the host holds
+/// issued work (`awaiting_host`), the time since the coordinator last recorded it. A run
+/// stopped in `needs_input`, `paused` or a terminal state accrues nothing, so a day away
+/// from a blocked run no longer spends its budget. Runs saved before 0.2.0 have no
+/// `active_at` and resume from their recorded `elapsed_ms`.
+pub(crate) fn elapsed(run: &Run) -> u64 {
+    let held = (run.status == "awaiting_host")
+        .then_some(run.active_at.as_deref())
+        .flatten()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| (chrono::Utc::now().timestamp_millis() - at.timestamp_millis()).max(0) as u64)
+        .unwrap_or(0);
+    run.elapsed_ms.saturating_add(held)
 }

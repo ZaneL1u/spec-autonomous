@@ -28,7 +28,7 @@
 - `token` 只在 `prepare`、`apply-result`、带 `host` 的 `next` 与 `request.get` 中返回。
 - `request.get {run_id, request_id, host?}` 返回一个请求的 `status`、`owner`、`heartbeat_age_ms`、`stale`、`has_receipt`、packet 路径与 `error`；`host_id` 匹配时附 `token`。
 - `stale` 只是信息：所有权从不转移，`apply-result` 不再因心跳过期拒收已持有的回执。`work.heartbeat` 只在 packet 的 `limits` 要求时需要。
-- packet 的 `limits` 自带说明：`enforced: false`（CLI 不计时、不终止宿主 worker）；`applies_to` 说明 `attempt_timeout_seconds` 约束的是 CLI 自己启动的验证检查与钩子子进程；`heartbeat_required: false`；`stale_effect: "informational"`。`run_remaining_ms` 与 `max_result_bytes` 含义不变。
+- packet 的 `limits` 自带说明：`enforced: false`（CLI 不计时、不终止宿主 worker）；`applies_to` 说明 `attempt_timeout_seconds` 约束的是 CLI 自己启动的验证检查与钩子子进程；`heartbeat_required: false`；`stale_effect: "informational"`。`max_result_bytes` 含义不变；`run_remaining_ms` 是 `run_timeout_seconds` 减去已用的活动时间（协调器运行与 `awaiting_host` 期间，`needs_input` / `paused` 不计）。
 - `work.revoke {run_id, request_id, host_stopped: true, reason, token?|host?}`：令牌或拥有者 `host_id` 二选一；只有确认子会话已停止才能调用。
 - 完成与否由 CLI 回执与账本决定，而不是 agent 会话的退出状态：结果已提交则该单元已完成；结果未提交则重新提交同一结果或重派同一 packet。
 
