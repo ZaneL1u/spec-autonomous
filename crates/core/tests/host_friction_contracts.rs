@@ -1089,3 +1089,51 @@ fn source_config_drift_is_reported_and_full_views_show_hooks() {
     let again = api::invoke(root, "prepare", &json!({"run_id":run_id,"host":host()})).unwrap();
     assert!(!drift(&again), "{again}");
 }
+
+#[test]
+fn no_progress_blocker_names_only_the_latest_failure_per_task() {
+    let root = fixture(|c| c.execution.max_attempts = 2);
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let other = work(&wave, "other").clone();
+    put(
+        Path::new(other["project"].as_str().unwrap()),
+        "src/other.txt",
+        "other",
+    );
+    submit(root, &other, receipt(&packet(root, &other)));
+    let mut request = work(&wave, "value").clone();
+    let mut response = Value::Null;
+    for wrong in ["41", "43"] {
+        put(
+            Path::new(request["project"].as_str().unwrap()),
+            "src/value.txt",
+            wrong,
+        );
+        response = submit(root, &request, receipt(&packet(root, &request)));
+        if wrong == "41" {
+            request = work(&response, "value").clone();
+        }
+    }
+    let blocker = response["blocker"].as_str().unwrap();
+    assert!(
+        blocker.starts_with("no_progress: no eligible task remains: value: verification_failed"),
+        "{blocker}"
+    );
+    assert_eq!(
+        blocker.matches("verification_failed").count(),
+        1,
+        "{blocker}"
+    );
+    assert!(
+        blocker.ends_with("(1 earlier failures are listed in attempts)"),
+        "{blocker}"
+    );
+    let run = saved(root, &run_id);
+    let failed = run
+        .attempts
+        .iter()
+        .filter(|a| a.task_id == "value" && a.status == "failed")
+        .count();
+    assert_eq!(failed, 2);
+}

@@ -151,7 +151,7 @@ fn trim(input: &mut WorkerInput) {
         snapshot.next_action.instruction = instruction;
     }
 }
-fn clip(text: &str, limit: usize) -> String {
+pub(crate) fn clip(text: &str, limit: usize) -> String {
     let text = text.trim();
     if text.chars().count() <= limit {
         return text.to_owned();

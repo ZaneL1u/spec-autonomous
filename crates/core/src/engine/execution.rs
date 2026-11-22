@@ -282,15 +282,41 @@ impl Coordinator<'_> {
         if issued > 0 || !active.is_empty() {
             bail!("awaiting_host: prepared task work is outstanding");
         }
-        let errors = self
-            .run
-            .attempts
-            .iter()
-            .filter(|a| a.phase_id == phase.id && a.status == "failed")
-            .filter_map(|a| a.error.clone())
-            .collect::<Vec<_>>()
-            .join("; ");
-        bail!("no_progress: no eligible task remains: {errors}")
+        // Name only the current reason per unfinished task, newest first. Joining every
+        // failure in the phase repeated resolved errors and, through earlier no_progress
+        // blockers stored on attempts, grew the blocker to kilobytes with the cause last.
+        let failed = |a: &&Attempt| a.phase_id == phase.id && a.status == "failed";
+        let mut latest: Vec<(usize, String)> =
+            plan.tasks
+                .iter()
+                .filter(|t| !done.contains(&t.id))
+                .filter_map(|t| {
+                    let (index, attempt) =
+                        self.run.attempts.iter().enumerate().rev().find(|(_, a)| {
+                            failed(a) && a.kind == "implement" && a.task_id == t.id
+                        })?;
+                    let error = attempt.error.as_deref()?;
+                    Some((
+                        index,
+                        format!("{}: {}", t.id, work_packet::clip(error, 600)),
+                    ))
+                })
+                .collect();
+        latest.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let older = self.run.attempts.iter().filter(failed).count() - latest.len();
+        bail!(
+            "no_progress: no eligible task remains: {}{}",
+            latest
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>()
+                .join("; "),
+            if older > 0 {
+                format!(" ({older} earlier failures are listed in attempts)")
+            } else {
+                String::new()
+            }
+        )
     }
     /// A blocked implement receipt naming `requested_writes` gets them added to its task's
     /// write set when they are safe (bounded, normalized, outside native context and
