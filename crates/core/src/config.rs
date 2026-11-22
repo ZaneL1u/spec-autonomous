@@ -66,6 +66,11 @@ pub struct Execution {
     /// configuration while off so existing identities do not change.
     #[serde(skip_serializing_if = "is_false")]
     pub init_submodules: bool,
+    /// Where worktrees handed to host workers live: `git` (default, under the Git common
+    /// directory), `sibling` (`<repo>.sa-worktrees/` next to the main checkout) or an
+    /// absolute directory. Omitted while `git` so existing identities do not change.
+    #[serde(skip_serializing_if = "is_git_worktree_root")]
+    pub worktree_root: String,
     /// `affected` lets a task check declared by another task stand on its last pass on
     /// an ancestor commit when the change since does not reach that task's declared
     /// writes and reads; `full` runs every check of every gate. Configured project,
@@ -85,6 +90,9 @@ fn is_full(value: &str) -> bool {
 }
 fn is_false(value: &bool) -> bool {
     !*value
+}
+fn is_git_worktree_root(value: &String) -> bool {
+    value == crate::git::WORKTREE_ROOT_GIT
 }
 /// Hook run in a writing worker's checkout after it is created and before its packet
 /// is issued, for example to sync a virtual environment from a shared cache.
@@ -159,6 +167,7 @@ impl Default for Execution {
             init_submodules: false,
             verification_scope: "affected".into(),
             milestone_verification_scope: "full".into(),
+            worktree_root: crate::git::WORKTREE_ROOT_GIT.into(),
         }
     }
 }
@@ -336,6 +345,16 @@ impl Config {
                 bail!("invalid_config: {name} must be affected or full");
             }
         }
+        let root = &self.execution.worktree_root;
+        if ![
+            crate::git::WORKTREE_ROOT_GIT,
+            crate::git::WORKTREE_ROOT_SIBLING,
+        ]
+        .contains(&root.as_str())
+            && (!Path::new(root).is_absolute() || root.contains('\0'))
+        {
+            bail!("invalid_config: worktree_root must be git, sibling or an absolute directory");
+        }
         if !["terminal", "never"].contains(&self.execution.reclaim_worktrees.as_str()) {
             bail!("invalid_config: reclaim_worktrees must be terminal or never");
         }
@@ -402,6 +421,7 @@ impl Config {
             validate_check(&Check {
                 argv: hook.argv.clone(),
                 cwd: ".".into(),
+                env: Default::default(),
             })?;
         }
         Ok(())
@@ -465,6 +485,92 @@ pub fn validate_check(check: &Check) -> Result<()> {
         }
     }
     paths::relative(&check.cwd)?;
+    validate_check_env(&check.env)
+}
+
+/// Most variables one check may set.
+pub const MAX_CHECK_ENV: usize = 32;
+/// Longest value of a check variable.
+pub const MAX_CHECK_ENV_VALUE_BYTES: usize = 1024;
+/// Variables that locate executables, the user, the shell or the repository, and the
+/// coordinator's own `SA_*` variables. A check cannot replace them.
+const RESERVED_CHECK_ENV: &[&str] = &[
+    "PATH",
+    "PATHEXT",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PWD",
+    "OLDPWD",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "IFS",
+    "ENV",
+    "BASH_ENV",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "USERPROFILE",
+];
+const RESERVED_CHECK_ENV_PREFIXES: &[&str] = &["SA_", "GIT_", "LD_", "DYLD_"];
+/// Name fragments that suggest a credential. Check variables live in plans, packets and
+/// the ledger, so secrets belong in `[environment]` instead.
+const SECRET_CHECK_ENV_MARKERS: &[&str] = &[
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "API_KEY",
+    "APIKEY",
+    "PRIVATE_KEY",
+    "ACCESS_KEY",
+    "AUTH",
+    "COOKIE",
+];
+
+/// Check-level `env`: plain, non-secret variables such as `PYTHONDONTWRITEBYTECODE=1`.
+/// Names are `[A-Za-z_][A-Za-z0-9_]*`; reserved names, `SA_`/`GIT_`/`LD_`/`DYLD_` and
+/// credential-like names are refused, values are bounded and never contain NUL.
+pub fn validate_check_env(env: &BTreeMap<String, String>) -> Result<()> {
+    if env.len() > MAX_CHECK_ENV {
+        bail!("invalid_command: check_env: at most {MAX_CHECK_ENV} variables per check");
+    }
+    for (name, value) in env {
+        let mut chars = name.chars();
+        let valid = chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && name.len() <= 128;
+        if !valid {
+            bail!("invalid_command: check_env: {name:?} is not a valid variable name");
+        }
+        let upper = name.to_ascii_uppercase();
+        if RESERVED_CHECK_ENV.contains(&upper.as_str())
+            || RESERVED_CHECK_ENV_PREFIXES
+                .iter()
+                .any(|prefix| upper.starts_with(prefix))
+        {
+            bail!(
+                "invalid_command: check_env: {name} is reserved; checks cannot replace PATH, HOME, the shell, Git or SA_* variables"
+            );
+        }
+        if SECRET_CHECK_ENV_MARKERS
+            .iter()
+            .any(|marker| upper.contains(marker))
+        {
+            bail!(
+                "invalid_command: check_env: {name} looks like a credential; check env is stored in plans and the ledger, so put secrets in [environment] instead"
+            );
+        }
+        if value.len() > MAX_CHECK_ENV_VALUE_BYTES || value.contains('\0') {
+            bail!(
+                "invalid_command: check_env: {name} must be at most {MAX_CHECK_ENV_VALUE_BYTES} bytes without NUL"
+            );
+        }
+    }
     Ok(())
 }
 

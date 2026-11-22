@@ -72,6 +72,8 @@ spec-autonomous help providers ensure
 
 MCP 配置保留其他服务器与用户设置；宿主原有的项目信任规则仍然适用。Codex 使用 `$autonomous` / `$auto`，Claude 使用 `/autonomous` / `/auto`。另外提供 milestone、progress、resume。冲突时可用 `--prefix sa`，不会覆盖用户修改的文件。
 
+没有 Bun、只想从源码目录安装时，`npm install -g <源码目录>` 不会安装依赖；请按[安装方式](website/guide/install.md)先在目录里 `npm install --omit=dev` 并构建本机二进制。MCP 配置里的命令找不到时宿主会 `ENOENT`：`init --mcp` 在 CLI 不在 PATH 上时改写绝对路径，doctor 报告 `mcp_command_not_on_path` / `mcp_command_missing`，见同一页的「MCP 命令与 PATH」。
+
 本机 tgz 只包含本机架构。正式发布使用一个 launcher/skills 包与六个精确版本的平台包，npm 按 os/cpu/libc 选择二进制；发布后用户只需 `npm install -g spec-autonomous`。当前不把这条 registry 命令描述成已发布可用。
 
 ## 常用完整能力

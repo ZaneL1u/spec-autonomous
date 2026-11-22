@@ -80,6 +80,25 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
     } else {
         prompt
     };
+    let prompt = if input.kind == "audit" {
+        format!(
+            "{prompt}\n\nOPEN-ENDED SPECIFICATIONS: judge each acceptance item against what the specification requires, not against the literal length of an example list. When the implementation covers everything the item requires and additionally handles cases the specification or design only lists as examples (\"such as\", \"for example\", \"etc.\", \"等\"), or otherwise reasonably goes beyond an enumeration without contradicting it, set passed=true and start evidence with `extension:` followed by what goes beyond the text. Set passed=false only when the implementation contradicts the specification or something it requires is missing; an item that explicitly forbids anything outside its list is a contradiction, not an extension. Extension items never start repair work."
+        )
+    } else {
+        prompt
+    };
+    let prompt = if ["implement", "audit"].contains(&input.kind.as_str()) {
+        format!(
+            "{prompt}\n\nDEFERRED EVIDENCE: if some required evidence can only come from a real environment (a deployment, external service, device, release artifact or a person looking), do not fake it and do not fail for it alone. Do everything verifiable in this checkout, keep status=candidate (audit items: passed=true when the rest holds) and list each missing proof in deferred_evidence as {{kind: live|manual|external, description, reason{}}}. The coordinator shows them to the host as follow-ups; they never count as failures.",
+            if input.kind == "audit" {
+                ", requirement: the acceptance id"
+            } else {
+                ""
+            }
+        )
+    } else {
+        prompt
+    };
     let prompt = match &input.previous_candidate {
         Some(previous) => format!(
             "{prompt}\n\nPREVIOUS CANDIDATE: attempt {} of this task failed or was blocked (see failure) after changing {}. Its uncommitted changes are saved at {}. {} Review them against the failure before reusing anything; reused code is not evidence, so run this task's verification checks again before returning a candidate.",
@@ -205,7 +224,20 @@ fn summary(input: &WorkerInput) -> String {
                 let checks: Vec<String> = task
                     .verification
                     .iter()
-                    .map(|c| format!("`{}` (cwd {})", c.argv.join(" "), c.cwd))
+                    .map(|c| {
+                        let env: Vec<String> =
+                            c.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                        if env.is_empty() {
+                            format!("`{}` (cwd {})", c.argv.join(" "), c.cwd)
+                        } else {
+                            format!(
+                                "`{}` (cwd {}, env {})",
+                                c.argv.join(" "),
+                                c.cwd,
+                                env.join(" ")
+                            )
+                        }
+                    })
                     .collect();
                 lines.push(format!(
                     "task.verification: {}",
@@ -322,8 +354,18 @@ pub fn read_input(dir: &Path) -> Result<WorkerInput> {
     Ok(input)
 }
 pub fn read_result(dir: &Path) -> Result<WorkerResult> {
-    let result = read_receipt(dir)?;
-    validate_result(&read_input(dir)?, &result)?;
+    let mut result = read_receipt(dir)?;
+    let input = read_input(dir)?;
+    validate_result(&input, &result)?;
+    if input.kind == "audit" {
+        // An auditor that tags a reasonable extension but still says failed is read as
+        // passed: extensions never start a repair round.
+        for item in &mut result.audit {
+            if !item.passed && item.is_extension() {
+                item.passed = true;
+            }
+        }
+    }
     Ok(result)
 }
 /// The stored receipt as submitted, before a blocked or failed status becomes an error.
@@ -341,7 +383,8 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     }
     let string = json!({"type":"string"});
     let strings = json!({"type":"array","items":string});
-    let check = object(json!({"argv":strings,"cwd":string}));
+    let mut check = object(json!({"argv":strings,"cwd":string}));
+    check["properties"]["env"] = json!({"type":"object","maxProperties":crate::config::MAX_CHECK_ENV,"additionalProperties":{"type":"string"},"description":"Optional non-secret variables for this check only; PATH, HOME, shell, SA_*, GIT_*, LD_*/DYLD_* and credential-like names are refused."});
     let checks = json!({"type":"array","items":{"$ref":"#/$defs/check"}});
     let source = object(
         json!({"kind":{"type":"string","enum":["openspec-change","speckit-feature"]},"selector":string}),
@@ -369,6 +412,9 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
         json!({"schema_version":{"type":"integer","enum":[1]},"run_id":{"type":"string","enum":[input.run_id]},"task_id":{"type":"string","enum":[input.task_id]},"attempt_id":{"type":"string","enum":[input.attempt_id]},"status":{"type":"string","enum":["candidate","blocked","failed"]},"summary":string,"blockers":strings,"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]},"plan":{"anyOf":[{"$ref":"#/$defs/plan"},{"type":"null"}]},"audit":{"type":"array","items":{"$ref":"#/$defs/audit"}}}),
     );
     schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: project-relative files outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
+    if ["implement", "audit"].contains(&input.kind.as_str()) {
+        schema["properties"]["deferred_evidence"] = json!({"type":"array","maxItems":MAX_DEFERRED_EVIDENCE,"items":{"type":"object","additionalProperties":false,"required":["kind","description","reason"],"properties":{"kind":{"type":"string","enum":DEFERRED_EVIDENCE_KINDS},"description":string,"reason":string,"requirement":{"type":"string","description":"Audit: the acceptance id whose real-environment evidence is deferred."}}},"description":"Evidence this checkout cannot produce (a real deployment, service, device or manual look). It is a host follow-up, not a failure: keep status=candidate and, for audit items, passed=true when everything verifiable here holds."});
+    }
     schema["$defs"] = json!({"check":check,"source":source,"phase":phase,"milestone":milestone,"task":task,"plan":plan,"audit":audit});
     schema
 }
@@ -411,12 +457,64 @@ pub fn validate_result(input: &WorkerInput, result: &WorkerResult) -> Result<()>
     {
         bail!("worker_protocol_error: invalid status or oversized summary");
     }
+    validate_deferred(input, &result.deferred_evidence)?;
     if result.status != "candidate" || !result.blockers.is_empty() {
         bail!(
             "needs_input: {} {}",
             result.summary,
             result.blockers.join("; ")
         );
+    }
+    Ok(())
+}
+
+/// Deferred evidence is a follow-up list from implement and audit work only. Audit items
+/// name an acceptance id of the packet so the host can tell which requirement it owes.
+fn validate_deferred(input: &WorkerInput, items: &[DeferredEvidence]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    if !["implement", "audit"].contains(&input.kind.as_str()) {
+        bail!(
+            "worker_protocol_error: deferred_evidence is only accepted from implement and audit work"
+        );
+    }
+    if items.len() > MAX_DEFERRED_EVIDENCE {
+        bail!("worker_protocol_error: at most {MAX_DEFERRED_EVIDENCE} deferred_evidence items");
+    }
+    let acceptance: Vec<&str> = input
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.metadata["acceptance"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a["id"].as_str())
+        .collect();
+    for item in items {
+        if !DEFERRED_EVIDENCE_KINDS.contains(&item.kind.as_str()) {
+            bail!(
+                "worker_protocol_error: deferred_evidence kind must be one of {}",
+                DEFERRED_EVIDENCE_KINDS.join(", ")
+            );
+        }
+        if item.description.trim().is_empty()
+            || item.reason.trim().is_empty()
+            || item.description.len() > 2048
+            || item.reason.len() > 2048
+        {
+            bail!(
+                "worker_protocol_error: deferred_evidence needs a description and a reason of at most 2048 bytes each"
+            );
+        }
+        match (&item.requirement, input.kind.as_str()) {
+            (Some(id), "audit") if !acceptance.contains(&id.as_str()) => bail!(
+                "worker_protocol_error: deferred_evidence requirement {id} is not an acceptance id of this audit"
+            ),
+            (Some(id), "implement") if id.len() > 256 => {
+                bail!("worker_protocol_error: deferred_evidence requirement is too long")
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

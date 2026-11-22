@@ -21,6 +21,7 @@ fn value_check() -> Check {
     Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 fn tagged_counter(tag: &str) -> Check {
@@ -33,6 +34,7 @@ fn tagged_counter(tag: &str) -> Check {
             ),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 fn fixture(counter: &Path, configure: impl FnOnce(&mut Config)) -> tempfile::TempDir {
@@ -125,6 +127,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {
@@ -256,12 +259,14 @@ fn inline_encoded_scripts_are_rejected_as_checks() {
             "import base64,zlib;exec(zlib.decompress(base64.b85decode('c-oa#O^@3)5')))".into(),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let error = config::validate_check(&smuggled).unwrap_err().to_string();
     assert!(error.contains("inline_script_argv"), "{error}");
     let oversized = Check {
         argv: vec!["node".into(), "-e".into(), "x".repeat(4000)],
         cwd: ".".into(),
+        env: Default::default(),
     };
     assert!(
         config::validate_check(&oversized)
@@ -304,6 +309,7 @@ fn preflight_defers_scripts_and_executables_the_task_will_write() {
             verification: vec![Check {
                 argv: argv.into_iter().map(String::from).collect(),
                 cwd: ".".into(),
+                env: Default::default(),
             }],
             verify_only: false,
         }],
@@ -423,6 +429,7 @@ fn planner_packets_carry_every_earlier_rejection_by_diagnostic_code() {
                 vec![Check {
                     argv: vec![missing.into()],
                     cwd: ".".into(),
+                    env: Default::default(),
                 }],
                 vec!["src/value.txt".into()],
             ),

@@ -288,6 +288,7 @@ fn valid_result(input: &WorkerInput) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 

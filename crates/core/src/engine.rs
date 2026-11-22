@@ -719,10 +719,18 @@ impl Coordinator<'_> {
         let (worktree, branch) = if matches!(kind, "plan-tasks" | "audit") {
             match self.review_checkout()? {
                 Some(checkout) => checkout,
-                None => self.repo.add_worktree(&name, &self.run.accepted_head)?,
+                None => self.repo.add_worktree_in(
+                    &self.run.config.execution.worktree_root,
+                    &name,
+                    &self.run.accepted_head,
+                )?,
             }
         } else {
-            self.repo.add_worktree(&name, &self.run.accepted_head)?
+            self.repo.add_worktree_in(
+                &self.run.config.execution.worktree_root,
+                &name,
+                &self.run.accepted_head,
+            )?
         };
         provider::copy_ignored_context(
             &self.project(),
@@ -750,6 +758,7 @@ impl Coordinator<'_> {
             usage: None,
             patch_hash: None,
             worktree_state: None,
+            deferred_evidence: vec![],
         });
         self.save("attempt_started")?;
         if writing && let Err(error) = self.prepare_worker(index, &worktree, &dir) {
@@ -923,6 +932,7 @@ impl Coordinator<'_> {
             Ok(r) => {
                 a.status = "candidate".into();
                 a.summary = r.summary.clone();
+                a.deferred_evidence = r.deferred_evidence.clone();
             }
             Err(e) => {
                 a.status = "failed".into();

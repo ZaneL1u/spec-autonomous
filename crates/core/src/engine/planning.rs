@@ -168,13 +168,16 @@ impl Coordinator<'_> {
             let kept = self.kept_planning_candidate(&task_id, &phase.id, &partial)?;
             let (result, _worktree, index) = match kept {
                 Some(kept) => kept,
-                // Scope guidance is appended after the keyed text, so planning packets
-                // issued before it still match their receipts.
+                // Scope and environment guidance are appended after the keyed text, so
+                // planning packets issued before them still match their receipts.
                 None => self.invoke_host_keyed(
                     "plan-tasks",
                     &task_id,
                     &phase.id,
-                    format!("{instruction} {PLAN_SCOPE_GUIDANCE}"),
+                    format!(
+                        "{instruction} {PLAN_SCOPE_GUIDANCE} {}",
+                        crate::verification_preflight::planning_guidance_addendum()
+                    ),
                     &instruction,
                     Some(partial.clone()),
                 )?,

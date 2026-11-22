@@ -84,6 +84,12 @@ impl Report {
     }
 }
 
+/// Guidance appended to issued planning instructions after the 0.1 releases. It is kept
+/// out of the request key so planning requests issued before an upgrade still match.
+pub fn planning_guidance_addendum() -> &'static str {
+    "A check may set plain, non-secret environment variables in env, an object of NAME to string value, for example {\"argv\":[\"python3\",\"-m\",\"pytest\",\"tests\"],\"cwd\":\".\",\"env\":{\"PYTHONDONTWRITEBYTECODE\":\"1\"}}; PATH, HOME, shell, SA_*, GIT_*, LD_*/DYLD_* and credential-like names are refused, and secrets belong in project [environment], never in a plan. Task writes and reads may be exact files, directory prefixes (tests/fixtures covers everything below it) or globs such as server/*/migrations/*.py or tests/** when names are unknown before implementation (new migrations, affected existing tests); keep each pattern as narrow as the task allows, because overlapping patterns serialize tasks and a pattern without a literal leading directory (**/*.py) conflicts with every other task. A glob never grants edits to native spec context files; name such a file exactly if the task must change it."
+}
+
 pub fn planning_guidance() -> &'static str {
     "Plan coherent deliverables, combining related implementation and its tests in one task with multiple source_ids where native order permits. Do not split a small function into serial scaffolding/export/test/assertion tasks or create a separate test-only task merely to run checks already attached to implementation. Keep genuine independent native acceptance work and phase barriers intact. Declare every file needed to repair a task in writes; an empty write set has no declared repair scope, so declare explicit writes or request plan correction. Inspect the actual runtime versions, existing package scripts and check cwd before choosing verification argv. Use explicit Node test files or supported test discovery; a directory operand such as node --test test/ is version-sensitive and is not a portable test command. Argv executes without shell expansion. Check small fixture expectations independently, rather than copying an untested arithmetic guess. Future implementation/test files may be deferred; never call preflight a passed test or execute unbuilt future checks just to obtain an exit code. A check that needs a script MUST be a file listed in this task's writes (for example tests/check_value.py run as python3 tests/check_value.py); never embed source, base64 or compressed payloads in argv. Make sure caches such as __pycache__ or dist are git-ignored or disabled (PYTHONDONTWRITEBYTECODE=1), because a check that leaves untracked files fails as a mutated tree."
 }
@@ -424,6 +430,7 @@ fn inspect_into(
         let check = &Check {
             argv: resolved.clone(),
             cwd: declared.cwd.clone(),
+            env: Default::default(),
         };
         if !cwd.is_dir() {
             let future = !cwd.exists() && future_path(&check.cwd, writes, true);
@@ -697,6 +704,14 @@ fn effective_environment(name: &str, overrides: &BTreeMap<String, String>) -> Op
         })
         .map(|(_, value)| OsString::from(value))
         .or_else(|| env::var_os(name))
+}
+/// Where `command` resolves on the current process PATH (PATHEXT on Windows), if anywhere.
+pub fn find_on_path(command: &str) -> Option<PathBuf> {
+    resolve_executable(
+        Path::new(""),
+        command,
+        &SearchEnvironment::new(&BTreeMap::new()),
+    )
 }
 fn resolve_executable(cwd: &Path, command: &str, search: &SearchEnvironment) -> Option<PathBuf> {
     if command.is_empty() {

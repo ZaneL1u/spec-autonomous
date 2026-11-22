@@ -23,7 +23,9 @@ impl Coordinator<'_> {
                 || path == self.repo.root
                 || a.worktree == self.run.integration
                 || path.canonicalize().ok().as_deref() != Some(path)
-                || path.parent() != Some(self.repo.runtime()?.join("worktrees").as_path())
+                || !self
+                    .repo
+                    .in_worktree_roots(&self.run.config.execution.worktree_root, path)
                 || path
                     .file_name()
                     .and_then(|n| n.to_str())

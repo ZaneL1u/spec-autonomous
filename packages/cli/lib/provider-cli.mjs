@@ -9,9 +9,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 //#region packages/cli/src/lib/provider-cli.mts
 function bridgeEnvironment(env = process.env) {
+	const node = nodeCommand(env);
 	return {
 		...env,
-		SPEC_AUTONOMOUS_OPENSPEC_BRIDGE: JSON.stringify([nodeCommand(env), fileURLToPath(new URL("../bin/provider-bridge.mjs", import.meta.url))])
+		SPEC_AUTONOMOUS_OPENSPEC_BRIDGE: JSON.stringify([node, fileURLToPath(new URL("../bin/provider-bridge.mjs", import.meta.url))]),
+		SPEC_AUTONOMOUS_LAUNCHER: JSON.stringify([node, fileURLToPath(new URL("../bin/spec-autonomous.mjs", import.meta.url))])
 	};
 }
 function createProviderContext(binary, options = {}, manager = createProviderManager({ env: {

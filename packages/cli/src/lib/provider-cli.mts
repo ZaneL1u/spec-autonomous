@@ -90,8 +90,14 @@ export interface JsonRpcMessage {
 }
 
 export function bridgeEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const node = nodeCommand(env);
   return { ...env, SPEC_AUTONOMOUS_OPENSPEC_BRIDGE: JSON.stringify([
-    nodeCommand(env), fileURLToPath(new URL('../bin/provider-bridge.mjs', import.meta.url)),
+    node, fileURLToPath(new URL('../bin/provider-bridge.mjs', import.meta.url)),
+  ]),
+  // Absolute launcher for MCP configurations: init --mcp writes it when the bare
+  // command is not on PATH, so hosts do not fail with ENOENT.
+  SPEC_AUTONOMOUS_LAUNCHER: JSON.stringify([
+    node, fileURLToPath(new URL('../bin/spec-autonomous.mjs', import.meta.url)),
   ]) };
 }
 export function createProviderContext(binary: string, options: ProviderContextOptions = {}, manager: ProviderManager = createProviderManager({ env: { ...process.env, SPEC_AUTONOMOUS_LANG: detectLocale({ explicit: options.lang }) } })): ProviderContext {

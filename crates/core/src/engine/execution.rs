@@ -788,7 +788,9 @@ impl Coordinator<'_> {
         // Only failed items are gaps; passed items (often with long evidence) are left out
         // and counted. The request key keeps the full audit, so repairs issued before this
         // change still match their receipts.
-        let gaps: Vec<&AuditItem> = audit.iter().filter(|a| !a.passed).collect();
+        // Extension items (implementation beyond an example list, not against it) are
+        // never repair work, even when a receipt from before this rule marked them failed.
+        let gaps: Vec<&AuditItem> = audit.iter().filter(|a| a.is_gap()).collect();
         let instruction = format!(
             "{RULES} Gaps ({} failed; {} passed audit items omitted): {}",
             gaps.len(),
@@ -979,6 +981,7 @@ impl Coordinator<'_> {
                 usage: None,
                 patch_hash: None,
                 worktree_state: None,
+                deferred_evidence: vec![],
             });
             self.run.stage = format!("hook_{event}");
             self.save("hook_started")?;

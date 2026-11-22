@@ -26,6 +26,7 @@ fn check(program: &Path, args: &[&str], cwd: &str) -> Check {
             .chain(args.iter().map(|a| (*a).into()))
             .collect(),
         cwd: cwd.into(),
+        env: Default::default(),
     }
 }
 fn has(report: &Report, code: &str) -> bool {
@@ -354,6 +355,7 @@ fn managed_openspec_command_backs_bare_openspec_checks() {
             "--strict".into(),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     };
 
     // Without a managed command the bare name stays a missing executable.

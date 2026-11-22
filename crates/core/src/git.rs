@@ -150,10 +150,107 @@ impl Repository {
         }
         Ok(())
     }
+    /// The main working tree: the parent of a non-bare common directory.
+    fn main_checkout(&self) -> Option<&Path> {
+        (self.common.file_name()? == ".git")
+            .then(|| self.common.parent())
+            .flatten()
+    }
+    /// Directory for coordinator worktrees under an `[execution] worktree_root` setting,
+    /// without creating it. `git` is the runtime directory inside the Git common dir;
+    /// `sibling` is `<main checkout>.sa-worktrees` next to the main checkout; an absolute
+    /// directory gets a per-repository subdirectory so repositories never share one.
+    pub fn worktree_root(&self, setting: &str) -> Result<PathBuf> {
+        if setting == WORKTREE_ROOT_GIT {
+            return paths::inside(&self.common, "spec-autonomous/worktrees");
+        }
+        let main = self.main_checkout().context(
+            "worktree_root_unavailable: a bare or unusual repository layout supports only worktree_root = \"git\"",
+        )?;
+        let name = main
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("worktree_root_unavailable: the main checkout has no UTF-8 name")?;
+        let root = if setting == WORKTREE_ROOT_SIBLING {
+            main.parent()
+                .context("worktree_root_unavailable: the main checkout has no parent directory")?
+                .join(format!("{name}.sa-worktrees"))
+        } else {
+            let base = Path::new(setting);
+            if !base.is_absolute() {
+                bail!(
+                    "invalid_config: worktree_root must be git, sibling or an absolute directory"
+                );
+            }
+            let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+            base.join(format!(
+                "{name}-{}",
+                &paths::hash(self.common.to_string_lossy().as_bytes())[..8]
+            ))
+        };
+        if root.starts_with(main) {
+            bail!(
+                "worktree_root_unavailable: {} is inside the main checkout; nested worktrees would show up as untracked files and in project tooling",
+                root.display()
+            );
+        }
+        Ok(root)
+    }
+    /// Every directory that may hold this repository's coordinator worktrees: the
+    /// runtime directory (older runs and coordinator-only checkouts) and the configured
+    /// root. Ownership checks accept a worktree directly inside any of them.
+    pub fn worktree_roots(&self, setting: &str) -> Vec<PathBuf> {
+        let mut roots = vec![];
+        for candidate in [WORKTREE_ROOT_GIT, setting] {
+            if let Ok(root) = self.worktree_root(candidate) {
+                let root = root.canonicalize().unwrap_or(root);
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+        roots
+    }
+    /// True when `path` is a direct child of one of [`Self::worktree_roots`].
+    pub fn in_worktree_roots(&self, setting: &str, path: &Path) -> bool {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        path.parent()
+            .is_some_and(|parent| self.worktree_roots(setting).iter().any(|r| r == parent))
+    }
+    /// Coordinator-only checkouts (integration, candidates, archive trials, tools) stay
+    /// in the runtime directory.
     pub fn add_worktree(&self, name: &str, base: &str) -> Result<(PathBuf, String)> {
+        self.add_worktree_in(WORKTREE_ROOT_GIT, name, base)
+    }
+    /// Create `codex/sa/<name>` checked out at `base` under the configured root.
+    pub fn add_worktree_in(
+        &self,
+        setting: &str,
+        name: &str,
+        base: &str,
+    ) -> Result<(PathBuf, String)> {
         paths::valid_id(name)?;
-        let path = paths::inside(&self.common, &format!("spec-autonomous/worktrees/{name}"))?;
-        fs::create_dir_all(path.parent().unwrap())?;
+        let path = if setting == WORKTREE_ROOT_GIT {
+            let path = paths::inside(&self.common, &format!("spec-autonomous/worktrees/{name}"))?;
+            fs::create_dir_all(path.parent().unwrap())?;
+            path
+        } else {
+            let root = self.worktree_root(setting)?;
+            fs::create_dir_all(&root).with_context(|| {
+                format!(
+                    "worktree_root_unavailable: cannot create {}; fix its permissions or set [execution] worktree_root = \"git\"",
+                    root.display()
+                )
+            })?;
+            let root = root.canonicalize()?;
+            if fs::symlink_metadata(root.join(name)).is_ok() {
+                bail!(
+                    "worktree_exists: {} already exists",
+                    root.join(name).display()
+                );
+            }
+            root.join(name)
+        };
         let branch = format!("codex/sa/{name}");
         command(
             &self.root,
@@ -178,6 +275,10 @@ impl Repository {
         )?)
     }
 }
+/// `[execution] worktree_root` values with a fixed meaning; anything else is an
+/// absolute directory.
+pub const WORKTREE_ROOT_GIT: &str = "git";
+pub const WORKTREE_ROOT_SIBLING: &str = "sibling";
 pub fn parse_inventory(text: &str) -> Result<Vec<Worktree>> {
     let mut rows = vec![];
     let mut current: Option<Worktree> = None;

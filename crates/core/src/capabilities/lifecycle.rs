@@ -315,7 +315,7 @@ pub(super) fn verify_configured(
         let output = process::execute(process::Request {
             argv: &argv,
             cwd: &paths::inside(root, &check.cwd)?,
-            env: &config.environment,
+            env: &check.environment(&config.environment),
             stdin: None,
             directory: &dir,
             timeout: Duration::from_secs(config.execution.attempt_timeout_seconds),
@@ -331,6 +331,43 @@ pub(super) fn verify_configured(
         evidence.push(json!({"revision":before,"exit_code":output.code,"log":dir}));
     }
     Ok(json!(evidence))
+}
+/// Where worker worktrees will be created, and whether that location can work. The
+/// default sits under `.git/`, which search tools that skip `.git/` never enter.
+fn worktree_root_diagnostics(repo: &Repository, setting: &str) -> Vec<String> {
+    let root = match repo.worktree_root(setting) {
+        Ok(root) => root,
+        Err(error) => return vec![error.to_string()],
+    };
+    if setting == crate::git::WORKTREE_ROOT_GIT {
+        let sibling = repo
+            .worktree_root(crate::git::WORKTREE_ROOT_SIBLING)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<repo>.sa-worktrees".into());
+        return vec![format!(
+            "worktree_root_notice: worker worktrees are created under {}; search tools and IDE indexes that skip .git/ find nothing there. Set [execution] worktree_root = \"sibling\" to create them in {sibling} (a host that sandboxes writes must allow that directory)",
+            root.display()
+        )];
+    }
+    let existing = root.ancestors().find(|p| p.exists());
+    match existing {
+        Some(dir) if !dir.is_dir() => vec![format!(
+            "worktree_root_unavailable: {} is not a directory",
+            dir.display()
+        )],
+        Some(dir) if fs::metadata(dir).is_ok_and(|m| m.permissions().readonly()) => {
+            vec![format!(
+                "worktree_root_unavailable: {} is read-only, so {} cannot be created",
+                dir.display(),
+                root.display()
+            )]
+        }
+        Some(_) => vec![],
+        None => vec![format!(
+            "worktree_root_unavailable: no existing ancestor of {}",
+            root.display()
+        )],
+    }
 }
 pub fn doctor(root: &Path) -> Result<Value> {
     let detection = crate::detect(root, None)?;
@@ -349,6 +386,12 @@ pub fn doctor(root: &Path) -> Result<Value> {
         diagnostics.extend(config.budget_warnings());
         let repository = Repository::discover(root).ok().map(|r| r.root.clone());
         diagnostics.extend(config.preparation_warnings(root, repository.as_deref()));
+        if let Ok(repo) = Repository::discover(root) {
+            diagnostics.extend(worktree_root_diagnostics(
+                &repo,
+                &config.execution.worktree_root,
+            ));
+        }
     }
     let inventory = crate::progress::snapshot(root).unwrap_or_else(|e| {
         diagnostics.push(e.to_string());
@@ -372,6 +415,7 @@ pub fn doctor(root: &Path) -> Result<Value> {
         }
     }
     diagnostics.extend(crate::skills::content_diagnostics(root));
+    diagnostics.extend(crate::skills_mcp::diagnostics(root));
     if let Some(ids) = inventory["worktrees"].as_array() {
         let stale: Vec<String> = ids
             .iter()

@@ -1,6 +1,6 @@
 # 宿主协议
 
-本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` / `task_writes` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?}]}`、`{phase_id, task_id, add:[path]}`）。
+本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` / `task_writes` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?, env?}]}`、`{phase_id, task_id, add:[path]}`）。
 
 ## 一次循环需要多少次调用
 
@@ -43,6 +43,30 @@
 ## 重派时继承上次改动
 
 同一任务上一个 implement attempt 以 `failed` / `blocked` 结束且留有未提交改动时，重派的 implement 包在 `input.json` 中带 `previous_candidate = {attempt_id, base_commit, patch_path, files, same_base}`：补丁写在新 attempt 目录的 `previous-candidate.diff`，worktree 仍在时由 `git diff` 相对其 base 生成，已回收时取回收保存的 `patch.diff`。`same_base: true` 时在 worktree 根目录 `git apply --index <patch_path>` 即可复用，否则用 `--3way` 或仅作参考；prompt 同样说明，并要求复用后重新运行该任务的检查。没有上次改动时不输出该字段，旧包的 `input_hash` 不变。
+
+## 写集中的目录与 glob
+
+计划任务的 `writes` / `reads` 每项可以是精确文件、目录前缀（`tests/fixtures` 覆盖其下所有文件）或 glob（`server/*/migrations/*.py`、`tests/**`）。实现前不知道文件名的场景（新迁移、被波及的既有测试）用 glob 声明，而不是猜文件名。规则：
+
+- glob 视为覆盖它能匹配的全部路径：写集校验用同一匹配器判断 worker 改动是否在范围内（当前匹配器里 `*` 也能跨越 `/`，按更大的集合计）。
+- 并行冲突按通配符之前的字面前缀保守判断：`server/*/migrations/*.py` 与任何 `server/` 下的写入都视为冲突；没有字面前缀的模式（`**/*.py`）与所有任务冲突，等同串行。空写集仍是「未知写集」，照旧串行。
+- glob 或目录项不会放开原生规格上下文文件（`snapshot.context_files`）；任务确需改它们时必须逐字列出该文件。`.git/`、`.spec-autonomous/` 永远不可写。
+- 规划包指令末尾的附加说明给出上述写法，不进入请求键。
+
+## 开放措辞与合理扩展
+
+规格或设计里「如 / 例如 / 等 / such as」列出的往往是示例而不是穷举。审计包的 `prompt.md` 要求审计者：实现覆盖了验收条目要求的全部内容、又额外支持了规格只举例或未列出的情况且不与规格矛盾时，判 `passed: true` 并让 `evidence` 以 `extension:` 开头说明超出部分；只有与规格矛盾（包括条目明确禁止列表之外的情况）或缺少要求的内容时才判 `passed: false`。其余判定规则不变。
+
+协调器读取审计回执时，把 `passed: false` 但 `evidence` 以 `extension:`（或 `[extension]`，不区分大小写）开头的条目按通过处理；converge 包的 `Gaps` 只列真正的缺口，扩展条目不会生成修复任务。这段规则写在 `prompt.md` 而非 `instruction`，审计请求键不变。
+
+## 待宿主补的真实环境证据
+
+implement 与 audit 的 WorkerResult 可以带可选的 `deferred_evidence: [{kind, description, reason, requirement?}]`（`kind` 取 `live` / `manual` / `external`，至多 20 条，`description` / `reason` 非空且各不超过 2048 字节；结果 schema 中仅这两类包有该字段，其他类型的包带它会被判 `worker_protocol_error`）。它表示 checkout 里无法产生、需要宿主在真实环境补的证据（部署、外部服务、设备、发布产物或人工查看）：
+
+- 它不是失败。worker 把能在 checkout 里验证的都做完，仍返回 `status: "candidate"`；审计项在其余条件成立时 `passed: true`，并在对应条目的 `requirement` 写该验收 id（必须是本包 `snapshot.metadata.acceptance[].id`）。`passed` 布尔的含义不变：判 `false` 的审计项仍按缺口进入修复。
+- 协调器把回执里的条目记到 attempt 上。每个 implement 任务取最近一次 `integrated` 的 attempt、每个审计批次取最近一次 `accepted` 的 attempt，汇总成 run 视图（`prepare` / `apply-result` / `state.get`，紧凑视图同样保留）与 `next` 响应里的 `deferred_evidence` 列表（带 `attempt_id`、`kind_of_work`、`phase_id`、`task_id`）；`progress` 的每个 run 摘要带 `deferred_evidence: {count, items}`。同一单元后来被接受的 attempt 会替换旧列表。
+- 里程碑（或范围）完成时 run 照常进入 `completed` / `scope_completed`，若仍有条目，`warnings` 附 `deferred_evidence_pending: <n> item(s) ...`，列表即宿主的待办。协调器不会替宿主执行或勾销这些条目。
+- 没有该字段的回执序列化结果不变，旧回执与旧账本照常读取。
 
 ## 追加写集
 
@@ -95,6 +119,10 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。
+
+## 检查环境变量
+
+计划、配置与 `run.revise` 中的检查对象是 `{argv, cwd?, env?}`。`env` 是只对该检查生效的非敏感变量（`{"PYTHONDONTWRITEBYTECODE":"1"}`），叠加在项目环境上；`PATH`、`HOME`、shell 相关变量、`SA_*`、`GIT_*`、`LD_*` / `DYLD_*` 与凭证类名字被拒绝（`invalid_command: check_env: ...`）。值进入验证复用身份；证据 `details.env_keys` 只列变量名。规划包的指令末尾附有同样的说明，这段附加说明不进入请求键，升级前签发的规划请求照常匹配回执。implement 摘要里的检查显示为 `` `argv` (cwd ., env K=V) ``。
 
 ## 原生任务子条目
 

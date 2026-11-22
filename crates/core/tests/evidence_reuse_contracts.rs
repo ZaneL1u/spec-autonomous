@@ -37,6 +37,7 @@ fn value_check() -> Check {
     Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 fn counter_check() -> Check {
@@ -47,6 +48,7 @@ fn counter_check() -> Check {
             "require('fs').appendFileSync(process.env.SA_TEST_COUNTER,process.env.SA_VERIFY_STAGE+'\\n')".into(),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 /// A Spec Kit repository whose verification appends the executing stage to `counter`.
@@ -128,6 +130,7 @@ fn receipt(input: &WorkerInput) -> WorkerResult {
         plan: None,
         audit: vec![],
         requested_writes: vec![],
+        deferred_evidence: vec![],
     }
 }
 fn submit(root: &Path, request: &Value, result: WorkerResult) -> Value {
@@ -589,6 +592,7 @@ fn revision_of_a_pending_task_does_not_block_on_unrelated_outstanding_work() {
             "require('node:assert/strict').equal(24,27)".into(),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let planned = answer_two_task_plan(root, &first["work"][0], wrong);
     let id = planned["id"].as_str().unwrap();
@@ -804,6 +808,7 @@ fn the_same_failure_after_one_repair_round_stops_with_needs_input() {
     milestone.phases[0].verification = vec![Check {
         argv: vec!["node".into(), "-e".into(), "process.exit(3)".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     let plan = Plan {
         schema_version: 1,
