@@ -463,3 +463,55 @@ fn cleanup_removes_clean_checkouts_with_initialized_submodules() {
     let status = git::command(root, &["submodule", "status"], None).unwrap();
     assert!(status.starts_with(' '), "{status}");
 }
+
+#[test]
+fn doctor_warns_about_submodules_until_workers_get_them() {
+    let library = std::cell::RefCell::new(None);
+    let root = fixture_with(
+        |_| {},
+        |root| *library.borrow_mut() = Some(add_submodule(root)),
+    );
+    let root = root.path();
+    let hook = |argv: &str| spec_autonomous_core::config::Hook {
+        argv: vec!["sh".into(), argv.into()],
+        idempotent: true,
+    };
+    let warning = |configure: &dyn Fn(&mut Config)| -> Option<String> {
+        let mut config = Config::load(root).unwrap();
+        configure(&mut config);
+        put(
+            root,
+            ".spec-autonomous/config.toml",
+            &toml::to_string(&config).unwrap(),
+        );
+        let report: Vec<String> = serde_json::from_value(
+            api::invoke(root, "doctor", &json!({})).unwrap()["diagnostics"].clone(),
+        )
+        .unwrap();
+        report
+            .into_iter()
+            .find(|d| d.starts_with("submodules_warning"))
+    };
+    // Friday's shape: verification checkouts are prepared, workers are not.
+    let only_verification = warning(&|c| {
+        c.hooks
+            .insert("verification_prepare".into(), hook("scripts/v.sh"));
+    })
+    .expect("verification_prepare alone still leaves workers without submodules");
+    assert!(only_verification.contains("worker"), "{only_verification}");
+    assert!(only_verification.contains("[hooks.worker_prepare]"));
+    assert!(
+        warning(&|c| {
+            c.hooks
+                .insert("worker_prepare".into(), hook("scripts/w.sh"));
+        })
+        .is_none()
+    );
+    assert!(
+        warning(&|c| {
+            c.hooks.clear();
+            c.execution.init_submodules = true;
+        })
+        .is_none()
+    );
+}

@@ -89,7 +89,7 @@ argv = ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]
 idempotent = true
 ```
 
-需要多步时写成提交在仓库里的脚本（例如 `scripts/worker-prepare.sh`），并在 `[environment]` 里固定 `UV_CACHE_DIR` / `PNPM_STORE_DIR` 等缓存位置。doctor 会对两类遗漏给出警告：`.spec-autonomous/` 下存在 `verification-prepare.*` / `worker-prepare.*` 脚本却没有对应 `[hooks.*]`（`hook_unbound_warning`）；仓库声明了子模块，但 `init_submodules = false` 且没有 `verification_prepare`（`submodules_warning`）。
+需要多步时写成提交在仓库里的脚本（例如 `scripts/worker-prepare.sh`），并在 `[environment]` 里固定 `UV_CACHE_DIR` / `PNPM_STORE_DIR` 等缓存位置。doctor 会对两类遗漏给出警告：`.spec-autonomous/` 下存在 `verification-prepare.*` / `worker-prepare.*` 脚本却没有对应 `[hooks.*]`（`hook_unbound_warning`）；仓库声明了子模块，但 `init_submodules = false` 且没有 `worker_prepare`（`submodules_warning`；只配了 `verification_prepare` 也会提示，因为它只准备验证检出，worker worktree 仍然没有子模块内容）。
 
 ## `host`
 

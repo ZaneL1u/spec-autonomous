@@ -283,13 +283,17 @@ impl Config {
             .map(|root| root.join(".gitmodules"))
             .and_then(|path| std::fs::read_to_string(path).ok())
             .is_some_and(|text| text.contains("[submodule"));
+        // verification_prepare only prepares verification checkouts: workers would still
+        // start without submodule contents and fail checks the final wave passes.
         if submodules
             && !self.execution.init_submodules
-            && !self.hooks.contains_key("verification_prepare")
+            && !self.hooks.contains_key("worker_prepare")
         {
-            out.push(
-                "submodules_warning: the repository declares Git submodules but [execution] init_submodules = false and no [hooks.verification_prepare] is configured; worker and verification worktrees start without submodule contents".into(),
-            );
+            out.push(if self.hooks.contains_key("verification_prepare") {
+                "submodules_warning: the repository declares Git submodules but [execution] init_submodules = false and no [hooks.worker_prepare] is configured; [hooks.verification_prepare] prepares only verification checkouts, so worker worktrees start without submodule contents. Set init_submodules = true or bind worker_prepare".to_owned()
+            } else {
+                "submodules_warning: the repository declares Git submodules but [execution] init_submodules = false and no [hooks.worker_prepare] or [hooks.verification_prepare] is configured; worker and verification worktrees start without submodule contents. Set init_submodules = true or bind the prepare hooks".to_owned()
+            });
         }
         out
     }
