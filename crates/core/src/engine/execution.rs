@@ -367,6 +367,19 @@ impl Coordinator<'_> {
                 &crate::run_revision::context_paths(snapshot),
                 Some(&attempt.id),
             )
+            .and_then(|added| {
+                // Each grant resets the task's retry count, so the paths a task receives
+                // without review are bounded over the whole run, not per receipt.
+                let earlier = automatic_grants(&self.run, &phase.id, &attempt.task_id);
+                if earlier + added.len() > limit {
+                    bail!(
+                        "write_scope_limit: task {} already received {earlier} paths without review and asks for {} more; at most {limit} are added automatically per task",
+                        attempt.task_id,
+                        added.len()
+                    );
+                }
+                Ok(added)
+            })
         };
         let now = paths::now();
         match checked {
@@ -393,12 +406,15 @@ impl Coordinator<'_> {
                     "automatic": true,
                     "attempt_id": attempt.id,
                 });
-                self.run
-                    .host
-                    .as_mut()
-                    .context("legacy_run_read_only")?
-                    .verification_revisions
-                    .push(record);
+                let host = self.run.host.as_mut().context("legacy_run_read_only")?;
+                host.verification_revisions.push(record);
+                // Like a reviewed run.revise, a granted scope starts a new retry epoch: the
+                // blocked attempt and earlier failures under the narrower scope do not
+                // count toward max_attempts or no-progress detection.
+                host.task_retry_epochs.insert(
+                    Run::key(&phase.id, &attempt.task_id),
+                    self.run.attempts.len(),
+                );
                 let a = &mut self.run.attempts[index];
                 a.status = "failed".into();
                 a.finished_at = Some(now);
@@ -857,4 +873,16 @@ fn interrupted_integration(message: &str) -> bool {
         || ["paused:", "pause:", "cancel:", "budget_exhausted:"]
             .iter()
             .any(|prefix| message.starts_with(prefix))
+}
+
+/// Paths already added to a task's write set by automatic grants in this run.
+fn automatic_grants(run: &Run, phase_id: &str, task_id: &str) -> usize {
+    run.host
+        .iter()
+        .flat_map(|h| &h.verification_revisions)
+        .filter(|r| r["automatic"] == true)
+        .flat_map(|r| r["diff"].as_array().into_iter().flatten())
+        .filter(|d| d["phase_id"] == phase_id && d["task_id"] == task_id)
+        .map(|d| d["added"].as_array().map_or(0, Vec::len))
+        .sum()
 }

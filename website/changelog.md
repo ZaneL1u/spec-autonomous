@@ -9,6 +9,7 @@
 - 开启 `init_submodules` 后 `run.cleanup` 与自动维护能移除干净的 worker / 集成工作树：执行时确认父仓库和子模块都干净后再 `--force` 移除，子模块有改动或工作树被锁定时仍保留。
 - doctor 的 `submodules_warning` 改为看 worker 侧：仓库有子模块、`init_submodules = false` 且没有 `worker_prepare` 时提示，只配了 `verification_prepare` 的项目也会收到提示。
 - skills（`autonomous` / `auto` / `resume`）改为 `prepare --run-id <id>`（不再带 `--change` / `--feature`），并说明 `verification_environment_unavailable`（修环境后只重跑预检、不重新规划）、`worker_prepare_failed` 与 `warnings[]` 中 `config_drift:` 的处理。
+- 自动追加写集与人工 `run.revise` 一样重置该任务的重试计数，扩写集不再消耗 `max_attempts`；每个任务在整个 run 中至多自动追加 10 条路径。
 
 ## 0.1.0-alpha.16
 

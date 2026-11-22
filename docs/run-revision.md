@@ -54,7 +54,7 @@ MCP 使用 `sa_tools`：`operation: call`、`capability: run.revise`、`argument
 - 被修订任务自己的在途 implement 会阻塞应用，规则同检查修订；应用后重置该任务的重试计数，`prepare --run-id` 即重新签发，新包的 `task.writes` 含追加路径，并通过 `previous_candidate` 继承上次改动。
 - 修订记录在账本 `verification_revisions`，diff 为 `{scope:"task_writes", before, after, added}`；重新规划时 `reconcile_plan` 把 `added` 并回同 ID 任务的写集（开放范围任务保持开放）。
 
-worker 也可以自己申请：implement 返回 `status: "blocked"` 并带 `requested_writes: [path...]`（至多 10 个）。自动追加只接受字面文件路径：含 `*` / `?` / `[` / `{` 的模式、以 `/` 结尾或在集成检出 / worker 检出中已是目录的路径一律不自动授权（`write_scope_not_literal`），必须经人工 `run.revise`。协调器再按上述同一组约束检查，全部满足时自动追加写集、在账本记一条 `automatic: true` 的修订，把该 attempt 记为 `write_scope_extended` 失败并立即重派（带 `previous_candidate`，计入该任务的重试次数）。任一约束不满足或超过 10 个时保持 `needs_input`，blocker 给出原因和可直接执行的 `spec-autonomous tools call run.revise --input '{...}' --json` 参数。
+worker 也可以自己申请：implement 返回 `status: "blocked"` 并带 `requested_writes: [path...]`（至多 10 个）。自动追加只接受字面文件路径：含 `*` / `?` / `[` / `{` 的模式、以 `/` 结尾或在集成检出 / worker 检出中已是目录的路径一律不自动授权（`write_scope_not_literal`），必须经人工 `run.revise`。协调器再按上述同一组约束检查，全部满足时自动追加写集、在账本记一条 `automatic: true` 的修订，把该 attempt 记为 `write_scope_extended` 失败并立即重派（带 `previous_candidate`）。与人工 `run.revise` 一样，授权后该任务的重试计数从新的 epoch 开始，被挡住的这次 attempt 和此前在较窄写集下的失败不再计入 `max_attempts` 与无进展判断；为防止反复扩写集绕过预算，每个任务在整个 run 中至多自动追加 10 条路径。任一约束不满足、单次超过 10 个或累计超过 10 条时保持 `needs_input`，blocker 给出原因和可直接执行的 `spec-autonomous tools call run.revise --input '{...}' --json` 参数。
 
 ## 保留与约束
 

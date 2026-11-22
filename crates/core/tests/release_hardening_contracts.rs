@@ -541,3 +541,63 @@ fn skills_name_run_id_resumes_and_environment_blockers() {
         }
     }
 }
+
+#[test]
+fn an_automatic_grant_starts_a_new_retry_epoch_with_a_bounded_total() {
+    // One attempt per epoch: without the reset the blocked attempt alone exhausts it.
+    let root = fixture(|c| c.execution.max_attempts = 1);
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    let next = submit(
+        root,
+        &request,
+        blocked(&packet(root, &request), &["tests/value.mjs"]),
+    );
+    assert_ne!(next["status"], "needs_input", "{next}");
+    let retry = work(&next, "value").clone();
+    assert_ne!(retry["request_id"], request["request_id"]);
+    let run = saved(root, &run_id);
+    assert_eq!(
+        run.host.as_ref().unwrap().task_retry_epochs[&Run::key("P001", "value")],
+        run.attempts
+            .iter()
+            .position(|a| a.id == retry["request_id"].as_str().unwrap())
+            .unwrap(),
+        "the epoch starts with the re-issued attempt"
+    );
+    // A real failure in the new epoch still counts and stops the task.
+    put(
+        Path::new(retry["project"].as_str().unwrap()),
+        "src/value.txt",
+        "41",
+    );
+    let failed = submit(root, &retry, receipt(&packet(root, &retry)));
+    assert!(
+        failed["work"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["task_id"] != "value" || w["kind"] != "implement"),
+        "{failed}"
+    );
+
+    // Grants add at most ten paths per task over the whole run.
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    let request = work(&wave, "value").clone();
+    let first: Vec<String> = (1..=6).map(|i| format!("tests/a{i}.mjs")).collect();
+    let first: Vec<&str> = first.iter().map(String::as_str).collect();
+    let next = submit(root, &request, blocked(&packet(root, &request), &first));
+    let retry = work(&next, "value").clone();
+    let second: Vec<String> = (1..=5).map(|i| format!("tests/b{i}.mjs")).collect();
+    let second: Vec<&str> = second.iter().map(String::as_str).collect();
+    let stopped = submit(root, &retry, blocked(&packet(root, &retry), &second));
+    assert_eq!(stopped["status"], "needs_input", "{stopped}");
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(blocker.contains("write_scope_limit"), "{blocker}");
+    assert!(blocker.contains("already received 6 paths"), "{blocker}");
+    assert_eq!(saved(root, &run_id).plans["P001"].tasks[0].writes.len(), 7);
+}
