@@ -307,3 +307,96 @@ fn blocked_workers_get_only_literal_file_paths_without_review() {
         );
     }
 }
+
+/// Arm a debug-build failpoint that fires once after the first executed check of a stage.
+fn arm(root: &Path, name: &str) {
+    put(root, &format!(".git/spec-autonomous/failpoints/{name}"), "");
+}
+
+#[test]
+fn an_interruption_between_integration_checks_keeps_the_candidate() {
+    for (failpoint, status, resume) in [
+        ("pause_after_check-combined", "paused", json!({})),
+        (
+            "budget_after_check-combined",
+            "paused",
+            json!({"extend_seconds":3600}),
+        ),
+    ] {
+        let root = fixture(|_| {});
+        let root = root.path();
+        let first = api::invoke(
+            root,
+            "prepare",
+            &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+        )
+        .unwrap();
+        let run_id = first["id"].as_str().unwrap().to_owned();
+        let planning = &first["work"][0];
+        let input = packet(root, planning);
+        let snapshot = input.snapshot.clone().unwrap();
+        // Two checks, so the interruption lands after the first and before the second.
+        let mut value = task("value", &snapshot.tasks[0].id, "src/value.txt");
+        value.verification.push(Check {
+            argv: vec!["node".into(), "-e".into(), "process.exit(0)".into()],
+            cwd: ".".into(),
+        });
+        let mut result = receipt(&input);
+        result.plan = Some(Plan {
+            schema_version: 1,
+            phase_id: "P001".into(),
+            source_hash: snapshot.source_hash,
+            tasks: vec![value, task("other", &snapshot.tasks[1].id, "src/other.txt")],
+            milestone: input.milestone.clone(),
+        });
+        let wave = submit(root, planning, result);
+        let request = work(&wave, "value").clone();
+        write_value(&request);
+        arm(root, failpoint);
+        let stopped = submit(root, &request, receipt(&packet(root, &request)));
+        assert_eq!(stopped["status"], status, "{failpoint}: {stopped}");
+        assert!(
+            !root
+                .join(".git/spec-autonomous/failpoints")
+                .join(failpoint)
+                .exists(),
+            "{failpoint} fired"
+        );
+        let run = saved(root, &run_id);
+        let implement: Vec<_> = run
+            .attempts
+            .iter()
+            .filter(|a| a.kind == "implement" && a.task_id == "value")
+            .collect();
+        assert_eq!(implement.len(), 1, "{failpoint}");
+        assert_eq!(
+            implement[0].status, "submitted",
+            "{failpoint}: {:?}",
+            implement[0]
+        );
+        assert!(implement[0].error.is_none(), "{failpoint}");
+        assert!(
+            run.evidence.iter().all(|e| e.exit_code == 0),
+            "{failpoint}: only the first check ran"
+        );
+
+        let mut args = json!({"run_id":run_id,"host":host(),"view":"full"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(resume.as_object().unwrap().clone());
+        let resumed = api::invoke(root, "prepare", &args).unwrap();
+        let run = saved(root, &run_id);
+        assert!(
+            run.completed_tasks.contains(&Run::key("P001", "value")),
+            "{failpoint}: {resumed}"
+        );
+        let implement: Vec<_> = run
+            .attempts
+            .iter()
+            .filter(|a| a.kind == "implement" && a.task_id == "value")
+            .collect();
+        assert_eq!(implement.len(), 1, "{failpoint}: no re-implementation");
+        assert_eq!(implement[0].status, "integrated");
+        assert!(!run.attempts.iter().any(|a| a.status == "failed"));
+    }
+}

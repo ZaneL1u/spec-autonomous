@@ -133,9 +133,12 @@ impl Coordinator<'_> {
                 result.and_then(|_| self.integrate_task(phase, &plan, &snapshot, task, index));
             if let Err(error) = accepted {
                 let message = format!("{error:#}");
-                if message.starts_with(lifecycle::VERIFICATION_CANCELLED) {
+                if interrupted_integration(&message) {
                     // The receipt stays submitted, so the next resume verifies the same
                     // candidate again; no failure is counted and nothing is re-implemented.
+                    // This covers a check cancelled while it ran and a pause, cancel,
+                    // interrupt or run deadline noticed before integration or between
+                    // two checks: none of them says anything about the candidate.
                     let a = &mut self.run.attempts[index];
                     a.status = "submitted".into();
                     a.finished_at = None;
@@ -844,4 +847,14 @@ impl Coordinator<'_> {
         }
         Ok(())
     }
+}
+
+/// Errors that stop integrating a submitted candidate without judging it: a cancelled
+/// check, a pause or cancel request (`pause:` before `finish` rewrites it), an
+/// interrupted process and the run deadline.
+fn interrupted_integration(message: &str) -> bool {
+    message.starts_with(lifecycle::VERIFICATION_CANCELLED)
+        || ["paused:", "pause:", "cancel:", "budget_exhausted:"]
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
 }

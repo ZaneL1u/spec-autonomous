@@ -5,6 +5,7 @@
 ## 0.2.0（未发布）
 
 - 写集追加不再越权：原生上下文的父目录（如 `openspec/changes/<id>`）和能匹配它们的 glob 与上下文文件本身一样被拒绝（`write_scope_forbidden`）；blocked worker 的 `requested_writes` 只自动授权字面文件路径，模式与目录返回 `write_scope_not_literal`，需经人工 `run.revise`。
+- 集成过程中的中断不再计为失败：暂停 / 取消请求、进程中断或 run 截止时间在开始集成前或两条检查之间（含合并验证）被发现时，回执与检查运行中被取消一样保持 `submitted`，不计入 `max_attempts`，`prepare --run-id` 原样重新验证。
 
 ## 0.1.0-alpha.16
 

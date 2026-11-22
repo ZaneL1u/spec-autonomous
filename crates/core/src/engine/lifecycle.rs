@@ -812,6 +812,7 @@ impl Coordinator<'_> {
                 prepared = true;
             }
             let details = self.record_check(&wave, project, &check, false)?;
+            self.failpoint_after_check(label)?;
             if reuse && details["tree_unchanged"] == true {
                 if let Some(host) = self.run.host.as_mut() {
                     host.verification_cache.insert(

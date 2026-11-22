@@ -568,6 +568,34 @@ impl Coordinator<'_> {
         }
         Ok(())
     }
+    /// Debug-build test seam for interruptions between two verification checks. A file
+    /// `<git common dir>/spec-autonomous/failpoints/<name>` fires once and is consumed,
+    /// so tests in separate repositories stay isolated. Compiled out of release builds.
+    fn failpoint_after_check(&mut self, stage: &str) -> Result<()> {
+        #[cfg(debug_assertions)]
+        {
+            let armed = |name: &str| {
+                self.repo.runtime().is_ok_and(|dir| {
+                    std::fs::remove_file(dir.join("failpoints").join(format!("{name}-{stage}")))
+                        .is_ok()
+                })
+            };
+            if armed("pause_after_check") {
+                self.store.control(&self.run.id, "pause")?;
+            }
+            if armed("budget_after_check") {
+                self.elapsed_before = self
+                    .run
+                    .config
+                    .execution
+                    .run_timeout_seconds
+                    .saturating_mul(1000);
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = stage;
+        Ok(())
+    }
     /// The budget_exhausted blocker once the run deadline is reached, with the elapsed
     /// time, the current limit and the smallest extend_seconds that reopens the budget.
     fn budget_exhausted(&self) -> Option<String> {

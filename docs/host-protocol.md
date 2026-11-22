@@ -92,6 +92,6 @@ phase 有灰区时 `prepare` 返回 `needs_input`，`blocker` 以 `discussion_re
 
 `blocker` 只描述本次停止的原因，历史失败在 `attempts[].error` 中。`no_progress: no eligible task remains` 按「最新在前」只列每个未完成任务最近一次失败（每条截断到 600 字符），其余失败只给计数（`(<n> earlier failures are listed in attempts)`）。
 
-检查因宿主进程被中断、`run.pause` / `run.cancel` 或 run 截止时间而被取消（证据 `failure_kind: "cancelled"`，exit 130）时，错误以 `paused: verification_cancelled` 开头而不是 `verification_failed`：被验证的 implement 回执保持 `submitted`，不记失败、不计入 `max_attempts` 与无进展判断，阶段 / 里程碑门禁也不会因此排修复轮；`prepare --run-id <run_id>` 对同一候选重新验证，不重新实现。在此之前该请求仍以 `status: "submitted"` 出现在 `work[]` 中，宿主不要重派它。
+检查因宿主进程被中断、`run.pause` / `run.cancel` 或 run 截止时间而被取消（证据 `failure_kind: "cancelled"`，exit 130）时，错误以 `paused: verification_cancelled` 开头而不是 `verification_failed`。暂停 / 取消请求、进程中断或 run 截止时间在开始集成前或两条检查之间（包括合并验证 `combined` 阶段）被发现时同样处理，错误分别以 `paused:` / `cancel:` / `budget_exhausted:` 开头。两种情况下被验证的 implement 回执都保持 `submitted`，不记失败、不计入 `max_attempts` 与无进展判断，阶段 / 里程碑门禁也不会因此排修复轮；`prepare --run-id <run_id>` 对同一候选重新验证，不重新实现。在此之前该请求仍以 `status: "submitted"` 出现在 `work[]` 中，宿主不要重派它。
 
 `verification_environment_unavailable` 表示预检的全部错误都是项目级（与任务无关）的 `check_executable_missing` / `check_cwd_missing`：计划本身没问题，缺的是环境。该规划 attempt 保持 `candidate`，不计入失败次数；装好可执行文件、建好目录或改正 `runner.environment` / 项目验证配置（改配置时带 `reload_config`）后，再 `prepare --run-id <run_id>` 只重跑预检，通过即直接签发实现工作，不会重新规划。源或基线已变化时旧候选会被标为 `superseded` 并重新规划。任务级的缺失仍按 `verification_preflight_failed` 处理并要求更正计划。
