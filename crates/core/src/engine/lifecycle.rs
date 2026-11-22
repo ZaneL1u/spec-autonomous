@@ -1052,10 +1052,14 @@ impl Coordinator<'_> {
             .iter()
             .flat_map(|t| t.writes.iter().chain(&t.reads).cloned())
             .collect();
-        related.extend(path_operands(&scoped.check.argv));
-        if scoped.check.cwd != "." {
-            related.push(scoped.check.cwd.clone());
-        }
+        // Path operands are relative to the check's working directory. The directory
+        // itself is where the check runs, not an input: treating it as one would let
+        // any change under `server/` invalidate every check that runs there.
+        related.extend(
+            path_operands(&scoped.check.argv)
+                .into_iter()
+                .map(|operand| under_cwd(&scoped.check.cwd, &operand)),
+        );
         if let Some(hook) = self.run.config.hooks.get("verification_prepare") {
             related.extend(path_operands(&hook.argv));
         }
@@ -1353,6 +1357,16 @@ pub(super) fn owned_checks<'a>(tasks: impl IntoIterator<Item = &'a Task>) -> Vec
     out
 }
 /// Argv operands that look like project paths (pytest node ids lose their `::` part).
+/// `operand` (relative to `cwd`) as a project-relative path.
+fn under_cwd(cwd: &str, operand: &str) -> String {
+    let cwd = cwd.trim_start_matches("./").trim_end_matches('/');
+    if cwd.is_empty() || cwd == "." {
+        operand.to_string()
+    } else {
+        format!("{cwd}/{operand}")
+    }
+}
+
 fn path_operands(argv: &[String]) -> Vec<String> {
     argv.iter()
         .enumerate()

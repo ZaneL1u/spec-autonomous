@@ -17,6 +17,10 @@ fn put(root: &Path, path: &str, text: &str) {
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(file, text).unwrap();
 }
+thread_local! {
+    /// Working directory of the checks `counted` builds (tests run on their own threads).
+    static CHECK_CWD: std::cell::Cell<&'static str> = const { std::cell::Cell::new(".") };
+}
 /// A check that appends `<stage>:<tag>` to the counter file and then runs `script`.
 fn counted(tag: &str, script: &str) -> Check {
     Check {
@@ -27,13 +31,13 @@ fn counted(tag: &str, script: &str) -> Check {
                 "require('fs').appendFileSync(process.env.SA_TEST_COUNTER,process.env.SA_VERIFY_STAGE+':{tag}\\n');{script}"
             ),
         ],
-        cwd: ".".into(),
+        cwd: CHECK_CWD.with(|c| c.get()).into(),
         env: Default::default(),
     }
 }
-const VALUE: &str =
-    "require('assert').ok(require('fs').readFileSync('src/value.txt','utf8').startsWith('42'))";
-const OTHER: &str = "require('assert').ok(require('fs').existsSync('src/other.txt'))";
+// Paths resolve from the repository root or from `src/` when the check runs there.
+const VALUE: &str = "const d=require('fs').existsSync('src')?'src/':'';require('assert').ok(require('fs').readFileSync(d+'value.txt','utf8').startsWith('42'))";
+const OTHER: &str = "const d=require('fs').existsSync('src')?'src/':'';require('assert').ok(require('fs').existsSync(d+'other.txt'))";
 /// A Spec Kit feature with two parallel native tasks and two functional requirements.
 /// The plan maps them to `value` (src/value.txt) and `other` (src/other.txt).
 fn fixture(counter: &Path, configure: impl FnOnce(&mut Config)) -> tempfile::TempDir {
@@ -521,6 +525,36 @@ fn checks_of_tasks_the_change_does_not_reach_stand_on_their_last_pass() {
     assert!(
         scoped.iter().any(|d| d["stage"] == "phase"),
         "the phase gate after the repair reused value's check"
+    );
+}
+
+#[test]
+fn checks_running_in_a_subdirectory_still_stand_on_their_last_pass() {
+    // A check's working directory is where it runs, not something it depends on:
+    // changes elsewhere under that directory must not force every check to run again.
+    CHECK_CWD.with(|c| c.set("src"));
+    let (_root, run, checks) = repaired_run(|_| {});
+    CHECK_CWD.with(|c| c.set("."));
+    assert_eq!(
+        checks,
+        [
+            "combined:value",
+            "combined:other",
+            "phase:value",
+            "phase:other",
+            "combined:repair",
+            "combined:other",
+            "phase:other",
+            "phase:repair",
+            "milestone:value",
+        ]
+    );
+    assert!(
+        run.evidence
+            .iter()
+            .filter_map(|e| e.details.as_ref())
+            .any(|d| d["reused_from"]["scope"] == "affected"
+                && d["reused_from"]["owners"] == json!(["value"]))
     );
 }
 
