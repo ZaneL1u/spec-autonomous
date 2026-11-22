@@ -47,6 +47,7 @@ pub fn compact(mut value: Value) -> Value {
             "verification_readiness",
             "verification_revision_count",
             "recovery_options",
+            "warnings",
         ];
         value
             .as_object_mut()

@@ -335,7 +335,9 @@ pub fn public_run(run: &Run) -> Value {
     } else {
         "legacy"
     });
-    value["config"] = json!({"schema_version":run.config.schema_version,"execution":run.config.execution,"host":run.config.host,"environment":"redacted","runner":{"profile":run.config.runner.profile,"sandbox":run.config.runner.sandbox,"environment":"redacted"}});
+    // Hooks show their name, argv and idempotence so a host can confirm which are active;
+    // environment values stay redacted.
+    value["config"] = json!({"schema_version":run.config.schema_version,"execution":run.config.execution,"host":run.config.host,"hooks":run.config.hooks,"environment":"redacted","runner":{"profile":run.config.runner.profile,"sandbox":run.config.runner.sandbox,"environment":"redacted"}});
     value
 }
 /// Remove null fields for the common JSON/TOML public representation.

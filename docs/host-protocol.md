@@ -68,6 +68,8 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 - `verification_readiness` 只在 `prepare` / `next` / `apply-result` 计算；`work.claim`、`work.claim-batch`、`work.heartbeat` 的响应里它是 `{"status":"not_computed"}`。
 - 检查 argv 以裸 `openspec` 开头且 PATH 解析不到时，预检、检查执行与归档前的配置检查统一改用 run 配置里的 `provider.openspec_command`（受管理或项目本地 OpenSpec）加原参数。`verification_readiness.checks[]` 的 `argv` 仍是声明值，`resolved_argv` 给出实际执行的 argv；证据清单记录 `executed_argv`。
+- run 的配置在启动时冻结。`prepare` / `next` / `apply-result` 发现源目录当前的项目配置（用户级与项目 `config.toml` 合并后）与 run 启动或上次 `reload_config` 时加载的不一致时，在 `warnings` 中给出 `config_drift: project configuration changed since the run started; pass reload_config to apply it`，但不会自动重载。`extend_seconds`、`max_attempts`、`max_workers` 这类 run 本地覆盖不算漂移。
+- full 视图的 `config` 包含 `hooks`（每个钩子的名称、`argv` 与 `idempotent`），用于确认 `verification_prepare` / `worker_prepare` 等钩子是否生效；`environment` 仍为 `redacted`。
 - 读取能力支持 `fields` / `limit` / `offset`，可分页的数组新增 `attempts`、`work`、`evidence`、`intents`。
 - 不要直接读取 `.git/spec-autonomous/state.db`。缺字段请报协议缺口。
 

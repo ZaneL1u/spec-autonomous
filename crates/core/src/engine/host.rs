@@ -147,6 +147,10 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
     if let Some(host) = &run.host {
         data["verification_revision_count"] = json!(host.verification_revisions.len());
     }
+    // Only prepare / next / apply-result read the source configuration again.
+    if readiness && let Some(drift) = super::config_drift(run) {
+        data["warnings"] = json!([drift]);
+    }
     if run.status == "needs_input" || run.status == "blocked" || run.status == "paused" {
         data["recovery_options"] = json!({"inspect":"state.get","revise_pending_verification":"run.revise","continue":"prepare","stop_active_work":"work.revoke","cleanup_terminal_work":"run.cleanup"});
     }
@@ -194,7 +198,7 @@ pub fn next(root: &Path, id: Option<&str>, host: Option<&HostIdentity>) -> Resul
         }
     }
     Ok(
-        json!({"action":action,"run_id":run.id,"status":run.status,"stage":run.stage,"blocker":run.blocker,"work":value["work"],"verification_readiness":value["verification_readiness"],"recovery_options":value["recovery_options"],"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(&run)),"starts_agents":false}),
+        json!({"action":action,"run_id":run.id,"status":run.status,"stage":run.stage,"blocker":run.blocker,"work":value["work"],"verification_readiness":value["verification_readiness"],"recovery_options":value["recovery_options"],"warnings":value["warnings"],"run_remaining_ms":(run.config.execution.run_timeout_seconds*1000).saturating_sub(elapsed(&run)),"starts_agents":false}),
     )
 }
 pub fn claim(

@@ -1025,3 +1025,67 @@ fn reload_config_keeps_earlier_extensions_and_budget_stops_say_how_much_to_add()
         "{blocker}"
     );
 }
+
+#[test]
+fn source_config_drift_is_reported_and_full_views_show_hooks() {
+    let root = fixture(|_| {});
+    let root = root.path();
+    let (run_id, wave) = start(root);
+    assert!(wave.get("warnings").is_none(), "{wave}");
+    assert_eq!(wave["config"]["hooks"], json!({}), "{wave}");
+
+    let mut config = Config::load(root).unwrap();
+    config.hooks.insert(
+        "verification_prepare".into(),
+        spec_autonomous_core::config::Hook {
+            argv: vec!["node".into(), "--version".into()],
+            idempotent: true,
+        },
+    );
+    put(
+        root,
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    let drift = |value: &Value| {
+        value["warnings"].as_array().is_some_and(|w| {
+            w.iter()
+                .any(|w| w.as_str().unwrap().starts_with("config_drift: "))
+        })
+    };
+    let frozen = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full"}),
+    )
+    .unwrap();
+    assert!(drift(&frozen), "{frozen}");
+    assert!(
+        frozen["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("pass reload_config")
+    );
+    assert_eq!(frozen["config"]["hooks"], json!({}), "not reloaded");
+    let compact = api::invoke(root, "prepare", &json!({"run_id":run_id,"host":host()})).unwrap();
+    assert!(drift(&compact), "{compact}");
+    let next = api::invoke(root, "next", &json!({"run_id":run_id})).unwrap();
+    assert!(drift(&next), "{next}");
+
+    let reloaded = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full","reload_config":true,"extend_seconds":60}),
+    )
+    .unwrap();
+    assert!(!drift(&reloaded), "{reloaded}");
+    assert_eq!(
+        reloaded["config"]["hooks"]["verification_prepare"],
+        json!({"argv":["node","--version"],"idempotent":true}),
+        "{reloaded}"
+    );
+    assert_eq!(reloaded["config"]["environment"], "redacted");
+    // Run-local overrides (extend_seconds) are not drift.
+    let again = api::invoke(root, "prepare", &json!({"run_id":run_id,"host":host()})).unwrap();
+    assert!(!drift(&again), "{again}");
+}

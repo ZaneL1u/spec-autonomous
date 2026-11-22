@@ -367,6 +367,10 @@ pub struct HostState {
     /// repair stops the loop instead of spending the whole budget on it.
     #[serde(default)]
     pub repair_signatures: BTreeMap<String, u32>,
+    /// Hash of the project configuration as loaded when the run started or last applied
+    /// reload_config, before run-local overrides; responses compare it to the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_hash: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationPass {

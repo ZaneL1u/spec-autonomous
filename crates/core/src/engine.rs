@@ -230,6 +230,8 @@ pub fn start(
     let project = integration.join(&relative);
     provider::copy_ignored_context(root, &project)?;
     let accepted = git::commit(&integration, "sa: preserve native planning context")?;
+    // The file-derived configuration, before prepare's run-local overrides.
+    let loaded_config_hash = Config::load(root).ok().and_then(|c| config_hash(&c).ok());
     let now = paths::now();
     let run = Run {
         verification_reuses: 0,
@@ -267,6 +269,7 @@ pub fn start(
         hook_results: BTreeMap::new(),
         host: Some(HostState {
             protocol_version: 1,
+            config_hash: loaded_config_hash,
             ..Default::default()
         }),
     };
@@ -331,6 +334,7 @@ pub fn resume_with(
         // in the run's timeout, so keep the larger of the file value and the run value.
         let granted = run.config.execution.run_timeout_seconds;
         run.config = Config::load(&Path::new(&run.origin).join(&run.project_relative))?;
+        run.host.as_mut().unwrap().config_hash = Some(config_hash(&run.config)?);
         run.config.execution.run_timeout_seconds =
             run.config.execution.run_timeout_seconds.max(granted);
         if run.milestone.framework == Framework::Openspec {
@@ -1049,6 +1053,28 @@ fn repeated(keys: Option<&Vec<String>>, limit: u32) -> bool {
     })
 }
 
+/// Identity of a loaded project configuration (user and project files merged).
+pub(crate) fn config_hash(config: &Config) -> Result<String> {
+    Ok(paths::hash(serde_json::to_vec(config)?))
+}
+/// A short notice when the project configuration differs from the one the run loaded at
+/// start or its last reload_config. The run keeps its frozen configuration.
+pub(crate) fn config_drift(run: &Run) -> Option<String> {
+    let recorded = run.host.as_ref()?.config_hash.as_ref()?;
+    if run.terminal() {
+        return None;
+    }
+    match Config::load(&Path::new(&run.origin).join(&run.project_relative)) {
+        Ok(current) if config_hash(&current).ok().as_ref() == Some(recorded) => None,
+        Ok(_) => Some(
+            "config_drift: project configuration changed since the run started; pass reload_config to apply it"
+                .into(),
+        ),
+        Err(error) => Some(format!(
+            "config_drift: project configuration changed since the run started and does not load ({error:#}); fix it, then pass reload_config"
+        )),
+    }
+}
 fn elapsed(run: &Run) -> u64 {
     chrono::DateTime::parse_from_rfc3339(&run.started_at)
         .ok()
