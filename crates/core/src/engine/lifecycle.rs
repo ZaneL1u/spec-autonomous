@@ -184,7 +184,8 @@ impl Coordinator<'_> {
                 }
                 self.run.stage = "verifying_phase".into();
                 self.save("phase_verification")?;
-                if let Err(error) = self.verify(&self.project(), &self.checks(&phase, &[]), "phase")
+                if let Err(error) =
+                    self.verify_gate(&self.project(), &self.phase_gate(&phase), "phase")
                 {
                     self.repair_failure(&phase, error)?;
                     continue;
@@ -207,7 +208,7 @@ impl Coordinator<'_> {
                     break;
                 }
                 if let Err(error) =
-                    self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
+                    self.verify_gate(&self.project(), &self.phase_gate(&phase), "post-hook")
                 {
                     self.repair_failure(&phase, error)?;
                 }
@@ -250,7 +251,8 @@ impl Coordinator<'_> {
                 .last()
                 .cloned()
                 .context("empty_milestone")?;
-            if let Err(error) = self.verify(&self.project(), &self.checks_milestone(), "milestone")
+            if let Err(error) =
+                self.verify_gate(&self.project(), &self.milestone_gate(), "milestone")
             {
                 self.repair_failure(&phase, error)?;
                 self.reopen(&phase.id);
@@ -310,6 +312,21 @@ impl Coordinator<'_> {
         }
         let mut all = vec![];
         let tree = git::tree(&self.project())?;
+        let head = git::head(&self.project())?;
+        let scope = audit_scope(snapshot);
+        let context: Vec<String> = snapshot
+            .context_files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        let mut diffs = BTreeMap::new();
+        // A milestone audit may stand on the phase audits: map each acceptance id to
+        // the phases whose own audit covered it, with those phases' native documents.
+        let phases = if scope == "milestone" {
+            Some(self.phase_acceptance()?)
+        } else {
+            None
+        };
         for (batch, refs) in required.chunks(32).enumerate() {
             // An audit of the same acceptance ids against the same integration tree has
             // the same inputs; a fully passed one is reused instead of asked again.
@@ -331,18 +348,62 @@ impl Coordinator<'_> {
                 self.save("audit_reused")?;
                 continue;
             }
+            // Passed items whose inputs did not change since they were audited stand;
+            // only the rest go into the packet.
+            let mut carried = vec![];
+            let mut pending = vec![];
+            for reference in refs {
+                match self.carry_audit(
+                    phase,
+                    scope,
+                    reference,
+                    &tree,
+                    &head,
+                    &context,
+                    phases.as_ref(),
+                    &mut diffs,
+                ) {
+                    Some(item) => carried.push(item),
+                    None => pending.push(reference.clone()),
+                }
+            }
+            if pending.is_empty() {
+                all.extend(carried);
+                self.save("audit_carried_over")?;
+                continue;
+            }
             let mut partial = snapshot.clone();
-            partial.metadata["acceptance"] = serde_json::json!(refs);
-            let audit_task = if snapshot.metadata["scope"] == "milestone" {
+            partial.metadata["acceptance"] = serde_json::json!(pending);
+            let mut instruction = format!("{AUDIT_RULES} {AUDIT_FILES}");
+            if !carried.is_empty() {
+                partial.metadata["carried_over"] = serde_json::json!(
+                    carried
+                        .iter()
+                        .map(|item| serde_json::json!({
+                            "id": item.requirement,
+                            "from": item.carried_over,
+                        }))
+                        .collect::<Vec<_>>()
+                );
+                instruction.push_str(&format!(
+                    " Incremental audit: cover ONLY the {} ids in snapshot.metadata.acceptance. The {} ids in snapshot.metadata.carried_over passed an earlier audit and nothing they depend on changed since; do not report them.",
+                    pending.len(),
+                    carried.len()
+                ));
+            }
+            let audit_task = if scope == "milestone" {
                 format!("audit-milestone-{}-{}", phase.id, batch + 1)
             } else {
                 format!("audit-{}-{}", phase.id, batch + 1)
             };
-            let (result, _worktree, index) = self.invoke(
+            // The key keeps the original instruction so packets issued before
+            // incremental audits still match their receipts.
+            let (result, _worktree, index) = self.invoke_host_keyed(
                 "audit",
                 &audit_task,
                 &phase.id,
-                "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.".into(),
+                instruction,
+                AUDIT_RULES,
                 Some(partial.clone()),
             )?;
             let verified = (|| -> Result<()> {
@@ -350,6 +411,11 @@ impl Coordinator<'_> {
                     bail!("scope_violation: verifier changed files");
                 }
                 provider::check_audit(&partial, &result.audit)?;
+                if result.audit.iter().any(|a| a.carried_over.is_some()) {
+                    bail!(
+                        "audit_contract_error: carried_over is set by the coordinator, not by audit workers"
+                    );
+                }
                 Ok(())
             })();
             if let Err(error) = verified {
@@ -358,19 +424,222 @@ impl Coordinator<'_> {
                 self.save("audit_rejected")?;
                 return Err(error);
             }
-            if result.audit.iter().all(|a| a.passed)
+            let attempt_id = self.run.attempts[index].id.clone();
+            self.record_audit(
+                phase,
+                scope,
+                &pending,
+                &result.audit,
+                &attempt_id,
+                &tree,
+                &head,
+            );
+            let mut items = carried;
+            items.extend(result.audit);
+            if items.iter().all(|a| a.passed)
                 && let Some(host) = self.run.host.as_mut()
             {
-                host.audit_cache.insert(key, result.audit.clone());
+                host.audit_cache.insert(key, items.clone());
             }
-            all.extend(result.audit);
+            all.extend(items);
             self.run.attempts[index].status = "accepted".into();
             self.save("audit_recorded")?;
         }
         provider::check_audit(snapshot, &all)?;
         Ok(all)
     }
+    /// Store the conclusions of one accepted audit packet per acceptance id.
+    #[allow(clippy::too_many_arguments)]
+    fn record_audit(
+        &mut self,
+        phase: &Phase,
+        scope: &str,
+        refs: &[serde_json::Value],
+        items: &[AuditItem],
+        attempt_id: &str,
+        tree: &str,
+        head: &str,
+    ) {
+        let Some(host) = self.run.host.as_mut() else {
+            return;
+        };
+        for item in items {
+            let Some(reference) = refs.iter().find(|r| r["id"] == item.requirement) else {
+                continue;
+            };
+            let key = audit_conclusion_key(&phase.id, scope, &item.requirement);
+            if host
+                .audit_conclusions
+                .get(&key)
+                .is_some_and(|c| c.attempt_id == attempt_id)
+            {
+                continue;
+            }
+            host.audit_conclusions.insert(
+                key,
+                AuditConclusion {
+                    requirement: item.requirement.clone(),
+                    phase_id: phase.id.clone(),
+                    scope: scope.into(),
+                    passed: item.passed,
+                    evidence: work_packet::clip(&item.evidence, 2000),
+                    files: audit_files(&item.files),
+                    attempt_id: attempt_id.into(),
+                    commit: head.into(),
+                    tree: tree.into(),
+                    acceptance_hash: acceptance_hash(reference),
+                    recorded_at: paths::now(),
+                },
+            );
+        }
+    }
+    /// The earlier passed conclusion for this acceptance reference when it may stand:
+    /// recorded against another tree of the same phase and scope (or, for a milestone
+    /// audit, by the audit of the one phase that owns the id), for the same reference
+    /// text, naming the files it rests on, and with no change since then to those
+    /// files, the write sets of the tasks that wrote them, the requirement's native
+    /// source, its native documents, global inputs or undeclared files.
+    #[allow(clippy::too_many_arguments)]
+    fn carry_audit(
+        &self,
+        phase: &Phase,
+        scope: &str,
+        reference: &serde_json::Value,
+        tree: &str,
+        head: &str,
+        context: &[String],
+        phases: Option<&PhaseAcceptance>,
+        diffs: &mut BTreeMap<String, Option<Vec<String>>>,
+    ) -> Option<AuditItem> {
+        let id = reference["id"].as_str()?;
+        let host = self.run.host.as_ref()?;
+        // Conclusions of this very tree belong to the audit in progress; carrying them
+        // would change the packet that is being answered.
+        let own = host
+            .audit_conclusions
+            .get(&audit_conclusion_key(&phase.id, scope, id))
+            .filter(|c| c.tree != tree);
+        let (record, context, neutral) = match (own, phases) {
+            (Some(record), _) => (record, context.to_vec(), vec![]),
+            // A milestone item that one phase audit already concluded keeps that
+            // conclusion; an id shared by several phases (for example the
+            // constitution) is audited again for the milestone.
+            (None, Some(phases)) => {
+                let [owner] = phases.owners.get(id)?.as_slice() else {
+                    return None;
+                };
+                let record = host
+                    .audit_conclusions
+                    .get(&audit_conclusion_key(owner, "phase", id))?;
+                let own_docs = phases.documents.get(owner)?.clone();
+                // Other phases' native documents do not bear on this requirement.
+                let neutral = context
+                    .iter()
+                    .filter(|c| !own_docs.contains(c))
+                    .cloned()
+                    .collect();
+                (record, own_docs, neutral)
+            }
+            (None, None) => return None,
+        };
+        if !record.passed
+            || record.files.is_empty()
+            || record.acceptance_hash != acceptance_hash(reference)
+        {
+            return None;
+        }
+        let project = self.project();
+        let changed = diffs
+            .entry(record.commit.clone())
+            .or_insert_with(|| {
+                crate::scope::changed_between(
+                    &project,
+                    &self.run.project_relative,
+                    &record.commit,
+                    head,
+                )
+            })
+            .clone()?
+            .into_iter()
+            .filter(|path| !neutral.contains(path))
+            .collect::<Vec<_>>();
+        let mut related = record.files.clone();
+        related.extend(reference["source_path"].as_str().map(str::to_string));
+        for task in self.run.plans.values().flat_map(|p| &p.tasks) {
+            if !task.writes.is_empty()
+                && record
+                    .files
+                    .iter()
+                    .any(|file| plan::allowed(file, &task.writes))
+            {
+                related.extend(task.writes.iter().cloned());
+            }
+        }
+        if crate::scope::invalidated(
+            &self.run,
+            &project,
+            &record.commit,
+            head,
+            &changed,
+            &related,
+            &context,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        Some(AuditItem {
+            requirement: id.into(),
+            evidence: format!(
+                "carried over from audit attempt {} at {}: {}",
+                record.attempt_id, record.commit, record.evidence
+            ),
+            passed: true,
+            files: record.files.clone(),
+            carried_over: Some(CarriedAudit {
+                attempt_id: record.attempt_id.clone(),
+                phase_id: record.phase_id.clone(),
+                scope: record.scope.clone(),
+                commit: record.commit.clone(),
+                tree: record.tree.clone(),
+            }),
+        })
+    }
 
+    /// Acceptance ids per phase and each phase's native documents, as the phase audits
+    /// saw them.
+    fn phase_acceptance(&self) -> Result<PhaseAcceptance> {
+        let mut out = PhaseAcceptance::default();
+        for phase in &self.run.milestone.phases {
+            let snapshot = provider::inspect(
+                &self.project(),
+                self.run.milestone.framework,
+                &phase.source.selector,
+                &self.run.config,
+            )?;
+            for reference in snapshot.metadata["acceptance"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                if let Some(id) = reference["id"].as_str() {
+                    out.owners
+                        .entry(id.to_string())
+                        .or_default()
+                        .push(phase.id.clone());
+                }
+            }
+            out.documents.insert(
+                phase.id.clone(),
+                snapshot
+                    .context_files
+                    .iter()
+                    .map(|f| f.path.clone())
+                    .collect(),
+            );
+        }
+        Ok(out)
+    }
     pub(super) fn milestone_snapshot(&self) -> Result<Snapshot> {
         let mut snapshots = vec![];
         for phase in &self.run.milestone.phases {
@@ -422,6 +691,8 @@ impl Coordinator<'_> {
                 requirement: "host-verification".into(),
                 evidence: text,
                 passed: false,
+                files: vec![],
+                carried_over: None,
             }],
         )
     }
@@ -545,7 +816,8 @@ impl Coordinator<'_> {
             };
             self.run.stage = "verifying_stale_phase".into();
             self.save("stale_phase_verification")?;
-            if let Err(error) = self.verify(&self.project(), &self.checks(&phase, &[]), "phase") {
+            if let Err(error) = self.verify_gate(&self.project(), &self.phase_gate(&phase), "phase")
+            {
                 self.repair_failure(&phase, error)?;
                 self.reopen(&phase.id);
                 return self.drive(false);
@@ -682,19 +954,28 @@ impl Coordinator<'_> {
         }
         bail!("planning_budget_exhausted")
     }
-    pub(super) fn checks(&self, phase: &Phase, task: &[Check]) -> Vec<Check> {
-        let mut x = self.run.config.verification.clone();
-        x.extend(self.run.config.phase_verification.clone());
-        x.extend(phase.verification.clone());
-        x.extend_from_slice(task);
-        if x.is_empty() {
-            if let Some(plan) = self.run.plans.get(&phase.id) {
-                for task in &plan.tasks {
-                    x.extend(task.verification.clone());
-                }
-            }
+    /// The phase gate: configured project/phase checks always run; without them the
+    /// plan's task checks stand in, each owned by the tasks that declared it.
+    pub(super) fn phase_gate(&self, phase: &Phase) -> Gate {
+        let mut always = self.run.config.verification.clone();
+        always.extend(self.run.config.phase_verification.clone());
+        always.extend(phase.verification.clone());
+        if !always.is_empty() {
+            return Gate {
+                always: unique_checks(always),
+                scoped: vec![],
+            };
         }
-        unique_checks(x)
+        Gate {
+            always: vec![],
+            scoped: owned_checks(
+                self.run
+                    .plans
+                    .get(&phase.id)
+                    .into_iter()
+                    .flat_map(|p| &p.tasks),
+            ),
+        }
     }
     pub(super) fn task_checks(&self, task: &Task) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
@@ -702,18 +983,108 @@ impl Coordinator<'_> {
         x.extend(task.verification.clone());
         x
     }
-    pub(super) fn checks_milestone(&self) -> Vec<Check> {
-        let mut x = self.run.config.verification.clone();
-        x.extend(self.run.config.milestone_verification.clone());
-        x.extend(self.run.milestone.verification.clone());
-        if x.is_empty() {
-            for phase in &self.run.milestone.phases {
-                x.extend(self.checks(phase, &[]));
+    /// The milestone gate: configured milestone checks, otherwise every phase gate.
+    /// Task checks stay scoped only under `milestone_verification_scope = "affected"`.
+    pub(super) fn milestone_gate(&self) -> Gate {
+        let mut always = self.run.config.verification.clone();
+        always.extend(self.run.config.milestone_verification.clone());
+        always.extend(self.run.milestone.verification.clone());
+        if !always.is_empty() {
+            return Gate {
+                always: unique_checks(always),
+                scoped: vec![],
+            };
+        }
+        let mut gate = Gate {
+            always: vec![],
+            scoped: vec![],
+        };
+        for phase in &self.run.milestone.phases {
+            let next = self.phase_gate(phase);
+            gate.always.extend(next.always);
+            for scoped in next.scoped {
+                match gate.scoped.iter_mut().find(|s| s.check == scoped.check) {
+                    Some(existing) => existing.owners.extend(scoped.owners),
+                    None => gate.scoped.push(scoped),
+                }
             }
         }
-        unique_checks(x)
+        if self.run.config.execution.milestone_verification_scope != "affected" {
+            gate.always.extend(gate.scoped.drain(..).map(|s| s.check));
+        }
+        gate.always = unique_checks(gate.always);
+        gate
     }
-    pub(super) fn verify(&mut self, project: &Path, checks: &[Check], label: &str) -> Result<()> {
+    /// An earlier pass of a scoped check that may stand for `project`'s HEAD: the same
+    /// command identity (everything but the tree) passed on an ancestor commit, and the
+    /// files changed since reach neither its owners' declared writes and reads, its own
+    /// path operands, global inputs, native documents nor undeclared files. Owners
+    /// without declared writes or reads are never proven independent.
+    fn scoped_pass(
+        &self,
+        project: &Path,
+        key: &str,
+        scoped: &ScopedCheck,
+    ) -> Option<(VerificationPass, Vec<String>)> {
+        let pass = self
+            .run
+            .host
+            .as_ref()?
+            .verification_passes
+            .get(key)?
+            .clone();
+        if scoped
+            .owners
+            .iter()
+            .any(|t| t.writes.is_empty() || t.reads.is_empty())
+        {
+            return None;
+        }
+        let head = git::head(project).ok()?;
+        let changed = crate::scope::changed_between(
+            project,
+            &self.run.project_relative,
+            &pass.revision,
+            &head,
+        )?;
+        let mut related: Vec<String> = scoped
+            .owners
+            .iter()
+            .flat_map(|t| t.writes.iter().chain(&t.reads).cloned())
+            .collect();
+        related.extend(path_operands(&scoped.check.argv));
+        if scoped.check.cwd != "." {
+            related.push(scoped.check.cwd.clone());
+        }
+        if let Some(hook) = self.run.config.hooks.get("verification_prepare") {
+            related.extend(path_operands(&hook.argv));
+        }
+        if crate::scope::invalidated(
+            &self.run,
+            project,
+            &pass.revision,
+            &head,
+            &changed,
+            &related,
+            &[],
+        )
+        .is_some()
+        {
+            return None;
+        }
+        Some((pass, changed))
+    }
+    /// Run a gate. `always` checks execute unless identical-tree evidence exists;
+    /// `scoped` checks may also stand on an earlier pass on an ancestor commit when
+    /// `[execution] verification_scope` (the caller resolves the milestone switch)
+    /// allows it and the change since does not reach them.
+    pub(super) fn verify_gate(&mut self, project: &Path, gate: &Gate, label: &str) -> Result<()> {
+        let checks: Vec<Check> = gate
+            .always
+            .iter()
+            .chain(gate.scoped.iter().map(|s| &s.check))
+            .cloned()
+            .collect();
         if checks.is_empty() {
             bail!("verification_missing: configure real verification argv for {label}");
         }
@@ -755,7 +1126,9 @@ impl Coordinator<'_> {
             }
         }
         let mut prepared = preparation.is_none();
-        for check in unique_checks(checks.to_vec()) {
+        let scoped_allowed = reuse
+            && (label == "milestone" || self.run.config.execution.verification_scope == "affected");
+        for check in unique_checks(checks) {
             self.check()?;
             let mut identity = serde_json::json!({
                 "tree": tree,
@@ -775,6 +1148,10 @@ impl Coordinator<'_> {
                 identity["executed_argv"] = serde_json::json!(executed);
             }
             let key = paths::hash(serde_json::to_string(&identity)?);
+            // The same identity without the tree, for passes on earlier commits.
+            let mut command = identity.clone();
+            command.as_object_mut().unwrap().remove("tree");
+            let command_key = paths::hash(serde_json::to_string(&command)?);
             let hit = if reuse {
                 self.run
                     .host
@@ -802,6 +1179,37 @@ impl Coordinator<'_> {
                 self.save("verification_reused")?;
                 continue;
             }
+            let scoped = gate
+                .scoped
+                .iter()
+                .find(|s| s.check == check && !gate.always.contains(&check))
+                .filter(|_| scoped_allowed);
+            if let Some((pass, changed)) =
+                scoped.and_then(|s| self.scoped_pass(project, &command_key, s))
+            {
+                let owners: Vec<&str> = scoped
+                    .unwrap()
+                    .owners
+                    .iter()
+                    .map(|t| t.id.as_str())
+                    .collect();
+                let cwd = paths::inside(project, &check.cwd)?;
+                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at,"scope":"affected","owners":owners,"changed_files":changed.len(),"changed_sample":changed.iter().take(20).collect::<Vec<_>>()},"cache_key":command_key});
+                self.run.evidence.push(Evidence {
+                    argv: check.argv.clone(),
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    revision: wave.revision.clone(),
+                    exit_code: 0,
+                    log: pass.log.clone(),
+                    log_hash: pass.log_hash.clone(),
+                    finished_at: paths::now(),
+                    tree_unchanged: true,
+                    details: Some(details),
+                });
+                self.run.verification_reuses += 1;
+                self.save("verification_scope_reused")?;
+                continue;
+            }
             if !prepared {
                 let hook = preparation.as_ref().unwrap();
                 let step = Check {
@@ -814,19 +1222,19 @@ impl Coordinator<'_> {
             let details = self.record_check(&wave, project, &check, false)?;
             if reuse && details["tree_unchanged"] == true {
                 if let Some(host) = self.run.host.as_mut() {
-                    host.verification_cache.insert(
-                        key,
-                        VerificationPass {
-                            stage: label.into(),
-                            wave_id: wave_id.clone(),
-                            tree: tree.clone(),
-                            revision: wave.revision.clone(),
-                            manifest: details["manifest"].as_str().unwrap_or_default().into(),
-                            log: details["stdout"].as_str().unwrap_or_default().into(),
-                            log_hash: details["stdout_sha256"].as_str().unwrap_or_default().into(),
-                            finished_at: paths::now(),
-                        },
-                    );
+                    let pass = VerificationPass {
+                        stage: label.into(),
+                        wave_id: wave_id.clone(),
+                        tree: tree.clone(),
+                        revision: wave.revision.clone(),
+                        manifest: details["manifest"].as_str().unwrap_or_default().into(),
+                        log: details["stdout"].as_str().unwrap_or_default().into(),
+                        log_hash: details["stdout_sha256"].as_str().unwrap_or_default().into(),
+                        finished_at: paths::now(),
+                    };
+                    host.verification_cache.insert(key, pass.clone());
+                    // The latest real execution per command identity, for scoped reuse.
+                    host.verification_passes.insert(command_key, pass);
                 }
             }
         }
@@ -896,6 +1304,111 @@ impl Coordinator<'_> {
         }
         Ok(details)
     }
+}
+
+/// The audit instruction issued before incremental audits; request keys still hash it.
+const AUDIT_RULES: &str = "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.";
+const AUDIT_FILES: &str = "Also return files on each item: the project-relative implementation and test files the conclusion rests on (at most 50). A later audit carries a passed item over only while none of those files, the write sets of the tasks that wrote them, the requirement's native source and global inputs changed; an item without files is audited again every time.";
+
+/// Checks of one verification gate.
+pub(super) struct Gate {
+    /// Configured project, stage, phase or milestone checks and the task's own checks.
+    pub always: Vec<Check>,
+    /// Checks other plan tasks declared, with every task that declared each.
+    pub scoped: Vec<ScopedCheck>,
+}
+pub(super) struct ScopedCheck {
+    pub check: Check,
+    pub owners: Vec<Task>,
+}
+/// Task checks grouped by command, each with all tasks that declared it.
+pub(super) fn owned_checks<'a>(tasks: impl IntoIterator<Item = &'a Task>) -> Vec<ScopedCheck> {
+    let mut out: Vec<ScopedCheck> = vec![];
+    for task in tasks {
+        for check in &task.verification {
+            match out.iter_mut().find(|s| &s.check == check) {
+                Some(existing) => existing.owners.push(task.clone()),
+                None => out.push(ScopedCheck {
+                    check: check.clone(),
+                    owners: vec![task.clone()],
+                }),
+            }
+        }
+    }
+    out
+}
+/// Argv operands that look like project paths (pytest node ids lose their `::` part).
+fn path_operands(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .enumerate()
+        .filter(|(index, arg)| *index > 0 || arg.contains('/'))
+        .map(|(_, arg)| arg.split("::").next().unwrap_or(arg))
+        .filter(|arg| !arg.starts_with('-') && arg.contains(['/', '.']))
+        .filter(|arg| paths::relative(arg).is_ok())
+        .map(|arg| {
+            arg.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_string()
+        })
+        .filter(|arg| !arg.is_empty() && arg != ".")
+        .collect()
+}
+
+#[derive(Default)]
+struct PhaseAcceptance {
+    /// Acceptance id -> phases whose own audit covers it.
+    owners: BTreeMap<String, Vec<String>>,
+    /// Phase id -> native document paths of that phase.
+    documents: BTreeMap<String, Vec<String>>,
+}
+
+fn audit_scope(snapshot: &Snapshot) -> &'static str {
+    if snapshot.metadata["scope"] == "milestone" {
+        "milestone"
+    } else {
+        "phase"
+    }
+}
+fn audit_conclusion_key(phase: &str, scope: &str, id: &str) -> String {
+    format!("{phase}|{scope}|{id}")
+}
+fn acceptance_hash(reference: &serde_json::Value) -> String {
+    paths::hash(
+        serde_json::json!([
+            reference["id"],
+            reference["source_path"],
+            reference["description"]
+        ])
+        .to_string(),
+    )
+}
+/// Normalized project-relative files an auditor named; invalid or excessive lists count
+/// as none, which only means the item is audited again next time.
+fn audit_files(files: &[String]) -> Vec<String> {
+    if files.len() > 50 {
+        return vec![];
+    }
+    let mut out = vec![];
+    for file in files {
+        let Ok(path) = paths::relative(file) else {
+            return vec![];
+        };
+        let normal = path
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if normal.is_empty() {
+            return vec![];
+        }
+        if !out.contains(&normal) {
+            out.push(normal);
+        }
+    }
+    out
 }
 
 fn unique_checks(checks: Vec<Check>) -> Vec<Check> {

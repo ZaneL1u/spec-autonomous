@@ -150,6 +150,7 @@ fn plan_with(input: &WorkerInput, checks: Vec<Check>, writes: Vec<String>) -> Wo
             reads: vec![],
             writes,
             verification: checks,
+            verify_only: false,
         }],
         milestone: input.milestone.clone(),
     });
@@ -167,6 +168,8 @@ fn answer_audit(root: &Path, request: &Value) -> Value {
             requirement: r["id"].as_str().unwrap().into(),
             evidence: "src/value.txt".into(),
             passed: true,
+            files: vec![],
+            carried_over: None,
         })
         .collect();
     submit(root, request, result)
@@ -302,6 +305,7 @@ fn preflight_defers_scripts_and_executables_the_task_will_write() {
                 argv: argv.into_iter().map(String::from).collect(),
                 cwd: ".".into(),
             }],
+            verify_only: false,
         }],
         milestone: None,
     };

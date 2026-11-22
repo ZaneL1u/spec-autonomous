@@ -160,6 +160,12 @@ pub fn validate_plan(plan: &Plan, snapshot: &Snapshot) -> Result<()> {
         for c in &t.verification {
             validate_check(c)?;
         }
+        if t.verify_only && (!t.writes.is_empty() || t.verification.is_empty()) {
+            bail!(
+                "invalid_plan: verify_only task {} must have empty writes and its own verification checks",
+                t.id
+            );
+        }
     }
     if coverage != source {
         bail!("invalid_plan: missing source task coverage");

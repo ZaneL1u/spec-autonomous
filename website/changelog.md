@@ -2,6 +2,13 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.2.0（未发布）
+
+- 增量审计：审计条目可带 `files`（结论依赖的文件）。再次审计同一 phase 时，上一轮已通过、且这些文件、写过它们的任务写集和需求原文自上轮审计以来都没变的条目沿用原结论（标注 `carried_over` 与来源 attempt），审计包只列需要重审的 id；全部可沿用时不再签发审计包。没有 `files` 的条目照旧每次重审。
+- 里程碑审计沿用 phase 审计结论：只属于一个 phase、已在该 phase 审计中通过且依赖未变的验收项直接沿用，审计包只含里程碑独有项（如 `milestone/<id>/goal`）与受影响条目。单 phase 里程碑不再把同一份审计重做一遍。
+- 验证按改动范围收窄：新增 `[execution] verification_scope = "affected" | "full"`（默认 `affected`）。修复轮或单任务被接受后，combined 与 phase 门槛只重跑当前任务自己的检查、配置的项目 / 阶段检查，以及改动触及其 `writes` / `reads` 的其他任务的检查；其余检查沿用其在祖先提交上的通过证据（`reused_from.scope = "affected"`，附 owners 与变更文件）。里程碑门槛由 `milestone_verification_scope` 控制，默认 `full`。规划指令要求为每个任务声明 `reads`。
+- 核对型任务：计划任务新增可选 `verify_only: true`（`writes` 必须为空）。协调器不再为它签发 worker，而是直接在集成检出上运行其检查（`SA_VERIFY_STAGE=verify-only`）：通过即接受并勾选原生任务；失败才签发 implement 修复包，`failure` 带失败检查的输出末尾。
+
 ## 0.1.0-alpha.16
 
 - 验证证据按源码树哈希复用：同树同命令同环境的检查只执行一次，phase/post-hook、里程碑门槛和审计等待不再重复跑；无 hook 改动时跳过 post-hook。与 alpha.15 的 `reuse_verification` 合并为同一开关，`verification_reuse = "none"` 或 `reuse_verification = false` 均可关闭。

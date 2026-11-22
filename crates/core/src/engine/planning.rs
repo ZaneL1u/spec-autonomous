@@ -24,6 +24,9 @@ fn environment_only(report: &crate::verification_preflight::Report) -> bool {
         })
 }
 
+/// How declared scopes narrow verification; appended to the planning instruction.
+pub(super) const PLAN_SCOPE_GUIDANCE: &str = "Declare reads for every task: the files its code and checks depend on beyond its writes (imported modules, fixtures, shared helpers). After a later change, a task's checks are re-run only when the changed files reach its writes or reads; a task with empty reads has its checks re-run after every change. A native task that only runs checks (for example \"run the following checks in order\") and should change no files is one Task with verify_only: true, writes: [] and those commands as its verification; the coordinator runs them itself and issues a repair packet only if they fail.";
+
 impl Coordinator<'_> {
     /// The newest planning candidate for this batch that only the verification
     /// environment held back, when it still matches the current source and baseline.
@@ -165,11 +168,14 @@ impl Coordinator<'_> {
             let kept = self.kept_planning_candidate(&task_id, &phase.id, &partial)?;
             let (result, _worktree, index) = match kept {
                 Some(kept) => kept,
-                None => self.invoke(
+                // Scope guidance is appended after the keyed text, so planning packets
+                // issued before it still match their receipts.
+                None => self.invoke_host_keyed(
                     "plan-tasks",
                     &task_id,
                     &phase.id,
-                    instruction,
+                    format!("{instruction} {PLAN_SCOPE_GUIDANCE}"),
+                    &instruction,
                     Some(partial.clone()),
                 )?,
             };

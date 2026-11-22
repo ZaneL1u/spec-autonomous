@@ -122,6 +122,7 @@ fn answer_plan(root: &Path, request: &Value) -> Value {
             reads: vec![],
             writes: vec!["src/value.txt".into()],
             verification: vec![value_check()],
+            verify_only: false,
         }],
         milestone: input.milestone.clone(),
     });

@@ -47,7 +47,7 @@ progress 的 resource_summary 给出工作树数量、状态分布和压力提�
 | --- | --- |
 | `SA_VERIFY_OUTPUT_DIR` | 当前波次独占的 artifacts 报告/临时准备目录，与正在写入的进程日志分开 |
 | `SA_VERIFY_WAVE_ID` | 波次唯一 ID，可用于生成独立测试资源名称 |
-| `SA_VERIFY_STAGE` | worker、combined、phase 等真实执行阶段 |
+| `SA_VERIFY_STAGE` | worker、combined、phase、verify-only（协调器直接运行核对型任务）等真实执行阶段 |
 | `SA_VERIFY_REVISION` | 正在验证的源码提交 |
 | `SA_VERIFY_CHECKOUT` | 当前验证工作区 |
 
@@ -69,7 +69,7 @@ idempotent = true
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。
 
-同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
+同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。跨树时还有按改动范围的沿用（`[execution] verification_scope = "affected"`，默认）：combined 与 phase 门槛里由其他任务声明的检查，若上次实际通过的提交是当前提交的祖先、且其间改动没有触及这些任务声明的 writes / reads，就沿用该证据（`reused_from.scope = "affected"`，附 owners 与变更文件数）；配置的项目 / 阶段检查和当前任务自己的检查照常执行。里程碑门槛默认 `milestone_verification_scope = "full"`，在最终树上把被沿用的检查实际跑一遍。详见[宿主协议](host-protocol.md#验证按改动范围收窄)。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
 
 ## 续跑不清零
 
@@ -85,7 +85,7 @@ idempotent = true
 
 ### 审计复用与重复失败
 
-完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
+完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。树变化后（修复轮、hook 提交）按条目增量审计：上一轮已通过、声明了依据文件且这些文件及相关写集自上轮审计以来未变的验收项沿用原结论（`carried_over`），只把其余条目放进审计包，全部可沿用时不派发；里程碑审计同样沿用各 phase 审计已通过且未受影响的条目，只审里程碑独有项。规则见 [宿主协议](host-protocol.md#增量审计)。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
 
 ### 分阶段检查与规划护栏
 

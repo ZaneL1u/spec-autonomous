@@ -131,6 +131,7 @@ fn answer_plan(root: &Path, request: &Value) -> Value {
                 argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
                 cwd: ".".into(),
             }],
+            verify_only: false,
         }],
         milestone: input.milestone,
     });
@@ -438,6 +439,7 @@ fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
                 argv: vec!["sa-missing-plan-check-118739".into()],
                 cwd: ".".into(),
             }],
+            verify_only: false,
         }],
         milestone: input.milestone,
     });
@@ -633,6 +635,7 @@ fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() 
                 reads: vec![],
                 writes: vec!["src/value.txt".into()],
                 verification: vec![good.clone()],
+                verify_only: false,
             },
             Task {
                 id: "check-value".into(),
@@ -649,6 +652,7 @@ fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() 
                     ],
                     cwd: ".".into(),
                 }],
+                verify_only: false,
             },
         ],
     });
@@ -735,6 +739,7 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
             reads: vec![],
             writes: vec!["src/value.txt".into()],
             verification: vec![good.clone()],
+            verify_only: false,
         }],
     };
     let work = api::invoke(root, "prepare", &json!({"plan":plan,"view":"full"})).unwrap();
@@ -1187,6 +1192,7 @@ fn apply_result_records_optional_usage_and_progress_aggregates_it() {
                 argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
                 cwd: ".".into(),
             }],
+            verify_only: false,
         }],
         milestone: input.milestone,
     });
@@ -1498,6 +1504,8 @@ fn completed_serial_workflow_reclaims_checkouts_but_retains_receipts_branches_an
                     "src/value.txt and tests/value.mjs independently verified by candidate gate"
                         .into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             })
             .collect();
         state = submit(root.path(), &request, result);

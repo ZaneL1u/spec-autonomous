@@ -48,6 +48,50 @@
 
 implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
 
+## 审计与验证随改动收窄
+
+修复轮或单任务被接受后，协调器只重做受这次改动影响的审计项与检查，其余沿用有据可查的旧结论。判断一律基于 Git diff 与计划声明的写集：判断不了的情况一律重做。
+
+### 增量审计
+
+审计结果的每个条目可带可选的 `files`（项目相对路径，至多 50 个）：该结论依赖的实现与测试文件。协调器按 `phase|scope|验收 id` 记录最近一次结论（`audit_conclusions`：是否通过、依据文件、审计 attempt、当时的集成提交与树）。再次审计同一 phase 时，一条验收项**沿用**上次结论，当且仅当：
+
+1. 上次结论是 `passed: true`，且记录于另一棵树（同一棵树上的结论属于正在进行的审计，不沿用）；
+2. 验收引用（id、`source_path`、描述）与上次逐字相同，且上次给出了非空、合法的 `files`；
+3. 上次审计提交是当前集成提交的祖先，并且两者之间的变更文件与以下集合都不相交：该项的 `files`、写过这些文件的计划任务的整个 `writes`、该项的 `source_path`；
+4. 变更文件里没有：除 `tasks.md` 勾选 / 追加之外的原生文档改动、全局输入（依赖清单与锁文件、`conftest.py` / `tsconfig.json` 等共享测试配置、`.gitmodules`、`.spec-autonomous/` 下除 `plans/` 外的文件、`.specify/`、`AGENTS.md` 等），以及不在任何计划任务写集内的文件。
+
+协调器维护的 `.spec-autonomous/plans/*`、只是勾选或追加任务行的 `tasks.md` 视为记账改动，不影响沿用。沿用的条目在结果中带 `carried_over = {attempt_id, phase_id, scope, commit, tree}`，`evidence` 以 `carried over from audit attempt <id> at <commit>:` 开头；该字段只能由协调器设置，worker 回执里出现即以 `audit_contract_error` 拒收。
+
+只有需要重审的条目进入审计包：`snapshot.metadata.acceptance` 只列这些 id，`snapshot.metadata.carried_over` 列出沿用的 id 及来源，`instruction` 写明“只需覆盖这些 id”。一批条目全部可沿用时不签发审计包（事件 `audit_carried_over`）。没有 `files` 的条目（包括升级前的回执）每次都重审，所以旧 run 与升级前已签发的审计包行为不变；请求键仍按原审计指令计算。
+
+### 里程碑审计沿用 phase 结论
+
+里程碑审计的验收是各 phase 验收加上里程碑独有项（如 `milestone/<id>/goal`）。对每一条，先找里程碑范围内的上次结论；没有时，若该 id 只属于一个 phase，就取那个 phase 审计的结论，按上一节同样的条件判断（同树也可以，原生文档只看该 phase 自己的文档，其他 phase 的文档改动不影响它）。可沿用的条目带 `carried_over.scope = "phase"`，审计包只含里程碑独有项和依赖已变的条目。只有一个 phase 的里程碑因此只审 `goal`。被多个 phase 共享的 id（例如 Spec Kit 的 constitution）在里程碑审计里总是重审。
+
+### 验证按改动范围收窄
+
+`[execution] verification_scope` 默认 `affected`。每道门槛的检查分两类：
+
+- **总是执行**：`verification`、`task_verification` / `phase_verification` / `milestone_verification`、phase 与里程碑自己声明的检查，以及 combined 波次里当前任务自己的检查。它们只在同树同命令时复用（原有 `verification_cache`）。
+- **按范围沿用**：combined 波次里此前已接受任务的检查，以及没有配置 phase 级检查时 phase 门槛退回使用的计划任务检查。每条检查记下声明它的任务（owners）。
+
+一条按范围沿用的检查，只要同一命令身份（argv、cwd、环境、准备钩子、超时、检出类别，不含树）最近一次实际执行通过的提交是当前提交的祖先，并且两者之间的变更文件不触及 owners 的 `writes` / `reads`、检查 argv 里的路径操作数、`verification_prepare` 钩子的路径，也没有全局输入、原生文档改动或不在任何计划写集内的文件，就沿用那次通过的证据，不再执行。owners 里有任务 `writes` 或 `reads` 为空时无法证明无关，总是重跑；记账改动（`.spec-autonomous/plans/*`、只勾选或追加的 `tasks.md`）不算。沿用的证据 `duration_ms` 为 0，`reused_from` 除原 wave、manifest、revision、tree 外带 `scope: "affected"`、`owners`、`changed_files`（变更文件数）与 `changed_sample`（至多 20 个），事件为 `verification_scope_reused`；progress 把它计入 `reused_checks`。只有实际执行的通过结果会成为后续沿用的依据，失败、超时、取消与改动源码树的结果从不沿用。
+
+`verification_scope = "full"` 时每道门槛都执行全部检查（同树复用仍按 `verification_reuse`）。`verification_reuse = "none"` 或 `reuse_verification = false` 同时关闭两种复用。里程碑门槛由 `milestone_verification_scope` 单独控制，默认 `full`：交付前在最终的集成树上把被沿用过的任务检查实际跑一遍（本树已执行过的仍复用）；设为 `affected` 时按同样规则沿用。
+
+### 核对型任务（verify_only）
+
+计划任务可带可选的 `verify_only: true`，表示该任务只运行检查、不改文件（例如 tasks.md 里“依次运行以下检查”）。规划指令会说明用法；校验要求 `writes` 为空且任务自己的 `verification` 非空，否则以 `invalid_plan: verify_only task ... must have empty writes and its own verification checks` 拒绝该规划。
+
+依赖就绪后，协调器不签发 worker，而是在集成检出上直接运行该任务的检查（`task_checks`：`verification` + `task_verification` + 任务自己的检查；`SA_VERIFY_STAGE=verify-only`），并记一个 `kind: "verify"` 的 attempt：
+
+- **通过**：经一个只勾选原生任务的集成 intent 接受该任务（提交 `sa: accept <task> (verify-only)`），attempt 记为 `integrated`。没有 implement 包，也就没有 worker 自己再跑一遍。
+- **失败**（`verification_failed`）：attempt 记为 `failed`，`error` 是失败信息加失败检查的 argv 与 stdout / stderr 末尾（各至多 40 行、3000 字符）。下一步签发该任务的 implement 修复包，`failure` 即这段内容，instruction 要求以最小改动修复原因；回执照常经过 combined 验证与集成。修复包的 `writes` 为空，即开放范围、与其他任务串行。
+- **被取消**：attempt 记为 `superseded`，不计失败，续跑时重新运行检查。
+
+`verify` attempt 不计入 `max_attempts`，也不进入审计的 `execution_evidence.attempts`（其检查在 `verification` 中）。
+
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。

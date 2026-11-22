@@ -272,11 +272,36 @@ impl Coordinator<'_> {
             ) {
                 continue;
             }
+            // A verify-only task's checks run here first; a worker is issued only to
+            // repair a failure, with the failed run as its `failure`.
+            if task.verify_only
+                && !self.run.attempts.iter().skip(epoch).any(|a| {
+                    a.phase_id == phase.id
+                        && a.task_id == task.id
+                        && (a.kind == "implement" || (a.kind == "verify" && a.status == "failed"))
+                })
+            {
+                self.verify_only(phase, &plan, &snapshot, &task)?;
+                return self.execute_phase(phase);
+            }
             let key = paths::hash(format!(
                 "implement/{}/{}/{}",
                 phase.id, task.id, self.run.accepted_head
             ));
-            self.issue("implement",&task.id,&phase.id,"Implement only the assigned native task. Preserve shared native checkboxes and respect the declared write set. Submit a candidate result to the host; the CLI verifies and integrates it.".into(),Some(snapshot.clone()),Some(task.clone()),key)?;
+            let instruction = if task.verify_only {
+                "This verify-only task's checks failed when the coordinator ran them on the integrated tree; failure names the failed check, its exit code, logs and an output excerpt. Find the cause and fix it with the smallest change, preserving shared native checkboxes and every other task's behavior, then run task.verification again. Submit a candidate result to the host; the CLI verifies and integrates it."
+            } else {
+                "Implement only the assigned native task. Preserve shared native checkboxes and respect the declared write set. Submit a candidate result to the host; the CLI verifies and integrates it."
+            };
+            self.issue(
+                "implement",
+                &task.id,
+                &phase.id,
+                instruction.into(),
+                Some(snapshot.clone()),
+                Some(task.clone()),
+                key,
+            )?;
             issued += 1;
         }
         if issued > 0 || !active.is_empty() {
@@ -427,6 +452,142 @@ impl Coordinator<'_> {
             }
         }
     }
+    /// Run a verify-only task's checks in the integration checkout. A pass accepts the
+    /// task through an integration intent that only checks off its native tasks; a
+    /// failure is recorded on a `verify` attempt with an output excerpt, so the next
+    /// pass issues a repair implement packet. Cancellation records nothing.
+    fn verify_only(
+        &mut self,
+        phase: &Phase,
+        plan: &Plan,
+        snapshot: &Snapshot,
+        task: &Task,
+    ) -> Result<()> {
+        self.check()?;
+        let index = self.run.attempts.len();
+        let id = paths::id("verify");
+        self.store.attempt_dir(&self.run.id, &id)?;
+        self.run.attempts.push(Attempt {
+            id,
+            task_id: task.id.clone(),
+            phase_id: phase.id.clone(),
+            kind: "verify".into(),
+            worktree: self.run.integration.clone(),
+            branch: self.run.integration_branch.clone(),
+            base_commit: self.run.accepted_head.clone(),
+            status: "running".into(),
+            started_at: paths::now(),
+            finished_at: None,
+            summary: format!("coordinator ran the checks of verify-only task {}", task.id),
+            error: None,
+            pid: None,
+            process_identity: None,
+            evidence: vec![],
+            usage: None,
+            patch_hash: None,
+            worktree_state: None,
+        });
+        self.run.stage = "verifying_task".into();
+        self.save("verify_only_started")?;
+        let evidence_before = self.run.evidence.len();
+        let gate = lifecycle::Gate {
+            always: self.task_checks(task),
+            scoped: vec![],
+        };
+        let outcome = self.verify_gate(&self.project(), &gate, "verify-only");
+        self.run.attempts[index].finished_at = Some(paths::now());
+        if let Err(error) = outcome {
+            let message = format!("{error:#}");
+            if message.starts_with(lifecycle::VERIFICATION_CANCELLED) {
+                self.run.attempts[index].status = "superseded".into();
+                self.run.attempts[index].error = Some(message);
+                self.save("verify_only_cancelled")?;
+                return Err(error);
+            }
+            let excerpt = self.run.evidence[evidence_before..]
+                .iter()
+                .rev()
+                .find(|e| e.exit_code != 0 || !e.tree_unchanged)
+                .and_then(|e| e.details.as_ref())
+                .map(|d| {
+                    let tail = |key: &str| {
+                        d[key]
+                            .as_str()
+                            .and_then(|path| fs::read_to_string(path).ok())
+                            .map(|text| {
+                                let lines: Vec<&str> = text.lines().collect();
+                                lines[lines.len().saturating_sub(40)..].join("\n")
+                            })
+                            .unwrap_or_default()
+                    };
+                    format!(
+                        "; failed argv {}; stdout tail:\n{}\nstderr tail:\n{}",
+                        serde_json::json!(d["argv"]),
+                        work_packet::clip(&tail("stdout"), 3000),
+                        work_packet::clip(&tail("stderr"), 3000)
+                    )
+                })
+                .unwrap_or_default();
+            self.run.attempts[index].status = "failed".into();
+            self.run.attempts[index].error = Some(format!("{message}{excerpt}"));
+            self.save("verify_only_failed")?;
+            if message.starts_with("verification_failed:") {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        let key = Run::key(&phase.id, &task.id);
+        let intent_id = paths::id("intent");
+        let expected = self.run.accepted_head.clone();
+        let (candidate, _) = self.repo.add_worktree(&intent_id, &expected)?;
+        self.run.intents.push(IntegrationIntent {
+            id: intent_id.clone(),
+            attempt_id: self.run.attempts[index].id.clone(),
+            task_id: key.clone(),
+            worktree: candidate.to_string_lossy().into(),
+            expected_head: expected.clone(),
+            candidate_head: Some(expected),
+            final_head: None,
+            state: "prepared".into(),
+        });
+        let intent_index = self.run.intents.len() - 1;
+        self.save("integration_intent")?;
+        self.write_back(
+            &candidate.join(&self.run.project_relative),
+            phase,
+            plan,
+            snapshot,
+            task,
+        )?;
+        let final_head = git::commit(
+            &candidate,
+            &format!(
+                "sa: accept {} (verify-only)\n\nSpec-Autonomous-Intent: {intent_id}",
+                task.id
+            ),
+        )?;
+        self.run.intents[intent_index].final_head = Some(final_head.clone());
+        self.run.intents[intent_index].state = "verified".into();
+        self.save("integration_verified")?;
+        git::advance(Path::new(&self.run.integration), &final_head)?;
+        self.run.accepted_head = final_head;
+        self.run.completed_tasks.push(key);
+        self.run.intents[intent_index].state = "accepted".into();
+        self.run.attempts[index].status = "integrated".into();
+        let current = provider::inspect(
+            &self.project(),
+            self.run.milestone.framework,
+            &phase.source.selector,
+            &self.run.config,
+        )?;
+        self.run
+            .host
+            .as_mut()
+            .context("legacy_run_read_only")?
+            .source_revisions
+            .insert(phase.id.clone(), current.source_hash);
+        self.save("task_integrated")
+    }
     pub(super) fn integrate_task(
         &mut self,
         phase: &Phase,
@@ -506,17 +667,19 @@ impl Coordinator<'_> {
         )?;
         self.run.intents[intent_index].candidate_head = Some(head);
         self.save("candidate_created")?;
-        let mut combined = self.task_checks(task);
-        for accepted in &plan.tasks {
-            if self
-                .run
-                .completed_tasks
-                .contains(&Run::key(&phase.id, &accepted.id))
-            {
-                combined.extend(accepted.verification.clone());
-            }
-        }
-        if let Err(error) = self.verify(
+        // The task's own and project checks always run; checks of tasks accepted
+        // earlier run again only when this change reaches what their owners declared.
+        let combined = lifecycle::Gate {
+            always: self.task_checks(task),
+            scoped: lifecycle::owned_checks(plan.tasks.iter().filter(|accepted| {
+                accepted.id != task.id
+                    && self
+                        .run
+                        .completed_tasks
+                        .contains(&Run::key(&phase.id, &accepted.id))
+            })),
+        };
+        if let Err(error) = self.verify_gate(
             &candidate.join(&self.run.project_relative),
             &combined,
             "combined",
@@ -528,53 +691,13 @@ impl Coordinator<'_> {
         if !git::clean(&candidate)? {
             bail!("verification_mutated_tree: combined tests changed tracked or unignored files");
         }
-        let satisfied: Vec<_> = task
-            .source_ids
-            .iter()
-            .filter(|id| {
-                plan.tasks
-                    .iter()
-                    .filter(|t| t.source_ids.contains(id))
-                    .all(|t| {
-                        t.id == task.id
-                            || self
-                                .run
-                                .completed_tasks
-                                .contains(&Run::key(&phase.id, &t.id))
-                    })
-            })
-            .cloned()
-            .collect();
-        if !satisfied.is_empty() {
-            let path = snapshot
-                .tracking_file
-                .as_ref()
-                .context("tracking_unsupported")?;
-            let text = paths::read(
-                &candidate.join(&self.run.project_relative),
-                path,
-                2 * 1024 * 1024,
-            )?;
-            let parsed = markdown::parse(path, &text, self.run.milestone.framework)?;
-            for id in &satisfied {
-                if !parsed.tasks.iter().any(|t| {
-                    &t.id == id
-                        && snapshot
-                            .tasks
-                            .iter()
-                            .any(|old| old.id == t.id && old.text_hash == t.text_hash)
-                }) {
-                    bail!("source_drift: source identity changed");
-                }
-            }
-            markdown::complete(
-                &candidate.join(&self.run.project_relative),
-                path,
-                self.run.milestone.framework,
-                &paths::hash(&text),
-                &satisfied,
-            )?;
-        }
+        self.write_back(
+            &candidate.join(&self.run.project_relative),
+            phase,
+            plan,
+            snapshot,
+            task,
+        )?;
         failpoint("after_source_writeback");
         let final_head = git::commit(
             &candidate,
@@ -598,6 +721,61 @@ impl Coordinator<'_> {
         self.supersede_replaced_submissions()?;
         let dir = self.store.attempt_dir(&self.run.id, &attempt.id)?;
         Ok(serde_json::from_slice(&fs::read(dir.join("result.json"))?)?)
+    }
+    /// Check off the native source tasks `task` completes in a checkout's project
+    /// directory: every source id whose covering plan tasks are now all accepted.
+    fn write_back(
+        &self,
+        project: &Path,
+        phase: &Phase,
+        plan: &Plan,
+        snapshot: &Snapshot,
+        task: &Task,
+    ) -> Result<()> {
+        let satisfied: Vec<_> = task
+            .source_ids
+            .iter()
+            .filter(|id| {
+                plan.tasks
+                    .iter()
+                    .filter(|t| t.source_ids.contains(id))
+                    .all(|t| {
+                        t.id == task.id
+                            || self
+                                .run
+                                .completed_tasks
+                                .contains(&Run::key(&phase.id, &t.id))
+                    })
+            })
+            .cloned()
+            .collect();
+        if !satisfied.is_empty() {
+            let path = snapshot
+                .tracking_file
+                .as_ref()
+                .context("tracking_unsupported")?;
+            let text = paths::read(project, path, 2 * 1024 * 1024)?;
+            let parsed = markdown::parse(path, &text, self.run.milestone.framework)?;
+            for id in &satisfied {
+                if !parsed.tasks.iter().any(|t| {
+                    &t.id == id
+                        && snapshot
+                            .tasks
+                            .iter()
+                            .any(|old| old.id == t.id && old.text_hash == t.text_hash)
+                }) {
+                    bail!("source_drift: source identity changed");
+                }
+            }
+            markdown::complete(
+                project,
+                path,
+                self.run.milestone.framework,
+                &paths::hash(&text),
+                &satisfied,
+            )?;
+        }
+        Ok(())
     }
     pub(super) fn converge(
         &mut self,

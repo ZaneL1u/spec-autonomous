@@ -41,7 +41,11 @@ pub fn record(run: &Run, runtime: &Path, directory: &Path) -> Result<Value> {
     for a in run
         .attempts
         .iter()
-        .filter(|a| a.kind != "audit" && a.kind != "hook" && a.finished_at.is_some())
+        // Hooks and coordinator-run verify-only checks have no packet; their checks are
+        // in `verification`.
+        .filter(|a| {
+            !matches!(a.kind.as_str(), "audit" | "hook" | "verify") && a.finished_at.is_some()
+        })
     {
         paths::valid_id(&a.id)?;
         let dir = paths::inside(runtime, &format!("runs/{}/attempts/{}", run.id, a.id))?;

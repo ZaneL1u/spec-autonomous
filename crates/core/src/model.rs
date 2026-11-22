@@ -127,6 +127,10 @@ pub struct Task {
     pub writes: Vec<String>,
     #[serde(default)]
     pub verification: Vec<Check>,
+    /// The task only runs its checks and changes no files (empty writes). The
+    /// coordinator runs the checks itself; a worker is issued only to repair a failure.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub verify_only: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -176,6 +180,43 @@ pub struct AuditItem {
     pub requirement: String,
     pub evidence: String,
     pub passed: bool,
+    /// Project-relative implementation and test files the conclusion rests on. A later
+    /// audit carries a passed item over only while none of them (nor the write sets of
+    /// the tasks that wrote them) changed; without files the item is always audited again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    /// Set by the coordinator, never by a worker: the earlier audit this passed item was
+    /// carried over from because nothing it depends on changed since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_over: Option<CarriedAudit>,
+}
+/// Where a carried-over audit conclusion was actually established.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarriedAudit {
+    pub attempt_id: String,
+    pub phase_id: String,
+    /// `phase` or `milestone`: the audit scope that produced the conclusion.
+    pub scope: String,
+    pub commit: String,
+    pub tree: String,
+}
+/// The latest audit conclusion for one acceptance id in one phase and scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditConclusion {
+    pub requirement: String,
+    pub phase_id: String,
+    pub scope: String,
+    pub passed: bool,
+    pub evidence: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    pub attempt_id: String,
+    /// Integration commit and tree the audit read.
+    pub commit: String,
+    pub tree: String,
+    /// sha256 of the acceptance reference (id, source_path, description) audited.
+    pub acceptance_hash: String,
+    pub recorded_at: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerResult {
@@ -356,9 +397,17 @@ pub struct HostState {
     /// Only identical keys reuse evidence; failures are never stored.
     #[serde(default)]
     pub verification_cache: BTreeMap<String, VerificationPass>,
+    /// The latest executed pass per command identity without the tree. A task check
+    /// whose owners the change since did not reach stands on it (`verification_scope`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verification_passes: BTreeMap<String, VerificationPass>,
     /// Fully passed audits keyed by phase, scope, integration tree and acceptance ids.
     #[serde(default)]
     pub audit_cache: BTreeMap<String, Vec<AuditItem>>,
+    /// Latest audit conclusion per `phase|scope|acceptance id`; passed ones whose inputs
+    /// did not change are carried into later audits instead of being asked again.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub audit_conclusions: BTreeMap<String, AuditConclusion>,
     /// The original source changed while host work was outstanding; merge it once that
     /// work has been received instead of revoking it.
     #[serde(default)]

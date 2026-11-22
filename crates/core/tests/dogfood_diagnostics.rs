@@ -19,16 +19,22 @@ fn audit_contract_reports_missing_unexpected_duplicate_and_empty_evidence_ids() 
                 requirement: "req-1".into(),
                 evidence: "evidence".into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             },
             AuditItem {
                 requirement: "verify: guessed".into(),
                 evidence: "evidence".into(),
                 passed: false,
+                files: vec![],
+                carried_over: None,
             },
             AuditItem {
                 requirement: "req-1".into(),
                 evidence: "".into(),
                 passed: false,
+                files: vec![],
+                carried_over: None,
             },
         ],
     )

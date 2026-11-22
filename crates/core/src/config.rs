@@ -66,6 +66,22 @@ pub struct Execution {
     /// configuration while off so existing identities do not change.
     #[serde(skip_serializing_if = "is_false")]
     pub init_submodules: bool,
+    /// `affected` lets a task check declared by another task stand on its last pass on
+    /// an ancestor commit when the change since does not reach that task's declared
+    /// writes and reads; `full` runs every check of every gate. Configured project,
+    /// stage and phase checks and the task's own checks always run.
+    #[serde(skip_serializing_if = "is_affected")]
+    pub verification_scope: String,
+    /// The same choice for the milestone gate. `full` (default) runs every task check
+    /// once more on the delivered tree unless identical-tree evidence exists.
+    #[serde(skip_serializing_if = "is_full")]
+    pub milestone_verification_scope: String,
+}
+fn is_affected(value: &str) -> bool {
+    value == "affected"
+}
+fn is_full(value: &str) -> bool {
+    value == "full"
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -141,6 +157,8 @@ impl Default for Execution {
             reclaim_worktrees: "terminal".into(),
             retain_failed_worktrees: 1,
             init_submodules: false,
+            verification_scope: "affected".into(),
+            milestone_verification_scope: "full".into(),
         }
     }
 }
@@ -306,6 +324,17 @@ impl Config {
         }
         if !["same-tree", "none"].contains(&self.execution.verification_reuse.as_str()) {
             bail!("invalid_config: verification_reuse must be same-tree or none");
+        }
+        for (name, value) in [
+            ("verification_scope", &self.execution.verification_scope),
+            (
+                "milestone_verification_scope",
+                &self.execution.milestone_verification_scope,
+            ),
+        ] {
+            if !["affected", "full"].contains(&value.as_str()) {
+                bail!("invalid_config: {name} must be affected or full");
+            }
         }
         if !["terminal", "never"].contains(&self.execution.reclaim_worktrees.as_str()) {
             bail!("invalid_config: reclaim_worktrees must be terminal or never");

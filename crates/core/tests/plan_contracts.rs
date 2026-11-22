@@ -35,6 +35,7 @@ fn task(id: &str, source_id: &str, writes: &[&str], depends_on: &[&str]) -> Task
         reads: vec![],
         writes: writes.iter().map(|s| (*s).into()).collect(),
         verification: vec![],
+        verify_only: false,
     }
 }
 

@@ -154,6 +154,7 @@ fn answer_plan(root: &Path, request: &Value) -> Value {
             reads: vec![],
             writes: vec!["src/value.txt".into()],
             verification: vec![value_check()],
+            verify_only: false,
         }],
         milestone: packet.milestone,
     });
@@ -172,6 +173,8 @@ fn answer_audit(root: &Path, request: &Value) -> Value {
             requirement: r["id"].as_str().unwrap().into(),
             evidence: "src/value.txt".into(),
             passed: true,
+            files: vec![],
+            carried_over: None,
         })
         .collect();
     submit(root, request, result)
@@ -479,6 +482,7 @@ fn answer_two_task_plan(root: &Path, request: &Value, second_check: Check) -> Va
                 reads: vec![],
                 writes: vec!["src/value.txt".into()],
                 verification: vec![value_check()],
+                verify_only: false,
             },
             Task {
                 id: "check-value".into(),
@@ -488,6 +492,7 @@ fn answer_two_task_plan(root: &Path, request: &Value, second_check: Check) -> Va
                 reads: vec!["src/value.txt".into()],
                 writes: vec![],
                 verification: vec![second_check],
+                verify_only: false,
             },
         ],
         milestone: packet.milestone,
@@ -668,6 +673,8 @@ fn a_passed_audit_of_the_same_tree_is_reused_without_a_new_agent() {
                 requirement: (*id).into(),
                 evidence: "src/value.txt".into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             })
             .collect(),
     );
@@ -712,6 +719,7 @@ fn appended_native_tasks_extend_the_accepted_plan_instead_of_replanning() {
                 reads: vec![],
                 writes: vec!["src/value.txt".into()],
                 verification: vec![value_check()],
+                verify_only: false,
             }],
             milestone: Some(f.run.milestone.clone()),
         },
@@ -745,6 +753,7 @@ fn appended_native_tasks_extend_the_accepted_plan_instead_of_replanning() {
             reads: vec!["src/value.txt".into()],
             writes: vec!["docs/value.md".into()],
             verification: vec![value_check()],
+            verify_only: false,
         }],
         milestone: packet.milestone.clone(),
     });
@@ -809,6 +818,7 @@ fn the_same_failure_after_one_repair_round_stops_with_needs_input() {
             reads: vec![],
             writes: vec!["src/value.txt".into()],
             verification: vec![value_check()],
+            verify_only: false,
         }],
     };
     let work = api::invoke(root, "prepare", &json!({"plan":plan,"view":"full"})).unwrap();
@@ -855,6 +865,7 @@ fn the_same_failure_after_one_repair_round_stops_with_needs_input() {
             reads: vec![],
             writes: vec!["docs/repair.md".into()],
             verification: vec![value_check()],
+            verify_only: false,
         }],
         milestone: packet.milestone.clone(),
     });
