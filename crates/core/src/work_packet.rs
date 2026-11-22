@@ -74,7 +74,7 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
     );
     let prompt = if input.kind == "implement" {
         format!(
-            "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative paths (at most {}). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",
+            "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative files (at most {}; literal file paths, not directories or globs). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",
             crate::run_revision::MAX_REQUESTED_WRITES
         )
     } else {
@@ -357,7 +357,7 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     let mut schema = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"run_id":{"type":"string","enum":[input.run_id]},"task_id":{"type":"string","enum":[input.task_id]},"attempt_id":{"type":"string","enum":[input.attempt_id]},"status":{"type":"string","enum":["candidate","blocked","failed"]},"summary":string,"blockers":strings,"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]},"plan":{"anyOf":[{"$ref":"#/$defs/plan"},{"type":"null"}]},"audit":{"type":"array","items":{"$ref":"#/$defs/audit"}}}),
     );
-    schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: project-relative files outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
+    schema["properties"]["requested_writes"] = json!({"type":"array","maxItems":crate::run_revision::MAX_REQUESTED_WRITES,"items":string,"description":"Only with status=blocked on implement work: literal project-relative file paths (no directories or globs) outside task.writes that the task needs (for example existing tests it breaks). The coordinator adds safe paths and re-issues the task; otherwise the run stops for review."});
     schema["$defs"] = json!({"check":check,"source":source,"phase":phase,"milestone":milestone,"task":task,"plan":plan,"audit":audit});
     schema
 }

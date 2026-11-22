@@ -2,6 +2,10 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.2.0（未发布）
+
+- 写集追加不再越权：原生上下文的父目录（如 `openspec/changes/<id>`）和能匹配它们的 glob 与上下文文件本身一样被拒绝（`write_scope_forbidden`）；blocked worker 的 `requested_writes` 只自动授权字面文件路径，模式与目录返回 `write_scope_not_literal`，需经人工 `run.revise`。
+
 ## 0.1.0-alpha.16
 
 - 验证证据按源码树哈希复用：同树同命令同环境的检查只执行一次，phase/post-hook、里程碑门槛和审计等待不再重复跑；无 hook 改动时跳过 post-hook。与 alpha.15 的 `reuse_verification` 合并为同一开关，`verification_reuse = "none"` 或 `reuse_verification = false` 均可关闭。

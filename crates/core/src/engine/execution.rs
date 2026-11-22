@@ -342,11 +342,19 @@ impl Coordinator<'_> {
         }
         let requested = &receipt.requested_writes;
         let limit = crate::run_revision::MAX_REQUESTED_WRITES;
+        let worker_project = Path::new(&attempt.worktree).join(&self.run.project_relative);
+        let roots = [self.project(), worker_project];
+        let roots: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let checked = if requested.len() > limit {
             Err(anyhow::anyhow!(
                 "write_scope_limit: {} paths requested; at most {limit} are added without review",
                 requested.len()
             ))
+        } else if let Some(error) = requested
+            .iter()
+            .find_map(|raw| crate::run_revision::literal_file_request(raw, &roots).err())
+        {
+            Err(error)
         } else {
             crate::run_revision::admissible_writes(
                 &self.run,

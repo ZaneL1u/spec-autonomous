@@ -46,7 +46,7 @@
 
 ## 追加写集
 
-implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
+implement worker 发现必须改动 `task.writes` 之外的文件（例如被改动波及的既有测试）时返回 `status: "blocked"` 并附 `requested_writes`（项目相对路径，至多 10 个；结果 schema 中为可选字段，其他状态忽略）。协调器只自动授权字面文件路径（模式与目录返回 `write_scope_not_literal`，需人工 `run.revise`），且在路径规范且合法、不命中 `.git/` / `.spec-autonomous/` / 原生上下文（含其父目录）、不与其他在途任务写集冲突时自动追加写集并重派，响应里直接是带 `previous_candidate` 的新 implement 包；否则 run 进入 `needs_input`，blocker 含原因（`write_scope_forbidden` / `write_scope_not_literal` / `write_scope_conflict` / `write_scope_limit` 等）和可直接执行的 `run.revise` `task_writes` 输入。操作者也可随时用 `run.revise {task_writes:[{phase_id,task_id,add}]}` 手工追加，详见 [修订与续跑](run-revision.md)。
 
 ## worker 检出准备
 
