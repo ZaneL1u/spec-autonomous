@@ -2,6 +2,10 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.2.0（未发布）
+
+- 检查可以声明 `env`（只对该检查生效的非敏感环境变量，如 `PYTHONDONTWRITEBYTECODE=1`）：键名受校验，不能覆盖 `PATH` / `HOME` / `SA_*` / `GIT_*` 等，凭证类名字被拒绝；值进入验证复用身份，证据清单只记变量名。规划包的指令与结果 schema 同步说明。
+
 ## 0.1.0-alpha.16
 
 - 验证证据按源码树哈希复用：同树同命令同环境的检查只执行一次，phase/post-hook、里程碑门槛和审计等待不再重复跑；无 hook 改动时跳过 post-hook。与 alpha.15 的 `reuse_verification` 合并为同一开关，`verification_reuse = "none"` 或 `reuse_verification = false` 均可关闭。

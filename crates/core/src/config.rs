@@ -373,6 +373,7 @@ impl Config {
             validate_check(&Check {
                 argv: hook.argv.clone(),
                 cwd: ".".into(),
+                env: Default::default(),
             })?;
         }
         Ok(())
@@ -436,6 +437,92 @@ pub fn validate_check(check: &Check) -> Result<()> {
         }
     }
     paths::relative(&check.cwd)?;
+    validate_check_env(&check.env)
+}
+
+/// Most variables one check may set.
+pub const MAX_CHECK_ENV: usize = 32;
+/// Longest value of a check variable.
+pub const MAX_CHECK_ENV_VALUE_BYTES: usize = 1024;
+/// Variables that locate executables, the user, the shell or the repository, and the
+/// coordinator's own `SA_*` variables. A check cannot replace them.
+const RESERVED_CHECK_ENV: &[&str] = &[
+    "PATH",
+    "PATHEXT",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PWD",
+    "OLDPWD",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "IFS",
+    "ENV",
+    "BASH_ENV",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "USERPROFILE",
+];
+const RESERVED_CHECK_ENV_PREFIXES: &[&str] = &["SA_", "GIT_", "LD_", "DYLD_"];
+/// Name fragments that suggest a credential. Check variables live in plans, packets and
+/// the ledger, so secrets belong in `[environment]` instead.
+const SECRET_CHECK_ENV_MARKERS: &[&str] = &[
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "API_KEY",
+    "APIKEY",
+    "PRIVATE_KEY",
+    "ACCESS_KEY",
+    "AUTH",
+    "COOKIE",
+];
+
+/// Check-level `env`: plain, non-secret variables such as `PYTHONDONTWRITEBYTECODE=1`.
+/// Names are `[A-Za-z_][A-Za-z0-9_]*`; reserved names, `SA_`/`GIT_`/`LD_`/`DYLD_` and
+/// credential-like names are refused, values are bounded and never contain NUL.
+pub fn validate_check_env(env: &BTreeMap<String, String>) -> Result<()> {
+    if env.len() > MAX_CHECK_ENV {
+        bail!("invalid_command: check_env: at most {MAX_CHECK_ENV} variables per check");
+    }
+    for (name, value) in env {
+        let mut chars = name.chars();
+        let valid = chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && name.len() <= 128;
+        if !valid {
+            bail!("invalid_command: check_env: {name:?} is not a valid variable name");
+        }
+        let upper = name.to_ascii_uppercase();
+        if RESERVED_CHECK_ENV.contains(&upper.as_str())
+            || RESERVED_CHECK_ENV_PREFIXES
+                .iter()
+                .any(|prefix| upper.starts_with(prefix))
+        {
+            bail!(
+                "invalid_command: check_env: {name} is reserved; checks cannot replace PATH, HOME, the shell, Git or SA_* variables"
+            );
+        }
+        if SECRET_CHECK_ENV_MARKERS
+            .iter()
+            .any(|marker| upper.contains(marker))
+        {
+            bail!(
+                "invalid_command: check_env: {name} looks like a credential; check env is stored in plans and the ledger, so put secrets in [environment] instead"
+            );
+        }
+        if value.len() > MAX_CHECK_ENV_VALUE_BYTES || value.contains('\0') {
+            bail!(
+                "invalid_command: check_env: {name} must be at most {MAX_CHECK_ENV_VALUE_BYTES} bytes without NUL"
+            );
+        }
+    }
     Ok(())
 }
 

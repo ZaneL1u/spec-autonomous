@@ -13,6 +13,27 @@ pub struct Check {
     pub argv: Vec<String>,
     #[serde(default = "dot")]
     pub cwd: String,
+    /// Extra non-secret environment variables for this check only, applied over the
+    /// project environment. Omitted when empty so existing plans and check identities
+    /// keep their bytes; see `config::validate_check_env` for the allowed names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+}
+impl Check {
+    /// A check without extra environment variables.
+    pub fn new(argv: Vec<String>, cwd: impl Into<String>) -> Self {
+        Self {
+            argv,
+            cwd: cwd.into(),
+            env: BTreeMap::new(),
+        }
+    }
+    /// `base` with this check's own variables layered on top.
+    pub fn environment(&self, base: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+        let mut env = base.clone();
+        env.extend(self.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        env
+    }
 }
 fn dot() -> String {
     ".".into()

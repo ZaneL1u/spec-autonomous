@@ -774,6 +774,9 @@ impl Coordinator<'_> {
             if executed != check.argv {
                 identity["executed_argv"] = serde_json::json!(executed);
             }
+            if !check.env.is_empty() {
+                identity["env"] = serde_json::json!(check.env);
+            }
             let key = paths::hash(serde_json::to_string(&identity)?);
             let hit = if reuse {
                 self.run
@@ -807,6 +810,7 @@ impl Coordinator<'_> {
                 let step = Check {
                     argv: hook.argv.clone(),
                     cwd: ".".into(),
+                    env: Default::default(),
                 };
                 self.record_check(&wave, project, &step, true)?;
                 prepared = true;

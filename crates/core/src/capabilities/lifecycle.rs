@@ -315,7 +315,7 @@ pub(super) fn verify_configured(
         let output = process::execute(process::Request {
             argv: &argv,
             cwd: &paths::inside(root, &check.cwd)?,
-            env: &config.environment,
+            env: &check.environment(&config.environment),
             stdin: None,
             directory: &dir,
             timeout: Duration::from_secs(config.execution.attempt_timeout_seconds),

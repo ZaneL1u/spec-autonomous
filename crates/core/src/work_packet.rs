@@ -205,7 +205,20 @@ fn summary(input: &WorkerInput) -> String {
                 let checks: Vec<String> = task
                     .verification
                     .iter()
-                    .map(|c| format!("`{}` (cwd {})", c.argv.join(" "), c.cwd))
+                    .map(|c| {
+                        let env: Vec<String> =
+                            c.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                        if env.is_empty() {
+                            format!("`{}` (cwd {})", c.argv.join(" "), c.cwd)
+                        } else {
+                            format!(
+                                "`{}` (cwd {}, env {})",
+                                c.argv.join(" "),
+                                c.cwd,
+                                env.join(" ")
+                            )
+                        }
+                    })
                     .collect();
                 lines.push(format!(
                     "task.verification: {}",
@@ -336,7 +349,8 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     }
     let string = json!({"type":"string"});
     let strings = json!({"type":"array","items":string});
-    let check = object(json!({"argv":strings,"cwd":string}));
+    let mut check = object(json!({"argv":strings,"cwd":string}));
+    check["properties"]["env"] = json!({"type":"object","maxProperties":crate::config::MAX_CHECK_ENV,"additionalProperties":{"type":"string"},"description":"Optional non-secret variables for this check only; PATH, HOME, shell, SA_*, GIT_*, LD_*/DYLD_* and credential-like names are refused."});
     let checks = json!({"type":"array","items":{"$ref":"#/$defs/check"}});
     let source = object(
         json!({"kind":{"type":"string","enum":["openspec-change","speckit-feature"]},"selector":string}),

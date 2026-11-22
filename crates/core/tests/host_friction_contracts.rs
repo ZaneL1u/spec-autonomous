@@ -20,6 +20,7 @@ fn value_check() -> Check {
     Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 /// A Spec Kit feature with two parallel native tasks; the plan maps them to `value`
@@ -67,6 +68,7 @@ fn fixture_with(
     config.verification = vec![Check {
         argv: vec!["node".into(), "--version".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     configure(&mut config);
     put(
@@ -130,6 +132,7 @@ fn task(id: &str, source: &str, write: &str) -> Task {
             Check {
                 argv: vec!["node".into(), "--version".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             }
         }],
     }
@@ -895,6 +898,7 @@ fn a_cancelled_integration_check_keeps_the_candidate_and_counts_no_failure() {
     value.verification = vec![Check {
         argv: vec!["node".into(), "tests/slow-value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     let mut result = receipt(&input);
     result.plan = Some(Plan {

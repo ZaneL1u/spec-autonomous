@@ -20,6 +20,7 @@ fn value_check() -> Check {
     Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 fn fixture(tasks: &str) -> tempfile::TempDir {
@@ -353,6 +354,7 @@ fn revise_and_cleanup_apply_in_one_step_when_nothing_relevant_is_outstanding() {
             "require('node:assert/strict').equal(24,27)".into(),
         ],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let planned = submit_owned(
         root,

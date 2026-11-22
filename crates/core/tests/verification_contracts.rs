@@ -15,6 +15,7 @@ fn check(script: &str) -> Check {
     Check {
         argv: vec!["node".into(), "-e".into(), script.into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 #[test]
@@ -58,6 +59,7 @@ fn failure_timeout_and_missing_executable_have_durable_diagnostics() {
             Check {
                 argv: vec!["sa-nonexistent-test-executable".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             },
             "execution_error",
         ),

@@ -253,6 +253,7 @@ pub fn check_hooks(root: &Path, config: &Config) -> Result<()> {
                     crate::config::validate_check(&Check {
                         argv: binding.argv.clone(),
                         cwd: ".".into(),
+                        env: Default::default(),
                     })?;
                 }
             }

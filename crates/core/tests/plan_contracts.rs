@@ -219,6 +219,7 @@ fn plans_reject_unsafe_scopes_and_verification_directories() {
     plan.tasks[0].verification.push(Check {
         argv: vec!["cargo".into(), "test".into()],
         cwd: "../outside".into(),
+        env: Default::default(),
     });
     assert!(plan::validate_plan(&plan, &source).is_err());
 }
@@ -233,6 +234,7 @@ fn malformed_glob_and_command_are_rejected_before_dispatch() {
     plan.tasks[0].verification.push(Check {
         argv: vec![],
         cwd: ".".into(),
+        env: Default::default(),
     });
     assert!(plan::validate_plan(&plan, &source).is_err());
 }

@@ -20,6 +20,7 @@ fn value_check() -> Check {
     Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }
 }
 fn fixture(configure: impl FnOnce(&mut Config)) -> tempfile::TempDir {

@@ -47,6 +47,7 @@ fn fixture() -> (tempfile::TempDir, Value) {
     config.verification = vec![Check {
         argv: vec!["git".into(), "status".into(), "--porcelain".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     put(
         root.path(),
@@ -122,6 +123,7 @@ fn fixture() -> (tempfile::TempDir, Value) {
             verification: vec![Check {
                 argv: vec!["git".into(), "status".into(), "--porcelain".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             }],
         })
         .collect();

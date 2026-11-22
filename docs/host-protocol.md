@@ -1,6 +1,6 @@
 # 宿主协议
 
-本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` / `task_writes` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?}]}`、`{phase_id, task_id, add:[path]}`）。
+本文是 skills（`autonomous` / `auto` / `resume`）引用的完整协议。CLI 与 MCP 是同一服务：MCP 工具名把能力 id 的 `.`/`-` 换成 `_` 并加 `sa_` 前缀，细粒度能力通过 `sa_tools {"operation":"call","capability":"...","arguments":{...}}` 或 `spec-autonomous tools call <capability> --input @args.json --json` 调用。默认的 `tools list` 只列主能力，并在 `hidden_capabilities` 中列出被隐藏的细粒度能力 id、在 `hint` 中提示 `tools list --all`；`run.revise` 的 `task_checks` / `phase_checks` / `milestone_checks` / `task_writes` 条目带完整 schema（`{phase_id, task_id, checks:[{argv, cwd?, env?}]}`、`{phase_id, task_id, add:[path]}`）。
 
 ## 一次循环需要多少次调用
 
@@ -51,6 +51,10 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。
+
+## 检查环境变量
+
+计划、配置与 `run.revise` 中的检查对象是 `{argv, cwd?, env?}`。`env` 是只对该检查生效的非敏感变量（`{"PYTHONDONTWRITEBYTECODE":"1"}`），叠加在项目环境上；`PATH`、`HOME`、shell 相关变量、`SA_*`、`GIT_*`、`LD_*` / `DYLD_*` 与凭证类名字被拒绝（`invalid_command: check_env: ...`）。值进入验证复用身份；证据 `details.env_keys` 只列变量名。规划包的指令末尾附有同样的说明，这段附加说明不进入请求键，升级前签发的规划请求照常匹配回执。implement 摘要里的检查显示为 `` `argv` (cwd ., env K=V) ``。
 
 ## 原生任务子条目
 

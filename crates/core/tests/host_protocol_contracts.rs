@@ -51,6 +51,7 @@ fn fixture() -> tempfile::TempDir {
     config.verification = vec![Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     put(
         root.path(),
@@ -130,6 +131,7 @@ fn answer_plan(root: &Path, request: &Value) -> Value {
             verification: vec![Check {
                 argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             }],
         }],
         milestone: input.milestone,
@@ -437,6 +439,7 @@ fn rejected_verification_plan_gets_a_fresh_correctable_planner_packet() {
             verification: vec![Check {
                 argv: vec!["sa-missing-plan-check-118739".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             }],
         }],
         milestone: input.milestone,
@@ -515,6 +518,7 @@ fn environment_only_preflight_failure_keeps_the_planning_candidate() {
     config.verification.push(Check {
         argv: vec!["sa-env-tool-552871".into()],
         cwd: ".".into(),
+        env: Default::default(),
     });
     put(
         root.path(),
@@ -617,6 +621,7 @@ fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() 
     let good = Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let mut result = receipt(root, request);
     result.plan = Some(Plan {
@@ -648,6 +653,7 @@ fn pending_verification_revision_preserves_verified_work_and_resumes_same_run() 
                         "require('node:assert/strict').equal(24,27)".into(),
                     ],
                     cwd: ".".into(),
+                    env: Default::default(),
                 }],
             },
         ],
@@ -715,12 +721,14 @@ fn phase_revision_supersedes_only_obsolete_verification_repair() {
     let good = Check {
         argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let mut milestone =
         engine::source_milestone(spec_autonomous_core::Framework::Speckit, "specs/feature");
     milestone.phases[0].verification = vec![Check {
         argv: vec!["node".into(), "-e".into(), "process.exit(1)".into()],
         cwd: ".".into(),
+        env: Default::default(),
     }];
     let plan = Plan {
         schema_version: 1,
@@ -821,6 +829,7 @@ fn native_metadata_refresh_keeps_corrections_until_native_checks_change() {
     let check = |file: &str| Check {
         argv: vec!["node".into(), "--test".into(), file.into()],
         cwd: ".".into(),
+        env: Default::default(),
     };
     let (old, corrected, native) = (
         check("test/"),
@@ -1186,6 +1195,7 @@ fn apply_result_records_optional_usage_and_progress_aggregates_it() {
             verification: vec![Check {
                 argv: vec!["node".into(), "--test".into(), "tests/value.mjs".into()],
                 cwd: ".".into(),
+                env: Default::default(),
             }],
         }],
         milestone: input.milestone,
@@ -1257,7 +1267,7 @@ fn coordinator_prepares_each_wave_once_and_preserves_independent_check_results()
     let root = fixture();
     let mut config = Config::load(root.path()).unwrap();
     config.hooks.insert("verification_prepare".into(),spec_autonomous_core::config::Hook{argv:vec!["node".into(),"-e".into(),"require('fs').writeFileSync(require('path').join(process.env.SA_VERIFY_OUTPUT_DIR,'prepared'),process.env.SA_VERIFY_STAGE,{flag:'wx'})".into()],idempotent:true});
-    config.verification.push(Check {argv:vec!["node".into(),"-e".into(),"require('node:assert/strict').equal(require('fs').readFileSync(require('path').join(process.env.SA_VERIFY_OUTPUT_DIR,'prepared'),'utf8'),process.env.SA_VERIFY_STAGE)".into()],cwd:".".into()});
+    config.verification.push(Check {argv:vec!["node".into(),"-e".into(),"require('node:assert/strict').equal(require('fs').readFileSync(require('path').join(process.env.SA_VERIFY_OUTPUT_DIR,'prepared'),'utf8'),process.env.SA_VERIFY_STAGE)".into()],cwd:".".into(),env:Default::default()});
     put(
         root.path(),
         ".spec-autonomous/config.toml",

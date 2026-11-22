@@ -165,11 +165,15 @@ impl Coordinator<'_> {
             let kept = self.kept_planning_candidate(&task_id, &phase.id, &partial)?;
             let (result, _worktree, index) = match kept {
                 Some(kept) => kept,
-                None => self.invoke(
+                None => self.invoke_host_keyed(
                     "plan-tasks",
                     &task_id,
                     &phase.id,
-                    instruction,
+                    format!(
+                        "{instruction} {}",
+                        crate::verification_preflight::planning_guidance_addendum()
+                    ),
+                    &instruction,
                     Some(partial.clone()),
                 )?,
             };

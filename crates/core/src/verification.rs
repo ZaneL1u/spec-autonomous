@@ -89,7 +89,8 @@ impl Wave {
         let cwd = paths::inside(&self.checkout, &check.cwd)?;
         // Consumer artifacts must not share a directory with live process logs.
         let artifacts = self.directory.join("artifacts");
-        let mut environment = self.environment.clone();
+        // Check-level variables cannot name SA_* (validated), so the wave's own win.
+        let mut environment = check.environment(&self.environment);
         environment.insert(
             "SA_VERIFY_OUTPUT_DIR".into(),
             artifacts.to_string_lossy().into_owned(),
@@ -141,6 +142,11 @@ impl Wave {
         }
         let manifest = directory.join("result.json");
         let details = json!({"schema_version":1,"wave_id":self.directory.file_name().unwrap().to_string_lossy(),"stage":self.stage,"step":if preparation {"preparation"} else {"check"},"duration_ms":duration_ms,"failure_kind":failure,"exit_code":exit_code,"argv":check.argv,"executed_argv":argv,"cwd":cwd,"revision":self.revision,"tree_unchanged":tree_unchanged,"stdout":log,"stdout_sha256":stdout_hash,"stderr":stderr,"stderr_sha256":stderr_hash,"manifest":manifest,"output_directory":artifacts,"diagnostics_directory":directory});
+        let mut details = details;
+        if !check.env.is_empty() {
+            // Names only: values stay in the plan, never in shared diagnostics.
+            details["env_keys"] = json!(check.env.keys().collect::<Vec<_>>());
+        }
         paths::atomic_write(&manifest, serde_json::to_vec_pretty(&details)?).with_context(
             || {
                 format!(
@@ -179,6 +185,7 @@ pub fn input_identity(
         commands.push(Check {
             argv: hook.argv.clone(),
             cwd: ".".into(),
+            env: Default::default(),
         });
     }
     let report =

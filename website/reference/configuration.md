@@ -110,6 +110,22 @@ verification = [
 
 不要把命令写成需要 shell 解析的一整段字符串。这样空格、引号和用户输入不会改变参数边界。
 
+### 检查级环境变量
+
+每条检查（项目配置、phase / milestone、任务计划里的 `verification`，以及 `run.revise` 的检查）可以带可选的 `env`，只对这一条检查生效，叠加在项目环境之上：
+
+```toml
+verification = [
+  { argv = ["python3", "-m", "pytest", "tests"], cwd = "server", env = { PYTHONDONTWRITEBYTECODE = "1" } }
+]
+```
+
+- 键名必须匹配 `[A-Za-z_][A-Za-z0-9_]*`，每条检查最多 32 个，值不超过 1024 字节且不含 NUL。
+- 不能覆盖 `PATH`、`PATHEXT`、`HOME`、`USER`、`SHELL`、`PWD`、`TMPDIR` 等定位可执行文件、用户与 shell 的变量，也不能设置 `SA_*`（协调器自己的变量）、`GIT_*`、`LD_*`、`DYLD_*`；违反时报 `invalid_command: check_env: ...`。
+- `env` 会写进计划、工作包与账本，所以名字像凭证的键（含 `TOKEN`、`SECRET`、`PASSWORD`、`API_KEY`、`AUTH`、`COOKIE` 等）一律拒绝。密钥请放在 `[environment]` 或宿主环境里。
+- 值参与验证复用的身份哈希：同一 argv 换了 `env` 就是另一条检查，不会复用旧证据。验证证据的 `result.json` 只记录 `env_keys`（变量名），不记录值。
+- 不带 `env` 的检查序列化结果与旧版本完全相同，已有计划、账本和复用身份不受影响。旧版 CLI 不认识 `env` 字段，会拒绝带 `env` 的计划。
+
 phase 和 milestone 还可以声明自己的 verification。任务计划也可有更小范围的检查。
 
 ## 环境变量
