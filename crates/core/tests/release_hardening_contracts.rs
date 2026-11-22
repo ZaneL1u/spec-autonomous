@@ -671,3 +671,77 @@ fn a_failed_check_names_its_command_exit_and_redacted_output() {
     let retry = packet(root, work(&response, "value"));
     assert_eq!(retry.failure.as_deref(), Some(error.as_str()));
 }
+
+#[test]
+fn planners_and_workers_learn_how_a_mapped_openspec_runs() {
+    use std::os::unix::fs::PermissionsExt;
+    let tools = tempfile::tempdir().unwrap();
+    let fake = tools.path().join("managed-openspec");
+    fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    // Checks see node and git but no openspec on PATH.
+    let bin = tools.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for name in ["node", "git"] {
+        let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+            .unwrap();
+        std::os::unix::fs::symlink(found, bin.join(name)).unwrap();
+    }
+    let fake_argv = fake.to_string_lossy().into_owned();
+    let root = fixture(|c| {
+        c.provider.openspec_command = vec![fake_argv.clone()];
+        c.runner
+            .environment
+            .insert("PATH".into(), bin.to_string_lossy().into_owned());
+    });
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let planning = &first["work"][0];
+    let plan_input: Value =
+        serde_json::from_slice(&fs::read(planning["input_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    let environment = &plan_input["snapshot"]["metadata"]["verification_environment"];
+    for name in ["openspec", "uv", "pnpm"] {
+        assert!(
+            environment["executables"].get(name).is_some(),
+            "{name}: {environment}"
+        );
+    }
+    assert_eq!(
+        environment["managed_commands"]["openspec"]["argv"],
+        json!([fake_argv]),
+        "{environment}"
+    );
+    let plan_prompt = fs::read_to_string(planning["prompt_path"].as_str().unwrap()).unwrap();
+    assert!(
+        plan_prompt.contains("TOOLS: `openspec` is not on PATH"),
+        "{plan_prompt}"
+    );
+
+    let wave = answer_plan(root, planning);
+    let request = work(&wave, "value");
+    let input: Value =
+        serde_json::from_slice(&fs::read(request["input_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(
+        input["snapshot"]["metadata"]["managed_commands"]["openspec"]["argv"],
+        json!([fake_argv])
+    );
+    let prompt = fs::read_to_string(request["prompt_path"].as_str().unwrap()).unwrap();
+    for expected in [
+        "TOOLS: `openspec` is not on PATH",
+        fake_argv.as_str(),
+        "spec-autonomous providers exec openspec -- <args>",
+    ] {
+        assert!(prompt.contains(expected), "{expected}\n{prompt}");
+    }
+    // The packet still verifies against its recorded input hash.
+    assert_eq!(packet(root, request).task.unwrap().id, "value");
+}

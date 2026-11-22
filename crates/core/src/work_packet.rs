@@ -13,6 +13,20 @@ pub fn doctor(config: &Config) -> Result<serde_json::Value> {
 pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) -> Result<()> {
     let mut mapped = map_input(input, root);
     trim(&mut mapped);
+    // Workers run checks in their own shells; tell them how mapped commands resolve.
+    let managed = crate::verification_preflight::managed_commands(root, config);
+    let tools = managed.as_object().filter(|m| !m.is_empty()).map(|m| {
+        m.values()
+            .filter_map(|c| c["usage"].as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    if tools.is_some()
+        && let Some(snapshot) = mapped.snapshot.as_mut()
+        && let Some(meta) = snapshot.metadata.as_object_mut()
+    {
+        meta.insert("managed_commands".into(), managed.clone());
+    }
     let input_file = dir.join("input.json");
     let result_file = dir.join("result.json");
     if result_file.exists()
@@ -72,6 +86,10 @@ pub fn prepare(input: &WorkerInput, root: &Path, dir: &Path, config: &Config) ->
         paths::hash(&data),
         summary(input)
     );
+    let prompt = match &tools {
+        Some(tools) => format!("{prompt}\n\nTOOLS: {tools}"),
+        None => prompt,
+    };
     let prompt = if input.kind == "implement" {
         format!(
             "{prompt}\n\nWRITE SCOPE: change only files allowed by task.writes. If the task cannot be finished without changing other files (for example existing tests the change breaks), stop and return status=blocked with requested_writes listing those project-relative files (at most {}; literal file paths, not directories or globs). The coordinator adds safe paths to the write set and re-issues the task with your changes; otherwise it stops for operator review.",

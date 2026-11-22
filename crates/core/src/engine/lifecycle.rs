@@ -15,9 +15,9 @@ impl Coordinator<'_> {
                 "{}\n{}\nEnvironment: {}",
                 instruction,
                 crate::verification_preflight::planning_guidance(),
-                crate::verification_preflight::environment_with_overrides(
+                crate::verification_preflight::environment_for_config(
                     &self.project(),
-                    &self.run.config.runner.environment
+                    &self.run.config
                 )
             );
             let (result, _worktree, index) =

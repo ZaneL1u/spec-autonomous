@@ -110,9 +110,9 @@ impl Coordinator<'_> {
             }
             partial.metadata["reviewed_task_checks"] = serde_json::json!(overrides);
             partial.metadata["verification_environment"] =
-                crate::verification_preflight::environment_with_overrides(
+                crate::verification_preflight::environment_for_config(
                     &self.project(),
-                    &self.run.config.runner.environment,
+                    &self.run.config,
                 );
             let task_id = format!("plan-{}-{}", phase.id, batch + 1);
             let failures: Vec<&Attempt> = self
