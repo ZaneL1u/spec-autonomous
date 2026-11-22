@@ -43,6 +43,8 @@ lease_seconds = 1800
 
 实际并发取 `execution.max_workers` 与 `host.max_concurrency` 的较小值，还会受 DAG 和写集冲突限制。
 
+run 启动时冻结配置。`run_timeout_seconds` 按自 run 开始的墙钟时间计（包括等待宿主的时间）。`prepare --run-id` 带 `extend_seconds` 在 run 当前上限上累加；带 `reload_config` 重读项目配置时，`run_timeout_seconds` 取「配置文件值」与「run 当前值（含此前所有延长）」的较大者再加本次 `extend_seconds`，因此重载不会缩短已延长的期限，要缩短只能新开 run。预算耗尽时 blocker 形如 `budget_exhausted: run deadline reached: <已用>s elapsed ... of run_timeout_seconds=<上限>; ... --extend-seconds <n> where n (extend_seconds) is at least <最小值> plus ...`。
+
 ## 分阶段验证命令
 
 | 配置 | 运行阶段 |

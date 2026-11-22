@@ -327,7 +327,12 @@ pub fn resume_with(
     }
     let mode = options.mode;
     if options.reload_config {
+        // Reloading never shortens the granted deadline: earlier extend_seconds live only
+        // in the run's timeout, so keep the larger of the file value and the run value.
+        let granted = run.config.execution.run_timeout_seconds;
         run.config = Config::load(&Path::new(&run.origin).join(&run.project_relative))?;
+        run.config.execution.run_timeout_seconds =
+            run.config.execution.run_timeout_seconds.max(granted);
         if run.milestone.framework == Framework::Openspec {
             run.config.provider.openspec_command = provider::openspec_argv(
                 &Path::new(&run.origin).join(&run.project_relative),
@@ -508,11 +513,9 @@ impl Coordinator<'_> {
             self.cancel.store(true, Ordering::Relaxed);
             bail!("{control}: requested by user");
         }
-        if self.elapsed_before + self.started.elapsed().as_millis() as u64
-            >= self.run.config.execution.run_timeout_seconds * 1000
-        {
+        if let Some(message) = self.budget_exhausted() {
             self.cancel.store(true, Ordering::Relaxed);
-            bail!("budget_exhausted: run deadline reached");
+            bail!(message);
         }
         if self.cancel.load(Ordering::Relaxed) || process::interrupted() {
             bail!("paused: interrupted");
@@ -561,6 +564,21 @@ impl Coordinator<'_> {
         }
         Ok(())
     }
+    /// The budget_exhausted blocker once the run deadline is reached, with the elapsed
+    /// time, the current limit and the smallest extend_seconds that reopens the budget.
+    fn budget_exhausted(&self) -> Option<String> {
+        let elapsed_ms = self.elapsed_before + self.started.elapsed().as_millis() as u64;
+        let limit = self.run.config.execution.run_timeout_seconds;
+        if elapsed_ms < limit.saturating_mul(1000) {
+            return None;
+        }
+        let elapsed = elapsed_ms / 1000;
+        Some(format!(
+            "budget_exhausted: run deadline reached: {elapsed}s elapsed (wall time since the run started) of run_timeout_seconds={limit}; continue with `spec-autonomous prepare --run-id {} --extend-seconds <n>` where n (extend_seconds) is at least {} plus the time the remaining work needs",
+            self.run.id,
+            elapsed.saturating_sub(limit) + 1
+        ))
+    }
     fn finish(mut self, result: Result<()>) -> Result<Run> {
         if let Err(error) = result {
             let mut message = format!("{error:#}");
@@ -569,10 +587,8 @@ impl Coordinator<'_> {
                 message = "cancel: requested by user".into();
             } else if control == "pause" {
                 message = "paused: requested by user".into();
-            } else if self.elapsed_before + self.started.elapsed().as_millis() as u64
-                >= self.run.config.execution.run_timeout_seconds * 1000
-            {
-                message = "budget_exhausted: run deadline reached".into();
+            } else if let Some(exhausted) = self.budget_exhausted() {
+                message = exhausted;
             }
             self.run.status = if message.starts_with("awaiting_host:") {
                 "awaiting_host"

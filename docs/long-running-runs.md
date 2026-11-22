@@ -95,7 +95,7 @@ idempotent = true
 
 规划包的 `verification_environment` 现在包含实际运行时版本（node、python3、go、cargo、bun、npm、git）、`package.json` scripts、项目清单文件、已有测试文件（最多 100 条，附总数）以及常见缓存目录是否被 git 忽略；`previous_planning_failures` 列出该规划单元历史上全部被拒绝的候选（最多 10 条）及其诊断代码。
 
-预算硬上限：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72 小时`，超出需显式 `[execution] unsafe_budgets = true`；已有 run 的账本配置同样受限，可用 `prepare --run-id … --reload-config` 读取修改后的项目配置。doctor 对超过默认值两倍的 `max_attempts`、`max_repair_rounds`、`run_timeout_seconds`、`no_progress_limit` 以及 `unsafe_budgets=true` 输出 `budget_warning`。
+预算硬上限：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 72 小时`，超出需显式 `[execution] unsafe_budgets = true`；已有 run 的账本配置同样受限，可用 `prepare --run-id … --reload-config` 读取修改后的项目配置；重载时 `run_timeout_seconds` 取配置值与 run 当前值（含此前 `extend_seconds`）的较大者，不会丢掉已有延长。doctor 对超过默认值两倍的 `max_attempts`、`max_repair_rounds`、`run_timeout_seconds`、`no_progress_limit` 以及 `unsafe_budgets=true` 输出 `budget_warning`。
 
 ### 自动回收 worktree 与账本分表
 

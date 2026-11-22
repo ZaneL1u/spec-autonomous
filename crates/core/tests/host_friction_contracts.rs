@@ -955,3 +955,73 @@ fn a_cancelled_integration_check_keeps_the_candidate_and_counts_no_failure() {
     assert_eq!(implement[0].status, "integrated");
     assert!(!run.attempts.iter().any(|a| a.status == "failed"));
 }
+
+#[test]
+fn reload_config_keeps_earlier_extensions_and_budget_stops_say_how_much_to_add() {
+    let root = fixture(|c| c.execution.run_timeout_seconds = 28800);
+    let root = root.path();
+    let (run_id, _) = start(root);
+    let timeout = |root: &Path| saved(root, &run_id).config.execution.run_timeout_seconds;
+    let resume = |extra: Value| {
+        let mut args = json!({"run_id":run_id,"host":host(),"view":"full"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        api::invoke(root, "prepare", &args).unwrap()
+    };
+    resume(json!({"extend_seconds":43200}));
+    assert_eq!(timeout(root), 72000);
+    // Reloading an unchanged file keeps the extension and adds the new one.
+    resume(json!({"reload_config":true,"extend_seconds":100}));
+    assert_eq!(timeout(root), 72100);
+    // A larger configured budget wins over the granted one.
+    let mut config = Config::load(root).unwrap();
+    config.execution.run_timeout_seconds = 90000;
+    put(
+        root,
+        ".spec-autonomous/config.toml",
+        &toml::to_string(&config).unwrap(),
+    );
+    resume(json!({"reload_config":true}));
+    assert_eq!(timeout(root), 90000);
+
+    // The deadline counts wall time since the run started.
+    let root = fixture(|c| c.execution.run_timeout_seconds = 1);
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    let stopped = api::invoke(
+        root,
+        "prepare",
+        &json!({"run_id":run_id,"host":host(),"view":"full"}),
+    )
+    .unwrap();
+    let blocker = stopped["blocker"].as_str().unwrap();
+    assert!(
+        blocker.starts_with("budget_exhausted: run deadline reached: "),
+        "{blocker}"
+    );
+    assert!(blocker.contains("of run_timeout_seconds=1;"), "{blocker}");
+    assert!(blocker.contains("s elapsed"), "{blocker}");
+    assert!(
+        blocker.contains(&format!("prepare --run-id {run_id} --extend-seconds")),
+        "{blocker}"
+    );
+    let elapsed: u64 = blocker["budget_exhausted: run deadline reached: ".len()..]
+        .split('s')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(elapsed >= 2, "{blocker}");
+    assert!(
+        blocker.contains(&format!("is at least {} plus", elapsed)),
+        "{blocker}"
+    );
+}
