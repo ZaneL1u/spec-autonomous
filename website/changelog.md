@@ -50,6 +50,8 @@
 - doctor 的 `submodules_warning` 改为看 worker 侧：仓库有子模块、`init_submodules = false` 且没有 `worker_prepare` 时提示，只配了 `verification_prepare` 的项目也会收到提示。
 - 规划与 worker 工作包说明 `openspec` 映射：PATH 上没有 `openspec` 时，`managed_commands.openspec` 与 prompt 的 `TOOLS:` 给出协调器实际执行的绝对 argv 和 `providers exec` 写法；`verification_environment.executables` 新增 `pnpm`、`uv`、`openspec`。
 
+- `build:native` 先复制到临时文件再改名覆盖：在 macOS 上原地覆盖一个运行过的二进制会沿用旧的签名缓存，新二进制第一次启动就被 SIGKILL（退出码 137，launcher 报 `cli_metadata_failed`）。
+
 ### 升级须知
 
 - 账本 schema 升到 5（表结构同 schema 4），首次写入前自动备份为 `state.v4.<uuid>.backup.db`；之后 alpha.16 及更早的 CLI 会以 `schema_unsupported` 拒绝该账本，避免它们读不了 `init_submodules` 配置或在重新规划时丢掉写集修订。升级后重启项目的 MCP 服务，详见[长任务维护](https://github.com/ZaneL1u/spec-autonomous/blob/main/docs/long-running-runs.md)。

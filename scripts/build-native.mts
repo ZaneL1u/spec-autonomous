@@ -1,4 +1,4 @@
-import { mkdirSync, copyFileSync, chmodSync } from 'node:fs';
+import { mkdirSync, copyFileSync, chmodSync, renameSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { platformFor } from '../packages/cli/lib/platform.mjs';
@@ -16,6 +16,11 @@ if (!executable) throw new Error('Cargo did not report the spec-autonomous execu
 const out = new URL(`../packages/cli/native/${platform.key}/`, import.meta.url);
 mkdirSync(out, { recursive: true });
 const binary = new URL(platform.executable, out);
-copyFileSync(executable, binary);
-chmodSync(binary, 0o755);
+// Copy next to the target and rename over it: overwriting an executable that macOS has
+// already run in place keeps the old code-signature cache for that inode, and the new
+// binary is then killed with SIGKILL (exit 137) on its first start.
+const staged = new URL(`${platform.executable}.tmp-${process.pid}`, out);
+copyFileSync(executable, staged);
+chmodSync(staged, 0o755);
+renameSync(staged, binary);
 console.log(`Built ${platform.key}: ${fileURLToPath(binary)}`);
