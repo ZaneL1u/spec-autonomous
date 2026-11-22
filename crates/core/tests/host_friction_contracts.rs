@@ -848,6 +848,8 @@ fn converge_instruction_lists_only_failed_audit_items() {
                 long.clone()
             },
             passed: i != 0,
+            files: vec![],
+            carried_over: None,
         })
         .collect();
     let failed = submit(root, &audit, result);

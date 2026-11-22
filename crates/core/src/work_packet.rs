@@ -353,7 +353,10 @@ pub fn result_schema(input: &WorkerInput) -> serde_json::Value {
     let plan = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"phase_id":string,"source_hash":string,"tasks":{"type":"array","items":{"$ref":"#/$defs/task"}},"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]}}),
     );
-    let audit = object(json!({"requirement":string,"evidence":string,"passed":{"type":"boolean"}}));
+    let mut audit =
+        object(json!({"requirement":string,"evidence":string,"passed":{"type":"boolean"}}));
+    // Optional, so receipts written before incremental audits stay valid.
+    audit["properties"]["files"] = json!({"type":"array","maxItems":50,"items":string,"description":"Project-relative implementation and test files this conclusion rests on. A passed item is carried into later audits only while none of them changed; omit it and the item is audited again every time."});
     let mut schema = object(
         json!({"schema_version":{"type":"integer","enum":[1]},"run_id":{"type":"string","enum":[input.run_id]},"task_id":{"type":"string","enum":[input.task_id]},"attempt_id":{"type":"string","enum":[input.attempt_id]},"status":{"type":"string","enum":["candidate","blocked","failed"]},"summary":string,"blockers":strings,"milestone":{"anyOf":[{"$ref":"#/$defs/milestone"},{"type":"null"}]},"plan":{"anyOf":[{"$ref":"#/$defs/plan"},{"type":"null"}]},"audit":{"type":"array","items":{"$ref":"#/$defs/audit"}}}),
     );

@@ -1498,6 +1498,8 @@ fn completed_serial_workflow_reclaims_checkouts_but_retains_receipts_branches_an
                     "src/value.txt and tests/value.mjs independently verified by candidate gate"
                         .into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             })
             .collect();
         state = submit(root.path(), &request, result);

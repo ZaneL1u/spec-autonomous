@@ -85,7 +85,7 @@ idempotent = true
 
 ### 审计复用与重复失败
 
-完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
+完全通过的审计以 `(phase, scope, 集成树哈希, 验收引用批次)` 为键缓存；同键再次出现时复用结论（`audit_reused`），不再派发审计 agent。树变化后（修复轮、hook 提交）按条目增量审计：上一轮已通过、声明了依据文件且这些文件及相关写集自上轮审计以来未变的验收项沿用原结论（`carried_over`），只把其余条目放进审计包，全部可沿用时不派发；规则见 [宿主协议](host-protocol.md#增量审计)。修复轮按 `phase:失败签名` 计数：host-verification 失败以失败命令、cwd 和退出码为签名，审计失败以未通过的需求 ID 为签名；同一签名在一轮修复后再次出现，run 进入 `needs_input`（`repair_repeated`），不再消耗剩余修复预算。phase 完成时清除其签名计数。
 
 ### 分阶段检查与规划护栏
 

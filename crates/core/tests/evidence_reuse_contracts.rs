@@ -172,6 +172,8 @@ fn answer_audit(root: &Path, request: &Value) -> Value {
             requirement: r["id"].as_str().unwrap().into(),
             evidence: "src/value.txt".into(),
             passed: true,
+            files: vec![],
+            carried_over: None,
         })
         .collect();
     submit(root, request, result)
@@ -668,6 +670,8 @@ fn a_passed_audit_of_the_same_tree_is_reused_without_a_new_agent() {
                 requirement: (*id).into(),
                 evidence: "src/value.txt".into(),
                 passed: true,
+                files: vec![],
+                carried_over: None,
             })
             .collect(),
     );

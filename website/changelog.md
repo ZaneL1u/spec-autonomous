@@ -2,6 +2,10 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.2.0（未发布）
+
+- 增量审计：审计条目可带 `files`（结论依赖的文件）。再次审计同一 phase 时，上一轮已通过、且这些文件、写过它们的任务写集和需求原文自上轮审计以来都没变的条目沿用原结论（标注 `carried_over` 与来源 attempt），审计包只列需要重审的 id；全部可沿用时不再签发审计包。没有 `files` 的条目照旧每次重审。
+
 ## 0.1.0-alpha.16
 
 - 验证证据按源码树哈希复用：同树同命令同环境的检查只执行一次，phase/post-hook、里程碑门槛和审计等待不再重复跑；无 hook 改动时跳过 post-hook。与 alpha.15 的 `reuse_verification` 合并为同一开关，`verification_reuse = "none"` 或 `reuse_verification = false` 均可关闭。

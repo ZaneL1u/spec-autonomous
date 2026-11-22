@@ -310,6 +310,14 @@ impl Coordinator<'_> {
         }
         let mut all = vec![];
         let tree = git::tree(&self.project())?;
+        let head = git::head(&self.project())?;
+        let scope = audit_scope(snapshot);
+        let context: Vec<String> = snapshot
+            .context_files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        let mut diffs = BTreeMap::new();
         for (batch, refs) in required.chunks(32).enumerate() {
             // An audit of the same acceptance ids against the same integration tree has
             // the same inputs; a fully passed one is reused instead of asked again.
@@ -331,18 +339,54 @@ impl Coordinator<'_> {
                 self.save("audit_reused")?;
                 continue;
             }
+            // Passed items whose inputs did not change since they were audited stand;
+            // only the rest go into the packet.
+            let mut carried = vec![];
+            let mut pending = vec![];
+            for reference in refs {
+                match self.carry_audit(phase, scope, reference, &tree, &head, &context, &mut diffs)
+                {
+                    Some(item) => carried.push(item),
+                    None => pending.push(reference.clone()),
+                }
+            }
+            if pending.is_empty() {
+                all.extend(carried);
+                self.save("audit_carried_over")?;
+                continue;
+            }
             let mut partial = snapshot.clone();
-            partial.metadata["acceptance"] = serde_json::json!(refs);
-            let audit_task = if snapshot.metadata["scope"] == "milestone" {
+            partial.metadata["acceptance"] = serde_json::json!(pending);
+            let mut instruction = format!("{AUDIT_RULES} {AUDIT_FILES}");
+            if !carried.is_empty() {
+                partial.metadata["carried_over"] = serde_json::json!(
+                    carried
+                        .iter()
+                        .map(|item| serde_json::json!({
+                            "id": item.requirement,
+                            "from": item.carried_over,
+                        }))
+                        .collect::<Vec<_>>()
+                );
+                instruction.push_str(&format!(
+                    " Incremental audit: cover ONLY the {} ids in snapshot.metadata.acceptance. The {} ids in snapshot.metadata.carried_over passed an earlier audit and nothing they depend on changed since; do not report them.",
+                    pending.len(),
+                    carried.len()
+                ));
+            }
+            let audit_task = if scope == "milestone" {
                 format!("audit-milestone-{}-{}", phase.id, batch + 1)
             } else {
                 format!("audit-{}-{}", phase.id, batch + 1)
             };
-            let (result, _worktree, index) = self.invoke(
+            // The key keeps the original instruction so packets issued before
+            // incremental audits still match their receipts.
+            let (result, _worktree, index) = self.invoke_host_keyed(
                 "audit",
                 &audit_task,
                 &phase.id,
-                "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.".into(),
+                instruction,
+                AUDIT_RULES,
                 Some(partial.clone()),
             )?;
             let verified = (|| -> Result<()> {
@@ -350,6 +394,11 @@ impl Coordinator<'_> {
                     bail!("scope_violation: verifier changed files");
                 }
                 provider::check_audit(&partial, &result.audit)?;
+                if result.audit.iter().any(|a| a.carried_over.is_some()) {
+                    bail!(
+                        "audit_contract_error: carried_over is set by the coordinator, not by audit workers"
+                    );
+                }
                 Ok(())
             })();
             if let Err(error) = verified {
@@ -358,17 +407,158 @@ impl Coordinator<'_> {
                 self.save("audit_rejected")?;
                 return Err(error);
             }
-            if result.audit.iter().all(|a| a.passed)
+            let attempt_id = self.run.attempts[index].id.clone();
+            self.record_audit(
+                phase,
+                scope,
+                &pending,
+                &result.audit,
+                &attempt_id,
+                &tree,
+                &head,
+            );
+            let mut items = carried;
+            items.extend(result.audit);
+            if items.iter().all(|a| a.passed)
                 && let Some(host) = self.run.host.as_mut()
             {
-                host.audit_cache.insert(key, result.audit.clone());
+                host.audit_cache.insert(key, items.clone());
             }
-            all.extend(result.audit);
+            all.extend(items);
             self.run.attempts[index].status = "accepted".into();
             self.save("audit_recorded")?;
         }
         provider::check_audit(snapshot, &all)?;
         Ok(all)
+    }
+    /// Store the conclusions of one accepted audit packet per acceptance id.
+    #[allow(clippy::too_many_arguments)]
+    fn record_audit(
+        &mut self,
+        phase: &Phase,
+        scope: &str,
+        refs: &[serde_json::Value],
+        items: &[AuditItem],
+        attempt_id: &str,
+        tree: &str,
+        head: &str,
+    ) {
+        let Some(host) = self.run.host.as_mut() else {
+            return;
+        };
+        for item in items {
+            let Some(reference) = refs.iter().find(|r| r["id"] == item.requirement) else {
+                continue;
+            };
+            let key = audit_conclusion_key(&phase.id, scope, &item.requirement);
+            if host
+                .audit_conclusions
+                .get(&key)
+                .is_some_and(|c| c.attempt_id == attempt_id)
+            {
+                continue;
+            }
+            host.audit_conclusions.insert(
+                key,
+                AuditConclusion {
+                    requirement: item.requirement.clone(),
+                    phase_id: phase.id.clone(),
+                    scope: scope.into(),
+                    passed: item.passed,
+                    evidence: work_packet::clip(&item.evidence, 2000),
+                    files: audit_files(&item.files),
+                    attempt_id: attempt_id.into(),
+                    commit: head.into(),
+                    tree: tree.into(),
+                    acceptance_hash: acceptance_hash(reference),
+                    recorded_at: paths::now(),
+                },
+            );
+        }
+    }
+    /// The earlier passed conclusion for this acceptance reference when it may stand:
+    /// recorded against another tree of the same phase and scope, for the same
+    /// reference text, naming the files it rests on, and with no change since then to
+    /// those files, the write sets of the tasks that wrote them, the requirement's
+    /// native source, other native documents, global inputs or undeclared files.
+    #[allow(clippy::too_many_arguments)]
+    fn carry_audit(
+        &self,
+        phase: &Phase,
+        scope: &str,
+        reference: &serde_json::Value,
+        tree: &str,
+        head: &str,
+        context: &[String],
+        diffs: &mut BTreeMap<String, Option<Vec<String>>>,
+    ) -> Option<AuditItem> {
+        let id = reference["id"].as_str()?;
+        let host = self.run.host.as_ref()?;
+        // Conclusions of this very tree belong to the audit in progress; carrying them
+        // would change the packet that is being answered.
+        let record = host
+            .audit_conclusions
+            .get(&audit_conclusion_key(&phase.id, scope, id))
+            .filter(|c| c.tree != tree)?;
+        if !record.passed
+            || record.files.is_empty()
+            || record.acceptance_hash != acceptance_hash(reference)
+        {
+            return None;
+        }
+        let project = self.project();
+        let changed = diffs
+            .entry(record.commit.clone())
+            .or_insert_with(|| {
+                crate::scope::changed_between(
+                    &project,
+                    &self.run.project_relative,
+                    &record.commit,
+                    head,
+                )
+            })
+            .clone()?;
+        let mut related = record.files.clone();
+        related.extend(reference["source_path"].as_str().map(str::to_string));
+        for task in self.run.plans.values().flat_map(|p| &p.tasks) {
+            if !task.writes.is_empty()
+                && record
+                    .files
+                    .iter()
+                    .any(|file| plan::allowed(file, &task.writes))
+            {
+                related.extend(task.writes.iter().cloned());
+            }
+        }
+        if crate::scope::invalidated(
+            &self.run,
+            &project,
+            &record.commit,
+            head,
+            &changed,
+            &related,
+            context,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        Some(AuditItem {
+            requirement: id.into(),
+            evidence: format!(
+                "carried over from audit attempt {} at {}: {}",
+                record.attempt_id, record.commit, record.evidence
+            ),
+            passed: true,
+            files: record.files.clone(),
+            carried_over: Some(CarriedAudit {
+                attempt_id: record.attempt_id.clone(),
+                phase_id: record.phase_id.clone(),
+                scope: record.scope.clone(),
+                commit: record.commit.clone(),
+                tree: record.tree.clone(),
+            }),
+        })
     }
 
     pub(super) fn milestone_snapshot(&self) -> Result<Snapshot> {
@@ -422,6 +612,8 @@ impl Coordinator<'_> {
                 requirement: "host-verification".into(),
                 evidence: text,
                 passed: false,
+                files: vec![],
+                carried_over: None,
             }],
         )
     }
@@ -896,6 +1088,59 @@ impl Coordinator<'_> {
         }
         Ok(details)
     }
+}
+
+/// The audit instruction issued before incremental audits; request keys still hash it.
+const AUDIT_RULES: &str = "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.";
+const AUDIT_FILES: &str = "Also return files on each item: the project-relative implementation and test files the conclusion rests on (at most 50). A later audit carries a passed item over only while none of those files, the write sets of the tasks that wrote them, the requirement's native source and global inputs changed; an item without files is audited again every time.";
+
+fn audit_scope(snapshot: &Snapshot) -> &'static str {
+    if snapshot.metadata["scope"] == "milestone" {
+        "milestone"
+    } else {
+        "phase"
+    }
+}
+fn audit_conclusion_key(phase: &str, scope: &str, id: &str) -> String {
+    format!("{phase}|{scope}|{id}")
+}
+fn acceptance_hash(reference: &serde_json::Value) -> String {
+    paths::hash(
+        serde_json::json!([
+            reference["id"],
+            reference["source_path"],
+            reference["description"]
+        ])
+        .to_string(),
+    )
+}
+/// Normalized project-relative files an auditor named; invalid or excessive lists count
+/// as none, which only means the item is audited again next time.
+fn audit_files(files: &[String]) -> Vec<String> {
+    if files.len() > 50 {
+        return vec![];
+    }
+    let mut out = vec![];
+    for file in files {
+        let Ok(path) = paths::relative(file) else {
+            return vec![];
+        };
+        let normal = path
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if normal.is_empty() {
+            return vec![];
+        }
+        if !out.contains(&normal) {
+            out.push(normal);
+        }
+    }
+    out
 }
 
 fn unique_checks(checks: Vec<Check>) -> Vec<Check> {

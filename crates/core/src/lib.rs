@@ -30,4 +30,5 @@ pub mod run_revision;
 pub mod discussion;
 
 pub mod reclaim;
+pub mod scope;
 pub mod verification;

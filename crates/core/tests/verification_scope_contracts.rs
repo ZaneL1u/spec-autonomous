@@ -167,6 +167,8 @@ fn answer_audit(root: &Path, request: &Value) -> Value {
             requirement: r["id"].as_str().unwrap().into(),
             evidence: "src/value.txt".into(),
             passed: true,
+            files: vec![],
+            carried_over: None,
         })
         .collect();
     submit(root, request, result)
