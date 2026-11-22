@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "repository": "ZaneL1u/spec-autonomous",
-  "version": "0.1.0-alpha.16",
-  "tag": "v0.1.0-alpha.16",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
   "assets": {
     "darwin-arm64": {
       "name": "spec-autonomous-darwin-arm64",
-      "sha256": "b00230d787acf3eb054e636ba09c63ce4a432e40d110c274653ab088a1cc43ab"
+      "sha256": "fe161e152be4218fe6b332a129ef939252e6f070a3a9783c7172414594ae24d9"
     }
   }
 }

@@ -2,7 +2,7 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
-## 0.2.0（未发布）
+## 0.2.0
 
 ### 少做重复工作
 
