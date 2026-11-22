@@ -269,3 +269,91 @@ pub fn complete_receipt(receipt: &Path, identity: &str, directory: &Path) -> Res
         )?,
     )
 }
+
+/// Lines and characters of each output stream quoted in a failure summary.
+const TAIL_LINES: usize = 8;
+const TAIL_CHARS: usize = 600;
+
+/// Mask secrets before child output is quoted in errors, blockers and packets: values
+/// of the configured environments, `key=value` / `key: value` pairs and bearer tokens
+/// whose key names a credential, and passwords embedded in URLs.
+pub fn redact(text: &str, config: &Config) -> String {
+    static PAIR: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static BEARER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static URL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let mut out = text.to_owned();
+    for value in config
+        .environment
+        .values()
+        .chain(config.runner.environment.values())
+        .filter(|v| v.trim().len() >= 6)
+    {
+        out = out.replace(value.as_str(), "[redacted]");
+    }
+    let pair = PAIR.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)([A-Z0-9_.-]*(?:token|secret|passw(?:or)?d|api[_-]?key|credential|private[_-]?key)[A-Z0-9_.-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)"#,
+        )
+        .unwrap()
+    });
+    out = pair.replace_all(&out, "${1}[redacted]").into_owned();
+    let bearer = BEARER.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}").unwrap()
+    });
+    out = bearer.replace_all(&out, "${1} [redacted]").into_owned();
+    let url = URL.get_or_init(|| regex::Regex::new(r"(://[^/\s:@]+:)[^/\s@]+@").unwrap());
+    url.replace_all(&out, "${1}[redacted]@").into_owned()
+}
+
+/// The last lines of a log file, joined with ` | ` and clipped, or `(empty)`.
+fn tail(path: &str, config: &Config) -> String {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return "(empty)".into();
+    }
+    let joined = lines[lines.len().saturating_sub(TAIL_LINES)..].join(" | ");
+    // Run status is derived from words in the stop message; quoted output must not
+    // turn a failed check into needs_input or delivery_pending.
+    let joined = redact(&joined, config)
+        .replace("needs_input", "needs-input")
+        .replace("delivery_pending", "delivery-pending")
+        .replace("hook_outcome_unknown", "hook-outcome-unknown");
+    let count = joined.chars().count();
+    if count <= TAIL_CHARS {
+        joined
+    } else {
+        format!(
+            "…{}",
+            joined.chars().skip(count - TAIL_CHARS).collect::<String>()
+        )
+    }
+}
+
+/// One line naming which command failed and why, for a failed check's evidence details:
+/// the executed argv, the declared project-relative cwd, the exit code and redacted
+/// tails of stderr and stdout. The full logs stay in the diagnostics directory.
+pub fn failure_summary(details: &serde_json::Value, cwd: &str, config: &Config) -> String {
+    format!(
+        "{}; stderr tail: {}; stdout tail: {}",
+        failure_command(details, cwd, config),
+        tail(details["stderr"].as_str().unwrap_or_default(), config),
+        tail(details["stdout"].as_str().unwrap_or_default(), config),
+    )
+}
+
+fn failure_command(details: &serde_json::Value, cwd: &str, config: &Config) -> String {
+    let argv: Vec<String> = details["executed_argv"]
+        .as_array()
+        .or(details["argv"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.as_str())
+        .map(|a| redact(a, config))
+        .collect();
+    format!("command {argv:?} in {cwd} exited {}", details["exit_code"])
+}

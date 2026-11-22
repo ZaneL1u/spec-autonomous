@@ -90,6 +90,8 @@ phase 有灰区时 `prepare` 返回 `needs_input`，`blocker` 以 `discussion_re
 
 `repair_repeated`（同一失败在一轮修复后再次出现）、`budget_cap`、`verification_missing` 和其他 `needs_input` 都是交给操作者的决定，不是重试信号。`verification_preflight_failed` 用 `spec-autonomous prepare --run-id <run_id>`（不要再带 `--change` / `--feature`，二者与 `--run-id` 互斥）即得到带诊断的新规划包。
 
+检查失败的错误（`attempts[].error`、重派包的 `failure` 与 blocker）形如 `verification_failed: <stage> check failed, exit <n>: command [argv] in <cwd> exited <n>; stderr tail: …; stdout tail: …; diagnostics <manifest>; stdout <log>; stderr <log>`：先给实际执行的 argv、声明的 cwd、退出码和 stderr / stdout 末尾至多 8 行（各 600 字符），再给日志路径；`verification_prepare` 钩子失败只给退出码和日志路径，不引用其 argv 与输出。引用前会脱敏：`[environment]` / `runner.environment` 的值、键名含 token / secret / password / api_key / credential 的 `key=value`、Bearer / Basic 凭据与 URL 中的密码都换成 `[redacted]`；输出里的 `needs_input` 等状态词会改写为连字符形式，不会影响 run 状态判断。
+
 `blocker` 只描述本次停止的原因，历史失败在 `attempts[].error` 中。`no_progress: no eligible task remains` 按「最新在前」只列每个未完成任务最近一次失败（每条截断到 600 字符），其余失败只给计数（`(<n> earlier failures are listed in attempts)`）。
 
 检查因宿主进程被中断、`run.pause` / `run.cancel` 或 run 截止时间而被取消（证据 `failure_kind: "cancelled"`，exit 130）时，错误以 `paused: verification_cancelled` 开头而不是 `verification_failed`。暂停 / 取消请求、进程中断或 run 截止时间在开始集成前或两条检查之间（包括合并验证 `combined` 阶段）被发现时同样处理，错误分别以 `paused:` / `cancel:` / `budget_exhausted:` 开头。两种情况下被验证的 implement 回执都保持 `submitted`，不记失败、不计入 `max_attempts` 与无进展判断，阶段 / 里程碑门禁也不会因此排修复轮；`prepare --run-id <run_id>` 对同一候选重新验证，不重新实现。在此之前该请求仍以 `status: "submitted"` 出现在 `work[]` 中，宿主不要重派它。

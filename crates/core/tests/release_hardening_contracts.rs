@@ -601,3 +601,73 @@ fn an_automatic_grant_starts_a_new_retry_epoch_with_a_bounded_total() {
     assert!(blocker.contains("already received 6 paths"), "{blocker}");
     assert_eq!(saved(root, &run_id).plans["P001"].tasks[0].writes.len(), 7);
 }
+
+#[test]
+fn a_failed_check_names_its_command_exit_and_redacted_output() {
+    let script = "console.log('ran 3 cases');console.error('API_TOKEN=abc123secretvalue');console.error('using '+process.env.SA_TEST_SECRET);console.error('AssertionError: expected 42, got 41');process.exit(3)";
+    let root = fixture(|c| {
+        c.environment
+            .insert("SA_TEST_SECRET".into(), "hunter2-secret-value".into());
+    });
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let run_id = first["id"].as_str().unwrap().to_owned();
+    let planning = &first["work"][0];
+    let input = packet(root, planning);
+    let snapshot = input.snapshot.clone().unwrap();
+    let mut value = task("value", &snapshot.tasks[0].id, "src/value.txt");
+    value.verification = vec![Check {
+        argv: vec!["node".into(), "-e".into(), script.into()],
+        cwd: "src".into(),
+    }];
+    let mut result = receipt(&input);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![value, task("other", &snapshot.tasks[1].id, "src/other.txt")],
+        milestone: input.milestone.clone(),
+    });
+    put(root, "src/.keep", "");
+    git::commit(root, "src dir").unwrap();
+    let wave = submit(root, planning, result);
+    let request = work(&wave, "value").clone();
+    write_value(&request);
+    let response = submit(root, &request, receipt(&packet(root, &request)));
+    let run = saved(root, &run_id);
+    let error = run
+        .attempts
+        .iter()
+        .find(|a| a.kind == "implement" && a.task_id == "value" && a.status == "failed")
+        .and_then(|a| a.error.clone())
+        .unwrap_or_else(|| panic!("{response}"));
+    assert!(error.starts_with("verification_failed: "), "{error}");
+    for expected in [
+        "command [\"node\", \"-e\", ",
+        " in src exited 3",
+        "stderr tail: ",
+        "AssertionError: expected 42, got 41",
+        "stdout tail: ran 3 cases",
+        "; diagnostics ",
+    ] {
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+    assert!(!error.contains("abc123secretvalue"), "{error}");
+    assert!(!error.contains("hunter2-secret-value"), "{error}");
+    assert!(error.contains("API_TOKEN=[redacted]"), "{error}");
+    // no_progress blockers keep the first 600 characters of each failure: the reason
+    // comes before the long diagnostics paths.
+    let head: String = error.chars().take(600).collect();
+    assert!(
+        head.contains("AssertionError: expected 42, got 41"),
+        "{head}"
+    );
+    // The re-issued packet carries the same text as its failure.
+    let retry = packet(root, work(&response, "value"));
+    assert_eq!(retry.failure.as_deref(), Some(error.as_str()));
+}

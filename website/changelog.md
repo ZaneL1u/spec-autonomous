@@ -10,6 +10,7 @@
 - doctor 的 `submodules_warning` 改为看 worker 侧：仓库有子模块、`init_submodules = false` 且没有 `worker_prepare` 时提示，只配了 `verification_prepare` 的项目也会收到提示。
 - skills（`autonomous` / `auto` / `resume`）改为 `prepare --run-id <id>`（不再带 `--change` / `--feature`），并说明 `verification_environment_unavailable`（修环境后只重跑预检、不重新规划）、`worker_prepare_failed` 与 `warnings[]` 中 `config_drift:` 的处理。
 - 自动追加写集与人工 `run.revise` 一样重置该任务的重试计数，扩写集不再消耗 `max_attempts`；每个任务在整个 run 中至多自动追加 10 条路径。
+- 检查失败的错误直接说明失败的是哪条命令、为什么：带实际执行的 argv、cwd、退出码和脱敏后的 stderr / stdout 末尾几行，日志路径放在后面；重派包的 `failure` 与 no_progress blocker 随之受益。
 
 ## 0.1.0-alpha.16
 
