@@ -393,6 +393,10 @@ pub struct HostState {
     /// Only identical keys reuse evidence; failures are never stored.
     #[serde(default)]
     pub verification_cache: BTreeMap<String, VerificationPass>,
+    /// The latest executed pass per command identity without the tree. A task check
+    /// whose owners the change since did not reach stands on it (`verification_scope`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verification_passes: BTreeMap<String, VerificationPass>,
     /// Fully passed audits keyed by phase, scope, integration tree and acceptance ids.
     #[serde(default)]
     pub audit_cache: BTreeMap<String, Vec<AuditItem>>,

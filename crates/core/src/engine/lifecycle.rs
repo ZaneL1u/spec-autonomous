@@ -184,7 +184,8 @@ impl Coordinator<'_> {
                 }
                 self.run.stage = "verifying_phase".into();
                 self.save("phase_verification")?;
-                if let Err(error) = self.verify(&self.project(), &self.checks(&phase, &[]), "phase")
+                if let Err(error) =
+                    self.verify_gate(&self.project(), &self.phase_gate(&phase), "phase")
                 {
                     self.repair_failure(&phase, error)?;
                     continue;
@@ -207,7 +208,7 @@ impl Coordinator<'_> {
                     break;
                 }
                 if let Err(error) =
-                    self.verify(&self.project(), &self.checks(&phase, &[]), "post-hook")
+                    self.verify_gate(&self.project(), &self.phase_gate(&phase), "post-hook")
                 {
                     self.repair_failure(&phase, error)?;
                 }
@@ -250,7 +251,8 @@ impl Coordinator<'_> {
                 .last()
                 .cloned()
                 .context("empty_milestone")?;
-            if let Err(error) = self.verify(&self.project(), &self.checks_milestone(), "milestone")
+            if let Err(error) =
+                self.verify_gate(&self.project(), &self.milestone_gate(), "milestone")
             {
                 self.repair_failure(&phase, error)?;
                 self.reopen(&phase.id);
@@ -814,7 +816,8 @@ impl Coordinator<'_> {
             };
             self.run.stage = "verifying_stale_phase".into();
             self.save("stale_phase_verification")?;
-            if let Err(error) = self.verify(&self.project(), &self.checks(&phase, &[]), "phase") {
+            if let Err(error) = self.verify_gate(&self.project(), &self.phase_gate(&phase), "phase")
+            {
                 self.repair_failure(&phase, error)?;
                 self.reopen(&phase.id);
                 return self.drive(false);
@@ -951,19 +954,28 @@ impl Coordinator<'_> {
         }
         bail!("planning_budget_exhausted")
     }
-    pub(super) fn checks(&self, phase: &Phase, task: &[Check]) -> Vec<Check> {
-        let mut x = self.run.config.verification.clone();
-        x.extend(self.run.config.phase_verification.clone());
-        x.extend(phase.verification.clone());
-        x.extend_from_slice(task);
-        if x.is_empty() {
-            if let Some(plan) = self.run.plans.get(&phase.id) {
-                for task in &plan.tasks {
-                    x.extend(task.verification.clone());
-                }
-            }
+    /// The phase gate: configured project/phase checks always run; without them the
+    /// plan's task checks stand in, each owned by the tasks that declared it.
+    pub(super) fn phase_gate(&self, phase: &Phase) -> Gate {
+        let mut always = self.run.config.verification.clone();
+        always.extend(self.run.config.phase_verification.clone());
+        always.extend(phase.verification.clone());
+        if !always.is_empty() {
+            return Gate {
+                always: unique_checks(always),
+                scoped: vec![],
+            };
         }
-        unique_checks(x)
+        Gate {
+            always: vec![],
+            scoped: owned_checks(
+                self.run
+                    .plans
+                    .get(&phase.id)
+                    .into_iter()
+                    .flat_map(|p| &p.tasks),
+            ),
+        }
     }
     pub(super) fn task_checks(&self, task: &Task) -> Vec<Check> {
         let mut x = self.run.config.verification.clone();
@@ -971,18 +983,108 @@ impl Coordinator<'_> {
         x.extend(task.verification.clone());
         x
     }
-    pub(super) fn checks_milestone(&self) -> Vec<Check> {
-        let mut x = self.run.config.verification.clone();
-        x.extend(self.run.config.milestone_verification.clone());
-        x.extend(self.run.milestone.verification.clone());
-        if x.is_empty() {
-            for phase in &self.run.milestone.phases {
-                x.extend(self.checks(phase, &[]));
+    /// The milestone gate: configured milestone checks, otherwise every phase gate.
+    /// Task checks stay scoped only under `milestone_verification_scope = "affected"`.
+    pub(super) fn milestone_gate(&self) -> Gate {
+        let mut always = self.run.config.verification.clone();
+        always.extend(self.run.config.milestone_verification.clone());
+        always.extend(self.run.milestone.verification.clone());
+        if !always.is_empty() {
+            return Gate {
+                always: unique_checks(always),
+                scoped: vec![],
+            };
+        }
+        let mut gate = Gate {
+            always: vec![],
+            scoped: vec![],
+        };
+        for phase in &self.run.milestone.phases {
+            let next = self.phase_gate(phase);
+            gate.always.extend(next.always);
+            for scoped in next.scoped {
+                match gate.scoped.iter_mut().find(|s| s.check == scoped.check) {
+                    Some(existing) => existing.owners.extend(scoped.owners),
+                    None => gate.scoped.push(scoped),
+                }
             }
         }
-        unique_checks(x)
+        if self.run.config.execution.milestone_verification_scope != "affected" {
+            gate.always.extend(gate.scoped.drain(..).map(|s| s.check));
+        }
+        gate.always = unique_checks(gate.always);
+        gate
     }
-    pub(super) fn verify(&mut self, project: &Path, checks: &[Check], label: &str) -> Result<()> {
+    /// An earlier pass of a scoped check that may stand for `project`'s HEAD: the same
+    /// command identity (everything but the tree) passed on an ancestor commit, and the
+    /// files changed since reach neither its owners' declared writes and reads, its own
+    /// path operands, global inputs, native documents nor undeclared files. Owners
+    /// without declared writes or reads are never proven independent.
+    fn scoped_pass(
+        &self,
+        project: &Path,
+        key: &str,
+        scoped: &ScopedCheck,
+    ) -> Option<(VerificationPass, Vec<String>)> {
+        let pass = self
+            .run
+            .host
+            .as_ref()?
+            .verification_passes
+            .get(key)?
+            .clone();
+        if scoped
+            .owners
+            .iter()
+            .any(|t| t.writes.is_empty() || t.reads.is_empty())
+        {
+            return None;
+        }
+        let head = git::head(project).ok()?;
+        let changed = crate::scope::changed_between(
+            project,
+            &self.run.project_relative,
+            &pass.revision,
+            &head,
+        )?;
+        let mut related: Vec<String> = scoped
+            .owners
+            .iter()
+            .flat_map(|t| t.writes.iter().chain(&t.reads).cloned())
+            .collect();
+        related.extend(path_operands(&scoped.check.argv));
+        if scoped.check.cwd != "." {
+            related.push(scoped.check.cwd.clone());
+        }
+        if let Some(hook) = self.run.config.hooks.get("verification_prepare") {
+            related.extend(path_operands(&hook.argv));
+        }
+        if crate::scope::invalidated(
+            &self.run,
+            project,
+            &pass.revision,
+            &head,
+            &changed,
+            &related,
+            &[],
+        )
+        .is_some()
+        {
+            return None;
+        }
+        Some((pass, changed))
+    }
+    /// Run a gate. `always` checks execute unless identical-tree evidence exists;
+    /// `scoped` checks may also stand on an earlier pass on an ancestor commit when
+    /// `[execution] verification_scope` (the caller resolves the milestone switch)
+    /// allows it and the change since does not reach them.
+    pub(super) fn verify_gate(&mut self, project: &Path, gate: &Gate, label: &str) -> Result<()> {
+        let checks: Vec<Check> = gate
+            .always
+            .iter()
+            .chain(gate.scoped.iter().map(|s| &s.check))
+            .cloned()
+            .collect();
         if checks.is_empty() {
             bail!("verification_missing: configure real verification argv for {label}");
         }
@@ -1024,7 +1126,9 @@ impl Coordinator<'_> {
             }
         }
         let mut prepared = preparation.is_none();
-        for check in unique_checks(checks.to_vec()) {
+        let scoped_allowed = reuse
+            && (label == "milestone" || self.run.config.execution.verification_scope == "affected");
+        for check in unique_checks(checks) {
             self.check()?;
             let mut identity = serde_json::json!({
                 "tree": tree,
@@ -1044,6 +1148,10 @@ impl Coordinator<'_> {
                 identity["executed_argv"] = serde_json::json!(executed);
             }
             let key = paths::hash(serde_json::to_string(&identity)?);
+            // The same identity without the tree, for passes on earlier commits.
+            let mut command = identity.clone();
+            command.as_object_mut().unwrap().remove("tree");
+            let command_key = paths::hash(serde_json::to_string(&command)?);
             let hit = if reuse {
                 self.run
                     .host
@@ -1071,6 +1179,37 @@ impl Coordinator<'_> {
                 self.save("verification_reused")?;
                 continue;
             }
+            let scoped = gate
+                .scoped
+                .iter()
+                .find(|s| s.check == check && !gate.always.contains(&check))
+                .filter(|_| scoped_allowed);
+            if let Some((pass, changed)) =
+                scoped.and_then(|s| self.scoped_pass(project, &command_key, s))
+            {
+                let owners: Vec<&str> = scoped
+                    .unwrap()
+                    .owners
+                    .iter()
+                    .map(|t| t.id.as_str())
+                    .collect();
+                let cwd = paths::inside(project, &check.cwd)?;
+                let details = serde_json::json!({"schema_version":1,"wave_id":wave_id,"stage":label,"step":"check","duration_ms":0,"failure_kind":null,"exit_code":0,"argv":check.argv,"cwd":cwd,"revision":wave.revision,"tree_unchanged":true,"stdout":pass.log,"stdout_sha256":pass.log_hash,"manifest":pass.manifest,"output_directory":wave.directory,"reused_from":{"stage":pass.stage,"wave_id":pass.wave_id,"revision":pass.revision,"manifest":pass.manifest,"tree":pass.tree,"finished_at":pass.finished_at,"scope":"affected","owners":owners,"changed_files":changed.len(),"changed_sample":changed.iter().take(20).collect::<Vec<_>>()},"cache_key":command_key});
+                self.run.evidence.push(Evidence {
+                    argv: check.argv.clone(),
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    revision: wave.revision.clone(),
+                    exit_code: 0,
+                    log: pass.log.clone(),
+                    log_hash: pass.log_hash.clone(),
+                    finished_at: paths::now(),
+                    tree_unchanged: true,
+                    details: Some(details),
+                });
+                self.run.verification_reuses += 1;
+                self.save("verification_scope_reused")?;
+                continue;
+            }
             if !prepared {
                 let hook = preparation.as_ref().unwrap();
                 let step = Check {
@@ -1083,19 +1222,19 @@ impl Coordinator<'_> {
             let details = self.record_check(&wave, project, &check, false)?;
             if reuse && details["tree_unchanged"] == true {
                 if let Some(host) = self.run.host.as_mut() {
-                    host.verification_cache.insert(
-                        key,
-                        VerificationPass {
-                            stage: label.into(),
-                            wave_id: wave_id.clone(),
-                            tree: tree.clone(),
-                            revision: wave.revision.clone(),
-                            manifest: details["manifest"].as_str().unwrap_or_default().into(),
-                            log: details["stdout"].as_str().unwrap_or_default().into(),
-                            log_hash: details["stdout_sha256"].as_str().unwrap_or_default().into(),
-                            finished_at: paths::now(),
-                        },
-                    );
+                    let pass = VerificationPass {
+                        stage: label.into(),
+                        wave_id: wave_id.clone(),
+                        tree: tree.clone(),
+                        revision: wave.revision.clone(),
+                        manifest: details["manifest"].as_str().unwrap_or_default().into(),
+                        log: details["stdout"].as_str().unwrap_or_default().into(),
+                        log_hash: details["stdout_sha256"].as_str().unwrap_or_default().into(),
+                        finished_at: paths::now(),
+                    };
+                    host.verification_cache.insert(key, pass.clone());
+                    // The latest real execution per command identity, for scoped reuse.
+                    host.verification_passes.insert(command_key, pass);
                 }
             }
         }
@@ -1170,6 +1309,50 @@ impl Coordinator<'_> {
 /// The audit instruction issued before incremental audits; request keys still hash it.
 const AUDIT_RULES: &str = "Read every listed native acceptance reference and actual implementation. For claims about native workflow execution, fresh workers, or test provenance, also inspect snapshot.metadata.execution_evidence (immutable JSON and hashes linking actual attempts, native sessions and verification logs). Return audit items {requirement,evidence,passed}; requirement MUST be an exact snapshot.metadata.acceptance[].id. Cover every listed ID exactly once, with concise evidence paths/commands. Do not change files. Be explicit about missing implementation; task checkboxes are not proof.";
 const AUDIT_FILES: &str = "Also return files on each item: the project-relative implementation and test files the conclusion rests on (at most 50). A later audit carries a passed item over only while none of those files, the write sets of the tasks that wrote them, the requirement's native source and global inputs changed; an item without files is audited again every time.";
+
+/// Checks of one verification gate.
+pub(super) struct Gate {
+    /// Configured project, stage, phase or milestone checks and the task's own checks.
+    pub always: Vec<Check>,
+    /// Checks other plan tasks declared, with every task that declared each.
+    pub scoped: Vec<ScopedCheck>,
+}
+pub(super) struct ScopedCheck {
+    pub check: Check,
+    pub owners: Vec<Task>,
+}
+/// Task checks grouped by command, each with all tasks that declared it.
+pub(super) fn owned_checks<'a>(tasks: impl IntoIterator<Item = &'a Task>) -> Vec<ScopedCheck> {
+    let mut out: Vec<ScopedCheck> = vec![];
+    for task in tasks {
+        for check in &task.verification {
+            match out.iter_mut().find(|s| &s.check == check) {
+                Some(existing) => existing.owners.push(task.clone()),
+                None => out.push(ScopedCheck {
+                    check: check.clone(),
+                    owners: vec![task.clone()],
+                }),
+            }
+        }
+    }
+    out
+}
+/// Argv operands that look like project paths (pytest node ids lose their `::` part).
+fn path_operands(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .enumerate()
+        .filter(|(index, arg)| *index > 0 || arg.contains('/'))
+        .map(|(_, arg)| arg.split("::").next().unwrap_or(arg))
+        .filter(|arg| !arg.starts_with('-') && arg.contains(['/', '.']))
+        .filter(|arg| paths::relative(arg).is_ok())
+        .map(|arg| {
+            arg.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_string()
+        })
+        .filter(|arg| !arg.is_empty() && arg != ".")
+        .collect()
+}
 
 #[derive(Default)]
 struct PhaseAcceptance {

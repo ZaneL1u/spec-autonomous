@@ -35,6 +35,8 @@ lease_seconds = 1800
 | `max_source_bytes` | 原生来源快照预算 |
 | `max_planner_tasks` | planner 单批原生任务上限 |
 | `verification_reuse` | `same-tree`（默认）在同一源码树、同命令、同环境、同检出类别上复用已通过的验证证据；`none` 每个波次重新执行 |
+| `verification_scope` | `affected`（默认）：combined 与 phase 门槛里由其他任务声明的检查，在上次通过后的改动没有触及这些任务的 `writes` / `reads`（也没有全局输入、原生文档或未声明文件的改动）时沿用上次的通过证据；配置的项目 / 阶段检查与当前任务自己的检查总是执行。`full`：每道门槛执行全部检查 |
+| `milestone_verification_scope` | 里程碑门槛的同一选择，默认 `full`：在交付前的最终树上把被沿用过的任务检查实际执行一遍；`affected` 按上述规则沿用 |
 | `unsafe_budgets` | 默认 `false`：`max_attempts ≤ 10`、`max_repair_rounds ≤ 4`、`run_timeout_seconds ≤ 259200`（72 小时）；设为 `true` 才允许超出，doctor 会告警 |
 | `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
@@ -53,6 +55,8 @@ run 启动时冻结配置。`run_timeout_seconds` 按自 run 开始的墙钟时�
 | `task_verification` | 只在任务候选验证时（worker、combined） |
 | `phase_verification` | 只在 phase 门槛（phase、post-hook、stale 复验） |
 | `milestone_verification` | 只在里程碑门槛 |
+
+phase 门槛没有任何 phase 级检查时退回使用计划里各任务的检查；修复轮或单任务被接受后，`verification_scope = "affected"` 只重跑改动触及的任务的检查（任务需要声明 `reads`，`reads` 为空的任务总是重跑），其余沿用证据并在 `reused_from` 中注明来源与变更文件数。
 
 把快速的单元测试放进 `task_verification`，把 `make race`、全量集成这类昂贵套件放进 `phase_verification` 或 `milestone_verification`，每个任务就不再重复跑整套。规划器拿到的「项目级检查」是 `verification` 与 `task_verification` 之和。
 

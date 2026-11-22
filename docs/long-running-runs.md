@@ -69,7 +69,7 @@ idempotent = true
 
 旧 run 需要在工作包停止后，通过 `run.revise` 正式修订固定路径；钩子采用配置受控刷新。旧验证门槛不自动删除。重新规划会保留已审查的任务验证修订，遇到新的不一致检查会明确拒绝，要求宿主核对原生要求。
 
-同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
+同波次完全相同的 argv/cwd 只执行一次。跨波次的复用以「检查前后一致的 Git tree hash + argv + 相对 cwd + 运行环境 + 准备钩子 + 检出类别」为键：worker 候选与 combined 候选同树时，combined 直接复用 worker 的通过证据；phase、post-hook、milestone 在同一集成提交上也只执行一次。新建 worktree 与长期集成检出属于不同类别，互不复用，所以独立复验仍能发现集成环境问题。失败、超时、取消和改动源码树的结果从不复用；树、命令、环境或 `run.revise` 任一变化都会重新执行。复用的证据带 `reused_from`（原 wave、manifest、日志）且 `duration_ms` 为 0。跨树时还有按改动范围的沿用（`[execution] verification_scope = "affected"`，默认）：combined 与 phase 门槛里由其他任务声明的检查，若上次实际通过的提交是当前提交的祖先、且其间改动没有触及这些任务声明的 writes / reads，就沿用该证据（`reused_from.scope = "affected"`，附 owners 与变更文件数）；配置的项目 / 阶段检查和当前任务自己的检查照常执行。里程碑门槛默认 `milestone_verification_scope = "full"`，在最终树上把被沿用的检查实际跑一遍。详见[宿主协议](host-protocol.md#验证按改动范围收窄)。`[execution] verification_reuse = "none"` 可恢复逐波次执行。after_implement hooks 没有改变已接受提交时不再跑 post-hook 波次。
 
 ## 续跑不清零
 

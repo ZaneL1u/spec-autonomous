@@ -82,6 +82,13 @@ fn fixture(counter: &Path, configure: impl FnOnce(&mut Config)) -> tempfile::Tem
     git::commit(root.path(), "fixture").unwrap();
     root
 }
+fn counts(counter: &Path) -> Vec<String> {
+    fs::read_to_string(counter)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
 fn host() -> Value {
     json!({"host_id":"codex-local","session_id":"main","fresh_context":true})
 }
@@ -442,6 +449,183 @@ fn a_single_phase_milestone_audits_only_its_own_items() {
         run.attempts.iter().filter(|a| a.kind == "audit").count(),
         2,
         "one phase audit and one milestone audit for the goal"
+    );
+}
+
+/// Run a phase whose phase gate falls back to task checks through one repair round and
+/// the milestone gate. Returns the run and the executed `<stage>:<task>` checks.
+fn repaired_run(configure: impl FnOnce(&mut Config)) -> (tempfile::TempDir, Run, Vec<String>) {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("checks.log");
+    let root = fixture(&counter, |config| {
+        config.verification.clear();
+        configure(config);
+    });
+    let path = root.path();
+    let (run_id, audited) = through_first_audit(path);
+    let audit = find(&audited, "audit", None).clone();
+    let repaired = repair_round(path, &audit, "src/other.txt");
+    let again = find(&repaired, "audit", None).clone();
+    let milestone = answer_audit(path, &again, |_| (true, vec!["src/other.txt"]));
+    let request = find(&milestone, "audit", None).clone();
+    let done = answer_audit(path, &request, |_| (true, vec!["src/value.txt"]));
+    assert_eq!(done["status"], "completed", "{done}");
+    let run = saved(path, &run_id);
+    let checks = counts(&counter);
+    (root, run, checks)
+}
+
+#[test]
+fn checks_of_tasks_the_change_does_not_reach_stand_on_their_last_pass() {
+    let (_root, run, checks) = repaired_run(|_| {});
+    assert_eq!(
+        checks,
+        [
+            // `other` is integrated after `value`; value's check stands on its pass.
+            "combined:value",
+            "combined:other",
+            // The first phase gate runs every task check in the integration checkout.
+            "phase:value",
+            "phase:other",
+            // The repair writes src/other.txt: other's check runs again, value's not.
+            "combined:repair",
+            "combined:other",
+            "phase:other",
+            "phase:repair",
+            // The milestone gate stays full: value's check runs once on the final tree.
+            "milestone:value",
+        ]
+    );
+    let scoped: Vec<&Value> = run
+        .evidence
+        .iter()
+        .filter_map(|e| e.details.as_ref())
+        .filter(|d| d["reused_from"]["scope"] == "affected")
+        .collect();
+    assert!(!scoped.is_empty());
+    for details in &scoped {
+        assert_eq!(
+            details["reused_from"]["owners"],
+            json!(["value"]),
+            "{details}"
+        );
+        assert_eq!(details["duration_ms"], 0);
+        assert!(details["reused_from"]["changed_files"].as_u64().unwrap() > 0);
+        assert!(details["reused_from"]["revision"].is_string());
+        assert!(Path::new(details["manifest"].as_str().unwrap()).is_file());
+    }
+    assert!(
+        scoped.iter().any(|d| d["stage"] == "phase"),
+        "the phase gate after the repair reused value's check"
+    );
+}
+
+#[test]
+fn full_scope_reruns_every_task_check_and_affected_milestone_skips_them() {
+    let (_root, _, full) = repaired_run(|c| c.execution.verification_scope = "full".into());
+    assert_eq!(
+        full,
+        [
+            "combined:value",
+            "combined:other",
+            "combined:value",
+            "phase:value",
+            "phase:other",
+            "combined:repair",
+            "combined:value",
+            "combined:other",
+            "phase:value",
+            "phase:other",
+            "phase:repair",
+        ],
+        "full scope executes every check; the milestone gate reuses this tree's evidence"
+    );
+    let (_root, _, affected) =
+        repaired_run(|c| c.execution.milestone_verification_scope = "affected".into());
+    assert!(
+        !affected.iter().any(|c| c.starts_with("milestone:")),
+        "{affected:?}"
+    );
+    let mut bad = Config::default();
+    bad.execution.verification_scope = "some".into();
+    assert!(
+        bad.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("verification_scope")
+    );
+    let mut bad = Config::default();
+    bad.execution.milestone_verification_scope = "some".into();
+    assert!(
+        bad.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("milestone_verification_scope")
+    );
+    let text = toml::to_string(&Config::default()).unwrap();
+    assert!(
+        !text.contains("verification_scope"),
+        "defaults stay out of serialized configuration: {text}"
+    );
+}
+
+#[test]
+fn a_check_whose_owner_declared_no_reads_always_runs_again() {
+    let scratch = tempfile::tempdir().unwrap();
+    let counter = scratch.path().join("checks.log");
+    let root = fixture(&counter, |config| config.verification.clear());
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let planning = &first["work"][0];
+    let input = packet(root, planning);
+    let snapshot = input.snapshot.clone().unwrap();
+    let mut value = task(
+        "value",
+        &snapshot.tasks[0].id,
+        "src/value.txt",
+        counted("value", VALUE),
+    );
+    value.reads.clear();
+    let mut result = receipt(&input);
+    result.plan = Some(Plan {
+        schema_version: 1,
+        phase_id: "P001".into(),
+        source_hash: snapshot.source_hash,
+        tasks: vec![
+            value,
+            task(
+                "other",
+                &snapshot.tasks[1].id,
+                "src/other.txt",
+                counted("other", OTHER),
+            ),
+        ],
+        milestone: input.milestone.clone(),
+    });
+    let wave = submit(root, planning, result);
+    let value = find(&wave, "implement", Some("value")).clone();
+    put(
+        Path::new(value["project"].as_str().unwrap()),
+        "src/value.txt",
+        "42",
+    );
+    submit(root, &value, receipt(&packet(root, &value)));
+    let other = find(&wave, "implement", Some("other")).clone();
+    put(
+        Path::new(other["project"].as_str().unwrap()),
+        "src/other.txt",
+        "other",
+    );
+    submit(root, &other, receipt(&packet(root, &other)));
+    assert_eq!(
+        counts(&counter)[..3],
+        ["combined:value", "combined:other", "combined:value"],
+        "without declared reads, value's check is not proven independent of other's change"
     );
 }
 

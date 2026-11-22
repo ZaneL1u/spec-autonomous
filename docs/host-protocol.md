@@ -69,6 +69,17 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 里程碑审计的验收是各 phase 验收加上里程碑独有项（如 `milestone/<id>/goal`）。对每一条，先找里程碑范围内的上次结论；没有时，若该 id 只属于一个 phase，就取那个 phase 审计的结论，按上一节同样的条件判断（同树也可以，原生文档只看该 phase 自己的文档，其他 phase 的文档改动不影响它）。可沿用的条目带 `carried_over.scope = "phase"`，审计包只含里程碑独有项和依赖已变的条目。只有一个 phase 的里程碑因此只审 `goal`。被多个 phase 共享的 id（例如 Spec Kit 的 constitution）在里程碑审计里总是重审。
 
+### 验证按改动范围收窄
+
+`[execution] verification_scope` 默认 `affected`。每道门槛的检查分两类：
+
+- **总是执行**：`verification`、`task_verification` / `phase_verification` / `milestone_verification`、phase 与里程碑自己声明的检查，以及 combined 波次里当前任务自己的检查。它们只在同树同命令时复用（原有 `verification_cache`）。
+- **按范围沿用**：combined 波次里此前已接受任务的检查，以及没有配置 phase 级检查时 phase 门槛退回使用的计划任务检查。每条检查记下声明它的任务（owners）。
+
+一条按范围沿用的检查，只要同一命令身份（argv、cwd、环境、准备钩子、超时、检出类别，不含树）最近一次实际执行通过的提交是当前提交的祖先，并且两者之间的变更文件不触及 owners 的 `writes` / `reads`、检查 argv 里的路径操作数、`verification_prepare` 钩子的路径，也没有全局输入、原生文档改动或不在任何计划写集内的文件，就沿用那次通过的证据，不再执行。owners 里有任务 `writes` 或 `reads` 为空时无法证明无关，总是重跑；记账改动（`.spec-autonomous/plans/*`、只勾选或追加的 `tasks.md`）不算。沿用的证据 `duration_ms` 为 0，`reused_from` 除原 wave、manifest、revision、tree 外带 `scope: "affected"`、`owners`、`changed_files`（变更文件数）与 `changed_sample`（至多 20 个），事件为 `verification_scope_reused`；progress 把它计入 `reused_checks`。只有实际执行的通过结果会成为后续沿用的依据，失败、超时、取消与改动源码树的结果从不沿用。
+
+`verification_scope = "full"` 时每道门槛都执行全部检查（同树复用仍按 `verification_reuse`）。`verification_reuse = "none"` 或 `reuse_verification = false` 同时关闭两种复用。里程碑门槛由 `milestone_verification_scope` 单独控制，默认 `full`：交付前在最终的集成树上把被沿用过的任务检查实际跑一遍（本树已执行过的仍复用）；设为 `affected` 时按同样规则沿用。
+
 ## worker 检出准备
 
 写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本和未初始化的子模块给出警告。配置与示例见 website/reference/configuration.md。

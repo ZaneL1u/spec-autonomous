@@ -506,17 +506,19 @@ impl Coordinator<'_> {
         )?;
         self.run.intents[intent_index].candidate_head = Some(head);
         self.save("candidate_created")?;
-        let mut combined = self.task_checks(task);
-        for accepted in &plan.tasks {
-            if self
-                .run
-                .completed_tasks
-                .contains(&Run::key(&phase.id, &accepted.id))
-            {
-                combined.extend(accepted.verification.clone());
-            }
-        }
-        if let Err(error) = self.verify(
+        // The task's own and project checks always run; checks of tasks accepted
+        // earlier run again only when this change reaches what their owners declared.
+        let combined = lifecycle::Gate {
+            always: self.task_checks(task),
+            scoped: lifecycle::owned_checks(plan.tasks.iter().filter(|accepted| {
+                accepted.id != task.id
+                    && self
+                        .run
+                        .completed_tasks
+                        .contains(&Run::key(&phase.id, &accepted.id))
+            })),
+        };
+        if let Err(error) = self.verify_gate(
             &candidate.join(&self.run.project_relative),
             &combined,
             "combined",
