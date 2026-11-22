@@ -527,7 +527,11 @@ fn failed_worker_preparation_issues_nothing_and_recovers_after_a_fix() {
         argv: vec![
             "node".into(),
             "-e".into(),
-            format!("console.error('uv sync failed');process.exit({code})"),
+            // Read-only planning checkouts run the hook too; only the writing
+            // worker's environment is broken here.
+            format!(
+                "if(process.env.SA_WORKER_KIND==='implement'){{console.error('uv sync failed');process.exit({code})}}"
+            ),
         ],
         idempotent: true,
     };

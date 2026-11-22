@@ -62,15 +62,21 @@ impl Coordinator<'_> {
                     || r.attempts.iter().any(|old| old.worktree == a.worktree)
                     || r.intents.iter().any(|old| old.worktree == a.worktree)
             });
+            // Ignored files block reuse unless `worker_prepare` left exactly those entries
+            // (a synced .venv); the idempotent hook runs again when the checkout is reused.
+            let prepared: Vec<String> = self
+                .store
+                .attempt_dir(&self.run.id, &a.id)
+                .ok()
+                .and_then(|dir| fs::read(dir.join(super::PREPARED_IGNORED)).ok())
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_default();
             if !stopped
                 || shared
                 || !git::clean(path)?
-                || !git::command(
-                    path,
-                    &["ls-files", "--others", "--ignored", "--exclude-standard"],
-                    None,
-                )?
-                .is_empty()
+                || git::ignored_entries(path)?
+                    .iter()
+                    .any(|entry| !prepared.contains(entry))
             {
                 continue;
             }

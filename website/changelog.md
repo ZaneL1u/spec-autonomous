@@ -18,7 +18,7 @@
 - blocked 后重派的 implement 带上上一次候选的改动（`previous_candidate`），worker 不必从零重做；blocked worker 可用 `requested_writes` 申请追加写集，`run.revise` 也可以修订任务写集。
 - 检查运行中被取消（宿主中断、`run.pause`）不再记为失败，候选保留，`prepare --run-id` 原样重新验证。
 - 托管的 `openspec` 在检查环境中按托管 provider 执行；预检只缺可执行文件或目录时保留候选计划，修好环境后只重跑预检，不重新规划。
-- 新增 `[execution] init_submodules` 与 `[hooks.worker_prepare]`：worker 检出也能初始化子模块、准备依赖，与验证环境一致；doctor 提示已存在却未挂上的 `*-prepare` 脚本。
+- 新增 `[execution] init_submodules` 与 `[hooks.worker_prepare]`：worker 检出也能初始化子模块、准备依赖，与验证环境一致；doctor 提示已存在却未挂上的 `*-prepare` 脚本。只读的规划与审计检出同样准备（`[execution] prepare_read_only`，默认 `true`），审计 worker 不必再借主检出的 `.venv`；钩子用 `SA_WORKER_KIND` 区分包类型，运行后留下已跟踪改动即按 `worker_prepare_failed` 处理，复用的只读检出会再跑一次幂等钩子。
 - 配置漂移提示：源配置在 run 启动后改变时，`prepare` / `next` / `apply-result` 的 `warnings` 给出 `config_drift`；full 视图显示 hooks。`reload_config` 保留此前的时长延长；`prepare` 命令行新增 `--reload-config`、`--extend-seconds`、`--max-attempts`。
 - `dirty_checkout` 列出具体路径与类别；需要续跑 run 的 blocker 写明 `prepare --run-id`；能力目录列出隐藏能力，`limits` 说明超时与心跳是否强制；`discussion_auto` 在 blocker 带 `needs_input:` 前缀时也生效。
 - 集成过程中的中断不再计为失败：暂停 / 取消请求、进程中断或 run 截止时间在开始集成前或两条检查之间（含合并验证）被发现时，回执与检查运行中被取消一样保持 `submitted`，不计入 `max_attempts`，`prepare --run-id` 原样重新验证。

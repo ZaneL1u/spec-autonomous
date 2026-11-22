@@ -426,6 +426,27 @@ pub fn tracked_clean(root: &Path) -> Result<bool> {
     Ok(dirty.modified.is_empty() && dirty.submodules.is_empty())
 }
 
+/// Ignored, untracked entries of a checkout; wholly ignored directories collapse to one
+/// `dir/` entry (`.venv/`, `node_modules/`).
+pub fn ignored_entries(root: &Path) -> Result<Vec<String>> {
+    Ok(command(
+        root,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ],
+        None,
+    )?
+    .split('\0')
+    .filter(|p| !p.is_empty())
+    .map(str::to_string)
+    .collect())
+}
+
 /// Whether two repository-relative paths collide on checkout: equal, or one is a
 /// directory prefix of the other. Compared case-insensitively, because a case-folding
 /// filesystem refuses the same collisions.

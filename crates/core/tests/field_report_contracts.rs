@@ -390,3 +390,136 @@ fn fast_forward_blockers_compare_untracked_files_with_the_target_diff() {
     assert_eq!(git::head(root).unwrap(), target);
     assert!(root.join("notes/todo.md").is_file() && root.join("docs/other.md").is_file());
 }
+
+// ---------------------------------------------------------------------------------
+// 2. worker_prepare for read-only planning and audit checkouts
+
+/// A committed hook script that records each preparation's kind in an ignored `.venv`.
+fn with_prepare_script(script: &str) -> impl FnOnce(&Path) + '_ {
+    move |root: &Path| {
+        put(root, "scripts/prepare.sh", script);
+        let ignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        put(root, ".gitignore", &format!("{ignore}.venv/\n"));
+    }
+}
+fn bind_prepare(config: &mut Config) {
+    config.hooks.insert(
+        "worker_prepare".into(),
+        spec_autonomous_core::config::Hook {
+            argv: vec!["sh".into(), "scripts/prepare.sh".into()],
+            idempotent: true,
+        },
+    );
+}
+const RECORD_KIND: &str =
+    "set -e\nmkdir -p .venv\nprintf '%s\\n' \"$SA_WORKER_KIND\" >> .venv/kinds\n";
+fn kinds(worktree: &str) -> Vec<String> {
+    fs::read_to_string(Path::new(worktree).join(".venv/kinds"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn read_only_planning_and_audit_checkouts_run_worker_prepare_and_stay_reusable() {
+    let root = fixture_with(bind_prepare, with_prepare_script(RECORD_KIND));
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let planning = first["work"][0].clone();
+    assert_eq!(planning["kind"], "plan-tasks", "{first}");
+    let planning_checkout = planning["worktree"].as_str().unwrap().to_owned();
+    assert_eq!(kinds(&planning_checkout), ["plan-tasks"]);
+    // The prepared environment is ignored, so the read-only checkout stays clean.
+    assert!(git::clean(Path::new(&planning_checkout)).unwrap());
+    let wave = answer_plan(root, &planning);
+    let value = work(&wave, "value");
+    assert_eq!(kinds(value["worktree"].as_str().unwrap()), ["implement"]);
+
+    let response = finish_tasks(root, &wave);
+    let audit = find_kind(&response, "audit")
+        .unwrap_or_else(|| panic!("{response}"))
+        .clone();
+    let audit_checkout = audit["worktree"].as_str().unwrap();
+    // The closed planning checkout is reused despite its prepared .venv, and the
+    // idempotent hook ran again for the audit.
+    assert_eq!(audit_checkout, planning_checkout, "{audit}");
+    assert_eq!(kinds(audit_checkout), ["plan-tasks", "audit"]);
+    let done = pass_audits(root, response);
+    assert_eq!(done["status"], "completed", "{done}");
+    // Automatic maintenance treats the prepared environment as reproducible: the
+    // closed read-only checkout is removed rather than kept for its .venv.
+    let maintenance = fs::read_to_string(root.join(format!(
+        ".git/spec-autonomous/runs/{}/maintenance.json",
+        done["id"].as_str().unwrap()
+    )))
+    .unwrap_or_default();
+    assert!(!Path::new(&planning_checkout).exists(), "{maintenance}");
+}
+
+#[test]
+fn a_hook_that_changes_tracked_files_fails_preparation_of_a_read_only_checkout() {
+    let script = "set -e\nmkdir -p .venv\nprintf 'touched\\n' >> tests/value.mjs\n";
+    let root = fixture_with(bind_prepare, with_prepare_script(script));
+    let root = root.path();
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    assert_eq!(first["status"], "needs_input", "{first}");
+    let blocker = first["blocker"].as_str().unwrap();
+    assert!(
+        blocker.starts_with("needs_input: worker_prepare_failed: "),
+        "{blocker}"
+    );
+    assert!(blocker.contains("left tracked changes"), "{blocker}");
+    assert!(blocker.contains("tests/value.mjs"), "{blocker}");
+    assert!(
+        first["work"].as_array().is_none_or(Vec::is_empty),
+        "{first}"
+    );
+    let run = saved(root, first["id"].as_str().unwrap());
+    let attempt = run.attempts.last().unwrap();
+    assert_eq!(attempt.kind, "plan-tasks");
+    assert_eq!(attempt.status, "superseded");
+}
+
+#[test]
+fn prepare_read_only_can_be_turned_off_and_is_omitted_while_on() {
+    let root = fixture_with(
+        |c| {
+            bind_prepare(c);
+            c.execution.prepare_read_only = false;
+        },
+        with_prepare_script(RECORD_KIND),
+    );
+    let root = root.path();
+    let text = fs::read_to_string(root.join(".spec-autonomous/config.toml")).unwrap();
+    assert!(text.contains("prepare_read_only = false"), "{text}");
+    assert!(
+        !toml::to_string(&Config::default())
+            .unwrap()
+            .contains("prepare_read_only"),
+        "the default stays out of serialized configuration"
+    );
+    let first = api::invoke(
+        root,
+        "prepare",
+        &json!({"feature":"specs/feature","host":host(),"view":"full","discussion_auto":true}),
+    )
+    .unwrap();
+    let planning = first["work"][0].clone();
+    assert!(kinds(planning["worktree"].as_str().unwrap()).is_empty());
+    let wave = answer_plan(root, &planning);
+    assert_eq!(
+        kinds(work(&wave, "value")["worktree"].as_str().unwrap()),
+        ["implement"]
+    );
+}

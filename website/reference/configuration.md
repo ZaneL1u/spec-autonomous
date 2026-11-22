@@ -41,7 +41,8 @@ lease_seconds = 1800
 | `reclaim_worktrees` | `terminal`（默认）在 attempt 终态且补丁落盘后自动删除其 worktree；`never` 全部保留给手动 run.cleanup |
 | `retain_failed_worktrees` | 每个未完成任务保留的最新失败 worktree 数，默认 1 |
 | `delivery` | `ff-original` 或保留交付分支。`ff-original` 在全部门槛通过后把用户检出快进到 `accepted_head`；与交付 diff 不冲突的未跟踪文件（笔记、草稿）不阻挡，已跟踪改动或冲突的未跟踪文件进入 `delivery_pending`，blocker 的 `blocking:` 列出具体路径 |
-| `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；worker 上失败则不签发该工作，run 进入 `needs_input` |
+| `init_submodules` | 默认 `false`。为 `true` 时，协调器创建的集成检出、写入型 worker worktree 和集成候选 worktree 建好后都执行 `git submodule update --init --recursive`（环境取 `[environment]`）；`prepare_read_only` 开启时只读的规划 / 审计检出同样执行。worker 上失败则不签发该工作，run 进入 `needs_input` |
+| `prepare_read_only` | 默认 `true`：只读的规划（`plan-tasks`）与审计（`audit`）检出也像写入型检出一样初始化子模块并运行 `[hooks.worker_prepare]`，审计 worker 才能在自己的检出里跑测试。默认开启的理由：钩子本就要求幂等、只产生被忽略的文件，失败不计入任务失败；关掉它审计者只能借主检出的环境。钩子很慢或规划者用不到环境时可设为 `false`，恢复为只准备写入型检出 |
 | `baseline_checks` | 默认 `false`。为 `true` 时，phase 计划被接受后、签发该 phase 的实现工作前，协调器在集成检出（`accepted_head`）上把计划里已经能跑的检查跑一次（预检为 `deferred`、或 argv 指向任务将写入且尚不存在的文件的检查跳过；配置了 `verification_prepare` 时先运行它），失败的检查记为已知基线失败：响应 `warnings[]` 给出 `baseline_failure: phase <id>: ...`（含命令、退出码与脱敏的输出末尾），该 phase 的 implement / converge 包在 `snapshot.metadata.baseline_failures` 中带上同一列表。基线失败不阻塞、不计失败、不排修复轮。默认关闭是因为每个 phase 计划要多跑一遍这些检查（包括全量测试）；全量检查昂贵而基线可能已坏的仓库建议开启。基线检查留下的文件会被清除，集成检出回到 `accepted_head` |
 
 | `worktree_root` | 交给宿主 worker 的 worktree 放在哪里：`git`（默认，`.git/spec-autonomous/worktrees/`）、`sibling`（主检出旁边的 `<仓库目录名>.sa-worktrees/`）或一个绝对路径（其下再建 `<仓库目录名>-<哈希>/`，多个仓库可共用） |
@@ -93,11 +94,11 @@ phase 门槛没有任何 phase 级检查时退回使用计划里各任务的检�
 | 钩子 | 时机 | cwd | 环境变量 |
 | --- | --- | --- | --- |
 | `verification_prepare` | 每个验证波次第一条实际执行的检查之前 | 被验证的项目目录 | `SA_VERIFY_*`（见长期运行文档） |
-| `worker_prepare` | 写入型 attempt（implement / converge 等）的 worktree 创建并初始化子模块之后、签发工作包之前；只读的规划 / 审计包不运行 | worktree 根目录 | `SA_WORKER_CHECKOUT`、`SA_WORKER_PROJECT`、`SA_WORKER_ATTEMPT_ID`、`SA_WORKER_KIND`、`SA_WORKER_TASK_ID`、`SA_WORKER_PHASE_ID`、`SA_WORKER_BASE_COMMIT`、`SA_ORIGIN_CHECKOUT`、`SA_RUN_ID`，以及 `[environment]` |
+| `worker_prepare` | worker worktree 创建（或只读检出被复用）并初始化子模块之后、签发工作包之前。写入型 attempt（implement / converge 等）总是运行；只读的规划（`plan-tasks`）/ 审计（`audit`）包在 `[execution] prepare_read_only = true`（默认）时运行，用 `SA_WORKER_KIND` 区分 | worktree 根目录 | `SA_WORKER_CHECKOUT`、`SA_WORKER_PROJECT`、`SA_WORKER_ATTEMPT_ID`、`SA_WORKER_KIND`、`SA_WORKER_TASK_ID`、`SA_WORKER_PHASE_ID`、`SA_WORKER_BASE_COMMIT`、`SA_ORIGIN_CHECKOUT`、`SA_RUN_ID`，以及 `[environment]` |
 
-`worker_prepare` 退出码非零、超时（`attempt_timeout_seconds`）或无法启动时，该 attempt 记为 `superseded`（不计入任务失败次数），run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头并给出 stderr 末尾与日志目录（attempt 目录下的 `worker-prepare/`、`submodules/`）。修好环境或配置后 `prepare --run-id <id>`（改过配置时加 `reload_config`）。
+`worker_prepare` 只应创建被忽略的文件（`.venv`、`node_modules`、缓存）。退出码非零、超时（`attempt_timeout_seconds`）、无法启动，或运行后检出出现已跟踪文件改动（blocker 写明 `left tracked changes` 与改动路径）时，该 attempt 记为 `superseded`（不计入任务失败次数），run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头并给出 stderr 末尾与日志目录（attempt 目录下的 `worker-prepare/`、`submodules/`）。修好环境或配置后 `prepare --run-id <id>`（改过配置时加 `reload_config`）。
 
-让 worker 环境与验证环境一致：两个钩子可以指向同一个脚本。依赖安装请走共享的包管理缓存，而不要把主 checkout 的 `.venv` / `node_modules` 软链进 worktree —— editable 安装和工作区链接会指回主 checkout 的旧源码，worker 测到的就不是自己的改动。钩子产物应在 `.gitignore` 中，否则会被当作 worker 改动。
+让 worker 环境与验证环境一致：两个钩子可以指向同一个脚本。依赖安装请走共享的包管理缓存，而不要把主 checkout 的 `.venv` / `node_modules` 软链进 worktree —— editable 安装和工作区链接会指回主 checkout 的旧源码，worker 测到的就不是自己的改动。钩子产物应在 `.gitignore` 中，否则会被当作 worker 改动。只读检出被后续规划 / 审计包复用时钩子会再跑一次；它留下的被忽略条目记在 attempt 目录的 `worker-prepare/ignored.json`，复用只容忍这些条目，交接点的自动维护也把它们视为可重建的产物，不会因此保留已关闭的只读检出。
 
 ```toml
 # Python（uv）：每个 worktree 自建 .venv，包从全局缓存硬链接，通常几秒完成

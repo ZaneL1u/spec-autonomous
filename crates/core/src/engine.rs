@@ -782,7 +782,8 @@ impl Coordinator<'_> {
             &worktree.join(&self.run.project_relative),
         )?;
         let dir = self.store.attempt_dir(&self.run.id, &id)?;
-        let writing = !matches!(kind, "plan-tasks" | "audit");
+        let read_only = matches!(kind, "plan-tasks" | "audit");
+        let prepare = !read_only || self.run.config.execution.prepare_read_only;
         let index = self.run.attempts.len();
         self.run.attempts.push(Attempt {
             id,
@@ -806,7 +807,7 @@ impl Coordinator<'_> {
             deferred_evidence: vec![],
         });
         self.save("attempt_started")?;
-        if writing && let Err(error) = self.prepare_worker(index, &worktree, &dir) {
+        if prepare && let Err(error) = self.prepare_worker(index, &worktree, &dir, read_only) {
             // Nothing was issued: the attempt closes without counting as a task failure.
             let message = format!(
                 "needs_input: worker_prepare_failed: {error:#}. Fix the environment, [execution] init_submodules or [hooks.worker_prepare] (pass reload_config after a configuration change), then run `spec-autonomous prepare --run-id {}`",
@@ -840,10 +841,21 @@ impl Coordinator<'_> {
             dir,
         )
     }
-    /// Bring a fresh writing checkout to the state its packet assumes: submodules
+    /// Bring a worker checkout to the state its packet assumes: submodules
     /// (`[execution] init_submodules`) and the `[hooks.worker_prepare]` hook, both run at
-    /// the worktree root before anything is issued.
-    fn prepare_worker(&mut self, index: usize, worktree: &Path, dir: &Path) -> Result<()> {
+    /// the worktree root before anything is issued. Writing checkouts are always
+    /// prepared; read-only planning and audit checkouts (fresh or reused) while
+    /// `[execution] prepare_read_only` is on. The hook may only create ignored files:
+    /// tracked changes it leaves behind fail the preparation. For a read-only checkout
+    /// the ignored entries present afterwards are recorded, so the checkout stays
+    /// reusable and the idempotent hook simply runs again on reuse.
+    fn prepare_worker(
+        &mut self,
+        index: usize,
+        worktree: &Path,
+        dir: &Path,
+        read_only: bool,
+    ) -> Result<()> {
         self.init_submodules(worktree, dir)?;
         let Some(hook) = self
             .run
@@ -886,7 +898,22 @@ impl Coordinator<'_> {
             worktree,
             &env,
             dir,
-        )
+        )?;
+        if !git::tracked_clean(worktree)? {
+            bail!(
+                "worker-prepare {:?} left tracked changes in {}; the hook may only create ignored files such as .venv or node_modules: {}",
+                hook.argv,
+                worktree.display(),
+                git::dirty_summary(worktree)?
+            );
+        }
+        if read_only {
+            paths::atomic_write(
+                &dir.join(PREPARED_IGNORED),
+                serde_json::to_vec(&git::ignored_entries(worktree)?)?,
+            )?;
+        }
+        Ok(())
     }
     fn input(
         &self,
@@ -997,6 +1024,9 @@ impl Coordinator<'_> {
         self.invoke_host(kind, task, phase, instruction, snapshot)
     }
 }
+/// Ignored entries a successful `worker_prepare` left in a read-only checkout, relative
+/// to the attempt directory; reuse tolerates exactly these.
+pub(crate) const PREPARED_IGNORED: &str = "worker-prepare/ignored.json";
 /// Run one checkout preparation step with bounded time and logs in `<dir>/<name>/`.
 pub(crate) fn prepare_step(
     config: &crate::config::Config,

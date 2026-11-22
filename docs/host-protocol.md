@@ -118,7 +118,7 @@ implement worker 发现必须改动 `task.writes` 之外的文件（例如被改
 
 ## worker 检出准备
 
-写入型包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块或重建依赖环境。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本给出警告；仓库有子模块而 `init_submodules = false` 且未配置 `worker_prepare` 时给出 `submodules_warning`（只配 `verification_prepare` 不够，它不准备 worker 检出）。配置与示例见 website/reference/configuration.md。
+写入型包（implement / converge / roadmap 等）以及只读的规划（`plan-tasks`）与审计（`audit`）包签发前，协调器已在其 worktree 中按配置初始化子模块（`[execution] init_submodules`）并运行 `[hooks.worker_prepare]`，宿主和 worker 不需要再手工 clone 子模块、借用主检出的 `.venv` 或重建依赖环境。只读包是否准备由 `[execution] prepare_read_only` 控制（默认 `true`）；钩子用 `SA_WORKER_KIND`（`plan-tasks`、`audit`、`implement`、`converge` 等）区分包类型。钩子只应创建被忽略的环境文件（`.venv`、`node_modules`）：运行后检出出现已跟踪文件改动即按准备失败处理，blocker 写明 `left tracked changes` 与改动路径。只读检出被复用时钩子会再跑一次（钩子必须幂等）；钩子留下的被忽略条目记录在 attempt 目录的 `worker-prepare/ignored.json`，复用时只容忍这些条目，其他被忽略文件（例如测试缓存）仍让该检出不被复用；交接点的自动维护同样把这些条目视为可重建的产物，不会因此保留已关闭的只读检出。准备失败时不会签发该包：run 进入 `needs_input`，blocker 以 `worker_prepare_failed` 开头，修好后 `prepare --run-id`（改过配置加 `reload_config`）。doctor 对未挂钩子的 `verification-prepare.*` / `worker-prepare.*` 脚本给出警告；仓库有子模块而 `init_submodules = false` 且未配置 `worker_prepare` 时给出 `submodules_warning`（只配 `verification_prepare` 不够，它不准备 worker 检出）。配置与示例见 website/reference/configuration.md。
 
 ## 检查环境变量
 

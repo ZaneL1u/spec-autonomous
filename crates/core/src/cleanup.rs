@@ -476,12 +476,26 @@ pub(crate) fn at_handoff(repo: &Repository, run: &Run, runs: &[Run]) -> Result<V
     for item in result["worktrees"].as_array().unwrap() {
         let path = item["path"].as_str().unwrap();
         let checkout = Path::new(path);
-        let ignored = git::command(
-            checkout,
-            &["ls-files", "--others", "--ignored", "--exclude-standard"],
-            None,
-        )?;
-        if !ignored.is_empty() {
+        // What `worker_prepare` left in a read-only checkout (a synced .venv) is
+        // reproducible and not retained data; anything else ignored is kept.
+        let prepared: Vec<String> = run
+            .attempts
+            .iter()
+            .rev()
+            .find(|a| a.worktree == path)
+            .and_then(|a| {
+                let dir = repo
+                    .runtime()
+                    .ok()?
+                    .join(format!("runs/{}/attempts/{}", run.id, a.id));
+                std::fs::read(dir.join(crate::engine::PREPARED_IGNORED)).ok()
+            })
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        if git::ignored_entries(checkout)?
+            .iter()
+            .any(|entry| !prepared.contains(entry))
+        {
             retained.push(json!({"path":path,"reason":"ignored_artifacts_retained"}));
         } else if git::head(checkout).is_ok_and(|h| h == item["head"])
             && remove_worktree(repo, checkout, true).is_ok()

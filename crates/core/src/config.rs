@@ -62,8 +62,9 @@ pub struct Execution {
     /// Newest failed worktrees kept per task for inspection while the task is open.
     pub retain_failed_worktrees: u32,
     /// Run `git submodule update --init --recursive` in every checkout the coordinator
-    /// creates for writing or verification. Off by default; omitted from serialized
-    /// configuration while off so existing identities do not change.
+    /// creates for writing or verification, and in read-only planning and audit
+    /// checkouts while `prepare_read_only` is on. Off by default; omitted from
+    /// serialized configuration while off so existing identities do not change.
     #[serde(skip_serializing_if = "is_false")]
     pub init_submodules: bool,
     /// Where worktrees handed to host workers live: `git` (default, under the Git common
@@ -86,6 +87,13 @@ pub struct Execution {
     /// costs one extra run of those checks per phase plan (a full test suite included).
     #[serde(skip_serializing_if = "is_false")]
     pub baseline_checks: bool,
+    /// Prepare read-only planning and audit checkouts like writing ones (submodules and
+    /// `[hooks.worker_prepare]`), so those workers can run the project's checks. On by
+    /// default: the hook is required to be idempotent and to create only ignored files,
+    /// and an auditor without the environment cannot run the tests it judges. Omitted
+    /// from serialized configuration while on.
+    #[serde(skip_serializing_if = "is_true")]
+    pub prepare_read_only: bool,
 }
 fn is_affected(value: &str) -> bool {
     value == "affected"
@@ -96,11 +104,16 @@ fn is_full(value: &str) -> bool {
 fn is_false(value: &bool) -> bool {
     !*value
 }
+fn is_true(value: &bool) -> bool {
+    *value
+}
 fn is_git_worktree_root(value: &String) -> bool {
     value == crate::git::WORKTREE_ROOT_GIT
 }
-/// Hook run in a writing worker's checkout after it is created and before its packet
-/// is issued, for example to sync a virtual environment from a shared cache.
+/// Hook run in a worker's checkout after it is created (or reused) and before its
+/// packet is issued, for example to sync a virtual environment from a shared cache.
+/// Writing checkouts always run it; read-only planning and audit checkouts run it while
+/// `[execution] prepare_read_only` is on (default).
 pub const WORKER_PREPARE: &str = "worker_prepare";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -174,6 +187,7 @@ impl Default for Execution {
             milestone_verification_scope: "full".into(),
             worktree_root: crate::git::WORKTREE_ROOT_GIT.into(),
             baseline_checks: false,
+            prepare_read_only: true,
         }
     }
 }
