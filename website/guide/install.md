@@ -37,7 +37,7 @@ node scripts/test-all.mts
 
 ```sh
 bun run pack:local
-npm install -g ./.artifacts/local/spec-autonomous-0.2.0.tgz
+npm install -g ./.artifacts/local/spec-autonomous-0.2.1.tgz
 ```
 
 ## 从本地源码目录安装（没有 Bun 时）

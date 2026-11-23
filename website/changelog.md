@@ -2,6 +2,14 @@
 
 这里记录面向用户的主要变化。完整提交和 Release 产物请看 [GitHub Releases](https://github.com/ZaneL1u/spec-autonomous/releases)。
 
+## 0.2.1
+
+### 少花 token
+
+- 规划指引新增任务粒度要求：每个计划任务都由一个从零开始的新 worker 上下文执行，重试也是新上下文；同一模块或功能切片的相关源任务（通常 2–5 个，机械性改动可以更多）合成一个计划任务，只在写集真正独立、原生顺序或阶段屏障强制、或单个任务明显超出一次会话时才拆分，不再默认一个复选框一个任务。指引附加在 request key 之外，已签发的规划包仍能匹配回执。
+- 新增 `[host.models]`：按工作包类型（`roadmap` / `native-planning` / `plan-tasks` / `implement` / `audit` / `converge`）给宿主一个模型提示，出现在 `work[].requirements.model`，宿主用它启动子上下文（Claude Code 即 Agent 工具的 `model`）。未配置时包的内容与之前完全一致；未知类型或非法模型名按 `invalid_config` 拒绝。
+- `autonomous` / `auto` skill 与宿主协议新增开销规则：宿主只做路由，不自己读工作包再转述；项目特有事实写一次文件传路径；优先使用只带 shell 与文件工具的 worker agent 类型；不在包外另起辅助 agent；`no_progress`、`attempts_exhausted`、`repair_repeated` 是停下报告的信号而不是重试。
+
 ## 0.2.0
 
 ### 少做重复工作
