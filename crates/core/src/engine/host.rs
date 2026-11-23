@@ -117,7 +117,7 @@ pub fn work_view_with(run: &Run, runtime: &Path, readiness: bool) -> Result<Valu
                         json!(Path::new(selector).file_name().and_then(|s| s.to_str()));
                 }
             }
-            work.push(json!({"request_id":a.id,"run_id":run.id,"kind":a.kind,"task_id":a.task_id,"phase_id":a.phase_id,"status":a.status,"token":lease.token,"input_hash":lease.input_hash,"worktree":a.worktree,"project":Path::new(&a.worktree).join(&run.project_relative),"base_commit":a.base_commit,"input_path":dir.join("input.json"),"prompt_path":dir.join("prompt.md"),"result_schema_path":dir.join("result.schema.json"),"result_path":dir.join("host-result.json"),"environment_hints":hints,"requirements":{"fresh_context":true,"host_owned_execution":true},"limits":limits(run),"stale":now_ms().saturating_sub(lease.heartbeat_at_ms)>run.config.host.lease_seconds*1000,"owner":lease.owner}));
+            work.push(json!({"request_id":a.id,"run_id":run.id,"kind":a.kind,"task_id":a.task_id,"phase_id":a.phase_id,"status":a.status,"token":lease.token,"input_hash":lease.input_hash,"worktree":a.worktree,"project":Path::new(&a.worktree).join(&run.project_relative),"base_commit":a.base_commit,"input_path":dir.join("input.json"),"prompt_path":dir.join("prompt.md"),"result_schema_path":dir.join("result.schema.json"),"result_path":dir.join("host-result.json"),"environment_hints":hints,"requirements":requirements(run,&a.kind),"limits":limits(run),"stale":now_ms().saturating_sub(lease.heartbeat_at_ms)>run.config.host.lease_seconds*1000,"owner":lease.owner}));
         }
     }
     data["work"] = json!(work);
@@ -872,4 +872,14 @@ impl Coordinator<'_> {
         self.issue(kind, task, phase, instruction, snapshot, None, key)?;
         bail!("awaiting_host: semantic work is prepared")
     }
+}
+
+/// Host requirements for one packet; `model` appears only when `[host.models]` names
+/// the packet kind, so packets from unconfigured projects keep their exact shape.
+fn requirements(run: &Run, kind: &str) -> Value {
+    let mut out = json!({"fresh_context":true,"host_owned_execution":true});
+    if let Some(model) = run.config.host.model_for(kind) {
+        out["model"] = json!(model);
+    }
+    out
 }

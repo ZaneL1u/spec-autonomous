@@ -165,7 +165,15 @@ phase 有灰区时 `prepare` 返回 `needs_input`，`blocker` 以 `discussion_re
 
 ## 宿主能力
 
-响应里的 `host_capacity = {max_concurrency, lease_seconds, capabilities}` 来自项目配置的 `[host]`；并发派发不要超过 `max_concurrency`。遇到异常先调只读的 `run.forensics {run_id}`，它汇总重复失败、attempt 过多、空闲请求和 worktree 积压。
+响应里的 `host_capacity = {max_concurrency, lease_seconds, capabilities}` 来自项目配置的 `[host]`；并发派发不要超过 `max_concurrency`。
+
+### 上下文开销
+
+每个工作包都由一个新上下文执行，启动就要付系统提示、工具 schema 和技能列表的成本，并且要重新读它需要的代码；重试也是新上下文。因此：
+
+- 规划指引要求按「一次会话能完成的连贯工作」划分任务，通常把同一模块或功能切片的 2–5 个源任务合成一个计划任务，只在写集真正独立、原生顺序或阶段屏障强制、或单个任务明显超出一次会话时才拆分。
+- `[host.models]` 为某类工作包配置的模型名会出现在 `work[].requirements.model`，宿主应用该模型启动子上下文（Claude Code 即 Agent 工具的 `model`）；未配置时字段不存在。
+- 宿主只做路由：不要自己打开 `input.json` / `prompt.md` / 补丁再转述给子上下文，项目特有事实写一次文件、把路径交给每个子上下文；优先使用只带 shell 与文件工具的 worker agent 类型；不要在包外再起辅助 agent；`no_progress`、`attempts_exhausted`、`repair_repeated` 是停下报告的信号，不是「再试一次」。遇到异常先调只读的 `run.forensics {run_id}`，它汇总重复失败、attempt 过多、空闲请求和 worktree 积压。
 
 ## 停止条件
 

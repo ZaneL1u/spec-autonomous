@@ -175,9 +175,10 @@ impl Coordinator<'_> {
                     &task_id,
                     &phase.id,
                     format!(
-                        "{instruction} {PLAN_SCOPE_GUIDANCE} {} {}",
+                        "{instruction} {PLAN_SCOPE_GUIDANCE} {} {} {}",
                         crate::verification_preflight::planning_guidance_addendum(),
-                        crate::verification_preflight::parallel_planning_guidance()
+                        crate::verification_preflight::parallel_planning_guidance(),
+                        crate::verification_preflight::task_sizing_guidance()
                     ),
                     &instruction,
                     Some(partial.clone()),

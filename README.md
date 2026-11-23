@@ -158,9 +158,14 @@ max_repair_rounds = 2
 [host]
 max_concurrency = 3
 lease_seconds = 1800
+
+# 可选：按工作包类型给宿主一个模型提示（原样透传为 requirements.model）
+[host.models]
+plan-tasks = "sonnet"
+audit = "sonnet"
 ```
 
-宿主并发能力未声明时默认串行。框架与验证命令可使用独立 `environment` 配置；旧 `runner` 字段被忽略并诊断，不会执行。
+宿主并发能力未声明时默认串行。每个工作包都是一个新上下文：`[host.models]` 可把规划、审计等只读工作交给更便宜的模型（键只能是 roadmap / native-planning / plan-tasks / implement / audit / converge），未配置时包里不出现 `model`。框架与验证命令可使用独立 `environment` 配置；旧 `runner` 字段被忽略并诊断，不会执行。
 
 ```sh
 # 不调用真实模型、不发布 npm

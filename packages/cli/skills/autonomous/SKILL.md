@@ -34,3 +34,12 @@ MCP: sa_doctor, sa_inspect, sa_prepare, sa_apply_result, sa_next, sa_progress; s
 - A fresh context means a unique host session, not a new disk checkout: read-only planning and audit packets may reuse a closed, clean checkout, writing workers stay isolated. Use the returned project/worktree assignments as given.
 - Preserve the user's framework, run ID, scope and budgets. Native mode hands the framework workflow back after roadmap planning.
 </rules>
+
+<economy>
+Every packet is a fresh context that pays its own start-up (system prompt, tool schemas, skill list) and re-reads the code it needs, so spend contexts deliberately:
+- Stay a thin router. Do not open `input.json`, `prompt.md` or patches yourself and do not summarise them into the child's brief; the child reads them. Hand over the paths plus at most a few lines of project facts the packet cannot know (a broken local tool, where a test database lives); write such facts once to a file and pass its path to every child instead of repeating them in each prompt.
+- When `requirements.model` is present, start the child on that model (Claude Code: the Agent tool's `model`); otherwise use the host default. Prefer a worker agent type limited to shell and file tools, without MCP servers, browser or connector tools, when the host has one (for example a user-defined `spec-autonomous-worker` agent in Claude Code): tool schemas are re-sent on every turn of every child.
+- Do not ask a child to rerun checks the CLI already ran, to re-plan, or to review other packets; one packet, one context. Never start extra helper agents around a packet.
+- A failed attempt is retried by the CLI with the previous error and patch attached; do not redo it yourself or start a child outside the returned packets. `no_progress`, `attempts_exhausted` and `repair_repeated` mean stop and report, not "try again" — rerunning the same scope without changing the plan, checks or environment repeats the same spend.
+- Keep `[execution] max_attempts` and `max_repair_rounds` at their defaults unless the user asks; raising them multiplies fresh contexts per task.
+</economy>

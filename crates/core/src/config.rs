@@ -355,6 +355,22 @@ impl Config {
         {
             bail!("invalid_config: invalid host limits");
         }
+        for (kind, model) in &self.host.models {
+            if !MODEL_HINT_KINDS.contains(&kind.as_str()) {
+                bail!(
+                    "invalid_config: [host.models] key {kind} is not a packet kind ({})",
+                    MODEL_HINT_KINDS.join(", ")
+                );
+            }
+            if model.is_empty()
+                || model.len() > 64
+                || !model
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._:-/[]".contains(c))
+            {
+                bail!("invalid_config: [host.models] {kind} must be a short model name");
+            }
+        }
         if !["same-tree", "none"].contains(&self.execution.verification_reuse.as_str()) {
             bail!("invalid_config: verification_reuse must be same-tree or none");
         }
@@ -607,6 +623,26 @@ pub struct HostConfig {
     /// echoed to the host as host_capacity so packets never ask it to self-assess.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub capabilities: BTreeMap<String, String>,
+    /// Optional model hint per packet kind (for example audit = "sonnet"), echoed to the
+    /// host as requirements.model so cheaper models can take read-only or narrow work.
+    /// Values are passed through verbatim; the host maps them to its own model names.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub models: BTreeMap<String, String>,
+}
+/// Packet kinds a `[host.models]` entry may name.
+pub const MODEL_HINT_KINDS: [&str; 6] = [
+    "roadmap",
+    "native-planning",
+    "plan-tasks",
+    "implement",
+    "audit",
+    "converge",
+];
+impl HostConfig {
+    /// The configured model hint for a packet kind, if any.
+    pub fn model_for(&self, kind: &str) -> Option<&str> {
+        self.models.get(kind).map(String::as_str)
+    }
 }
 impl Default for HostConfig {
     fn default() -> Self {
@@ -614,6 +650,7 @@ impl Default for HostConfig {
             max_concurrency: 1,
             lease_seconds: 1800,
             capabilities: BTreeMap::new(),
+            models: BTreeMap::new(),
         }
     }
 }
